@@ -10,8 +10,9 @@ import sys
 import tempfile
 from datetime import timedelta
 from enum import Enum, IntEnum
+from functools import cached_property
 from trace import Direction, PacketType, TraceAnalyzer, get_direction, get_packet_type
-from typing import Dict, List, Type, Union
+from typing import Dict, List, Optional, Type, Union
 
 from Crypto.Cipher import AES
 
@@ -56,17 +57,17 @@ def generate_cert_chain(directory: str, length: int = 1):
         logging.info("Unable to create certificates")
         sys.exit(1)
 
+    logging.debug("%s", stdout)
+
 
 class TestCase(abc.ABC):
     _files: List[str] = []
-    _www_dir = None
-    _client_keylog_file = None
-    _server_keylog_file = None
-    _download_dir = None
-    _sim_log_dir = None
-    _cert_dir = None
-    _cached_server_trace = None
-    _cached_client_trace = None
+    _www_dir: Optional[tempfile.TemporaryDirectory] = None
+    _client_keylog_file: str
+    _server_keylog_file: str
+    _download_dir: Optional[tempfile.TemporaryDirectory] = None
+    _sim_log_dir: tempfile.TemporaryDirectory
+    _cert_dir: Optional[tempfile.TemporaryDirectory] = None
 
     def __init__(
         self,
@@ -118,19 +119,20 @@ class TestCase(abc.ABC):
     @staticmethod
     def additional_envs() -> Dict[str, Union[str, int, float]]:
         """Additional environment variables."""
+
         return {}
 
     @staticmethod
     def additional_containers() -> List[str]:
         return [""]
 
-    def www_dir(self):
+    def www_dir(self) -> str:
         if not self._www_dir:
             self._www_dir = tempfile.TemporaryDirectory(dir="/tmp", prefix="www_")
 
         return self._www_dir.name + "/"
 
-    def download_dir(self):
+    def download_dir(self) -> str:
         if not self._download_dir:
             self._download_dir = tempfile.TemporaryDirectory(
                 dir="/tmp", prefix="download_"
@@ -138,7 +140,7 @@ class TestCase(abc.ABC):
 
         return self._download_dir.name + "/"
 
-    def certs_dir(self):
+    def certs_dir(self) -> str:
         if not self._cert_dir:
             self._cert_dir = tempfile.TemporaryDirectory(dir="/tmp", prefix="certs_")
             generate_cert_chain(self._cert_dir.name)
@@ -158,7 +160,7 @@ class TestCase(abc.ABC):
 
         return True
 
-    def _keylog_file(self) -> str:
+    def _keylog_file(self) -> Optional[str]:
         if self._is_valid_keylog(self._client_keylog_file):
             logging.debug("Using the client's key log file.")
 
@@ -169,31 +171,24 @@ class TestCase(abc.ABC):
             return self._server_keylog_file
         logging.debug("No key log file found.")
 
-    @property
+    @cached_property
     def _client_trace(self):
-        if self._cached_client_trace is None:
-            self._cached_client_trace = TraceAnalyzer(
-                self._sim_log_dir.name + "/trace_node_left.pcap", self._keylog_file()
-            )
+        return TraceAnalyzer(
+            self._sim_log_dir.name + "/trace_node_left.pcap", self._keylog_file()
+        )
 
-        return self._cached_client_trace
-
-    @property
+    @cached_property
     def _server_trace(self):
-        if self._cached_server_trace is None:
-            self._cached_server_trace = TraceAnalyzer(
-                self._sim_log_dir.name + "/trace_node_right.pcap", self._keylog_file()
-            )
+        return TraceAnalyzer(
+            self._sim_log_dir.name + "/trace_node_right.pcap", self._keylog_file()
+        )
 
-        return self._cached_server_trace
-
-    # see https://www.stefanocappellini.it/generate-pseudorandom-bytes-with-python/ for benchmarks
     def _generate_random_file(self, size: int, filename_len=10) -> str:
+        """See https://www.stefanocappellini.it/generate-pseudorandom-bytes-with-python/ for benchmarks"""
         filename = random_string(filename_len)
         enc = AES.new(os.urandom(32), AES.MODE_OFB, b"a" * 16)
-        f = open(self.www_dir() + filename, "wb")
-        f.write(enc.encrypt(b" " * size))
-        f.close()
+        with open(self.www_dir() + filename, "wb") as file:
+            file.write(enc.encrypt(b" " * size))
         logging.debug("Generated random file: %s of size: %d", filename, size)
 
         return filename
@@ -295,15 +290,15 @@ class TestCase(abc.ABC):
         """Get the sum of the payload sizes of all packets"""
         size = 0
 
-        for p in packets:
-            if hasattr(p, "long_packet_type"):
-                if hasattr(p, "payload"):  # when keys are available
-                    size += len(p.payload.split(":"))
+        for packet in packets:
+            if hasattr(packet, "long_packet_type"):
+                if hasattr(packet, "payload"):  # when keys are available
+                    size += len(packet.payload.split(":"))
                 else:
-                    size += len(p.remaining_payload.split(":"))
+                    size += len(packet.remaining_payload.split(":"))
             else:
-                if hasattr(p, "protected_payload"):
-                    size += len(p.protected_payload.split(":"))
+                if hasattr(packet, "protected_payload"):
+                    size += len(packet.protected_payload.split(":"))
 
         return size
 
@@ -317,7 +312,7 @@ class TestCase(abc.ABC):
             self._download_dir = None
 
     @abc.abstractmethod
-    def get_paths(self):
+    def get_paths(self) -> List[str]:
         pass
 
     @abc.abstractmethod
@@ -361,8 +356,8 @@ class TestCaseVersionNegotiation(TestCase):
         initials = self._client_trace.get_initial(Direction.FROM_CLIENT)
         dcid = ""
 
-        for p in initials:
-            dcid = p.dcid
+        for packet in initials:
+            dcid = packet.dcid
 
             break
 
@@ -373,8 +368,8 @@ class TestCaseVersionNegotiation(TestCase):
 
         vnps = self._client_trace.trace.get_vnp()
 
-        for p in vnps:
-            if p.scid == dcid:
+        for packet in vnps:
+            if packet.scid == dcid:
                 return TestResult.SUCCEEDED
 
         logging.info("Didn't find a Version Negotiation Packet with matching SCID.")
@@ -733,12 +728,12 @@ class TestCaseResumption(TestCase):
         cids = [p.scid for p in handshake_packets]
         first_handshake_has_cert = False
 
-        for p in handshake_packets:
-            if p.scid == cids[0]:
-                if hasattr(p, "tls_handshake_certificates_length"):
+        for packet in handshake_packets:
+            if packet.scid == cids[0]:
+                if hasattr(packet, "tls_handshake_certificates_length"):
                     first_handshake_has_cert = True
-            elif p.scid == cids[len(cids) - 1]:  # second handshake
-                if hasattr(p, "tls_handshake_certificates_length"):
+            elif packet.scid == cids[len(cids) - 1]:  # second handshake
+                if hasattr(packet, "tls_handshake_certificates_length"):
                     logging.info(
                         "Server sent a Certificate message in the second handshake."
                     )
@@ -799,6 +794,7 @@ class TestCaseZeroRTT(TestCase):
 
         if not self._check_version_and_files():
             return TestResult.FAILED
+
         zeroRTTSize = self._payload_size(self._client_trace.get_0rtt())
         oneRTTSize = self._payload_size(
             self._client_trace.get_1rtt(Direction.FROM_CLIENT)
@@ -1714,24 +1710,23 @@ class MeasurementGoodput(Measurement):
             return TestResult.FAILED
 
         packets = self._client_trace.get_1rtt(Direction.FROM_SERVER)
-        first, last = 0, 0
+        packet_times: List[timedelta] = [packet.sniff_time for packet in packets]
+        first = min(packet_times)
+        last = max(packet_times)
+        time = last - first
 
-        for p in packets:
-            if first == 0:
-                first = p.sniff_time
-            last = p.sniff_time
-
-        if last - first == 0:
+        if not time:
             return TestResult.FAILED
-        time = (last - first) / timedelta(milliseconds=1)
-        goodput = (8 * self.FILESIZE) / time
+
+        time_ms = time.total_seconds() * 1000
+        goodput_kbps = (8 * self.FILESIZE) / time_ms
         logging.debug(
-            "Transfering %d MB took %d ms. Goodput: %d kbps",
+            "Transferring %d MB took %d ms. Goodput: %d kbps",
             self.FILESIZE / MB,
-            time,
-            goodput,
+            time_ms,
+            goodput_kbps,
         )
-        self._result = goodput
+        self._result = goodput_kbps
 
         return TestResult.SUCCEEDED
 
