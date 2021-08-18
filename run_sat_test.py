@@ -4,6 +4,7 @@
 
 import argparse
 import json
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -16,11 +17,11 @@ from testcases import MeasurementSatellite
 
 TEST_ABBR = MeasurementSatellite.abbreviation()
 AVAILABLE_COMBINATIONS = {
-    f"{client_name}_{server_name}"
-    for client_name, client in IMPLEMENTATIONS.items()
-    if client["role"] in (Role.BOTH, Role.CLIENT)
+    f"{server_name}_{client_name}"
     for server_name, server in IMPLEMENTATIONS.items()
     if server["role"] in (Role.BOTH, Role.SERVER)
+    for client_name, client in IMPLEMENTATIONS.items()
+    if client["role"] in (Role.BOTH, Role.CLIENT)
 }
 
 
@@ -39,7 +40,7 @@ def get_args():
         default=set(),
         nargs="+",
         choices=AVAILABLE_COMBINATIONS,
-        help="run these implementation combinations in addition to the succeeding",
+        help="run these implementation combinations (<server>_<client>) in addition to the succeeding",
     )
     parser.add_argument(
         "-l",
@@ -90,8 +91,6 @@ def find_succeeding(results_file_path: Path) -> set[tuple[str, str]]:
     if TEST_ABBR not in tests:
         sys.exit("`SAT` testcase was not executed in this run")
 
-    print(f"This combinations succeeded for test case {TEST_ABBR}")
-
     for i, tests in enumerate(previous_results["measurements"]):
         sat_tests = [test for test in tests if test["abbr"] == TEST_ABBR]
         assert len(sat_tests) == 1
@@ -100,10 +99,9 @@ def find_succeeding(results_file_path: Path) -> set[tuple[str, str]]:
 
         if succeeded:
             client_index, server_index = divmod(i, len(servers))
-            client = clients[client_index]
             server = servers[server_index]
-            print(f"- {client}_{server}")
-            combinations_succeeded.add((client, server))
+            client = clients[client_index]
+            combinations_succeeded.add((server, client))
 
     return combinations_succeeded
 
@@ -121,53 +119,61 @@ def merge_results(result1: dict, result2: dict, log_dir: str) -> dict:
     clients1: list[str] = result1["clients"]
     clients2: list[str] = result2["clients"]
 
-    clients_merged = sorted(frozenset(clients1) | frozenset(clients2))
     servers_merged = sorted(frozenset(servers1) | frozenset(servers2))
+    clients_merged = sorted(frozenset(clients1) | frozenset(clients2))
 
-    for client_index, client in enumerate(clients1):
-        tests1[client] = {}
-        meass1[client] = {}
+    for server_index, server in enumerate(servers1):
+        tests1[server] = {}
+        meass1[server] = {}
 
-        for server_index, server in enumerate(servers1):
-            tests1[client][server] = {}
-            meass1[client][server] = {}
+        for client_index, client in enumerate(clients1):
+            tests1[server][client] = {}
+            meass1[server][client] = {}
 
-            for test in result1["results"][client_index * len(clients1) + server_index]:
-                tests1[client][server][test["abbr"]] = test
+            try:
+                test_index = client_index * len(servers1) + server_index
 
-            for meas in result1["measurements"][
-                client_index * len(clients1) + server_index
-            ]:
-                meass1[client][server][meas["abbr"]] = meas
+                for test in result1["results"][test_index]:
+                    tests1[server][client][test["abbr"]] = test
 
-    for client_index, client in enumerate(clients2):
-        tests2[client] = {}
-        meass2[client] = {}
+                for meas in result1["measurements"][test_index]:
+                    meass1[server][client][meas["abbr"]] = meas
+            except IndexError as err:
+                breakpoint()
+                sys.exit(err)
 
-        for server_index, server in enumerate(servers2):
-            tests2[client][server] = {}
-            meass2[client][server] = {}
+    for server_index, server in enumerate(servers2):
+        tests2[server] = {}
+        meass2[server] = {}
 
-            for test in result2["results"][client_index * len(clients2) + server_index]:
-                tests2[client][server][test["abbr"]] = test
+        for client_index, client in enumerate(clients2):
+            tests2[server][client] = {}
+            meass2[server][client] = {}
 
-            for meas in result2["measurements"][
-                client_index * len(clients2) + server_index
-            ]:
-                meass2[client][server][meas["abbr"]] = meas
+            try:
+                test_index = client_index * len(servers2) + server_index
+
+                for test in result2["results"][test_index]:
+                    tests2[server][client][test["abbr"]] = test
+
+                for meas in result2["measurements"][test_index]:
+                    meass2[server][client][meas["abbr"]] = meas
+            except IndexError as err:
+                breakpoint()
+                sys.exit(err)
 
     # check and merge test and measurements
     tests_merged = dict[str, dict[str, dict[str, Any]]]()
     meass_merged = dict[str, dict[str, dict[str, Any]]]()
 
-    for client in clients_merged:
-        tests_merged[client] = {}
-        meass_merged[client] = {}
+    for server in servers_merged:
+        tests_merged[server] = {}
+        meass_merged[server] = {}
 
-        for server in servers_merged:
+        for client in clients_merged:
             # merge tests
-            tests_for_combi1 = tests1.get(client, {}).get(server, {})
-            tests_for_combi2 = tests2.get(client, {}).get(server, {})
+            tests_for_combi1 = tests1.get(server, {}).get(client, {})
+            tests_for_combi2 = tests2.get(server, {}).get(client, {})
             test_abbrs1 = frozenset(tests_for_combi1.keys())
             test_abbrs2 = frozenset(tests_for_combi2.keys())
             common_tests = test_abbrs1 & test_abbrs2
@@ -175,14 +181,14 @@ def merge_results(result1: dict, result2: dict, log_dir: str) -> dict:
             if common_tests:
                 breakpoint()
                 sys.exit(
-                    f"Both results have same test results for {client}_{server}: {', '.join(common_tests)}"
+                    f"Both results have same test results for {server}_{client}: {', '.join(common_tests)}"
                 )
 
-            tests_merged[client][server] = {**tests_for_combi1, **tests_for_combi2}
+            tests_merged[server][client] = {**tests_for_combi1, **tests_for_combi2}
 
             # merge measurements
-            meass_for_combi1 = meass1.get(client, {}).get(server, {})
-            meass_for_combi2 = meass2.get(client, {}).get(server, {})
+            meass_for_combi1 = meass1.get(server, {}).get(client, {})
+            meass_for_combi2 = meass2.get(server, {}).get(client, {})
             meas_abbrs1 = frozenset(meass_for_combi1.keys())
             meas_abbrs2 = frozenset(meass_for_combi2.keys())
             common_meass = meas_abbrs1 & meas_abbrs2
@@ -190,10 +196,10 @@ def merge_results(result1: dict, result2: dict, log_dir: str) -> dict:
             if common_meass:
                 breakpoint()
                 sys.exit(
-                    f"Both results have same measurement results for {client}_{server}: {', '.join(common_meass)}"
+                    f"Both results have same measurement results for {server}_{client}: {', '.join(common_meass)}"
                 )
 
-            meass_merged[client][server] = {**meass_for_combi1, **meass_for_combi2}
+            meass_merged[server][client] = {**meass_for_combi1, **meass_for_combi2}
 
     # linearize tests and measurements
     tests_lin = list[list[Any]]()
@@ -201,8 +207,8 @@ def merge_results(result1: dict, result2: dict, log_dir: str) -> dict:
 
     for client in clients_merged:
         for server in servers_merged:
-            tests_lin.append(list(tests_merged[client][server].values()))
-            meass_lin.append(list(meass_merged[client][server].values()))
+            tests_lin.append(list(tests_merged[server][client].values()))
+            meass_lin.append(list(meass_merged[server][client].values()))
 
     output = {
         "start_time": min(result1["start_time"], result2["start_time"]),
@@ -232,7 +238,7 @@ def run_single(
 ) -> int:
     """docstring for run_single"""
 
-    combination = f"{client}_{server}"
+    combination = f"{server}_{client}"
 
     with tempfile.TemporaryDirectory(
         prefix=f"log_dir_{combination}_"
@@ -281,8 +287,9 @@ def run_single(
             combination_log_dir_path = tmp_log_dir_path / combination
 
             if combination_log_dir_path.is_dir():
-                combination_log_dir_path.rename(log_dir / combination)
+                shutil.move(combination_log_dir_path, log_dir / combination)
             else:
+                breakpoint()
                 print(
                     f"Log dir {combination_log_dir_path} does not exist",
                     file=sys.stderr,
@@ -292,21 +299,42 @@ def run_single(
 
 
 def main():
+    # parse args
     args = get_args()
+
+    # find succeeding combinations from previous run
     combinations_succeeded = find_succeeding(args.last_results)
+    print(f"This combinations succeeded for test case {TEST_ABBR}")
+
+    for server, client in combinations_succeeded:
+        print(f"- {server}_{client}")
+
+    # omit combinations that already ran according to the output file
+
+    if args.json.is_file():
+        print(f"WARNING: Output file {args.json} exists!")
+        combinations_already_run = find_succeeding(args.json)
+        print(
+            f"Will skip {len(combinations_already_run)} combinations that already ran according to {args.json}."
+        )
+    else:
+        combinations_already_run = frozenset()
+
     combinations_to_run = combinations_succeeded | frozenset(
         args.additional_combinations
     )
+    combinations_to_run.difference_update(combinations_already_run)
     print(f"Will run {len(combinations_to_run)} combinations")
+
+    # create output logs directory
 
     if args.log_dir.is_dir():
         print(f"WARNING: Log dir {args.log_dir} exists!", file=sys.stderr)
     args.log_dir.mkdir(parents=True, exist_ok=True)
 
-    if args.json.is_file():
-        sys.exit(f"Output file {args.json} exists!")
+    # run it
 
-    for client, server in combinations_to_run:
+    for server, client in combinations_to_run:
         ret = run_single(
             server=server,
             client=client,
