@@ -19,6 +19,8 @@ import testcases
 from result import TestResult
 from testcases import Perspective
 
+CONSOLE_LOG_HANDLER = logging.StreamHandler(stream=sys.stderr)
+
 
 def random_string(length: int):
     """Generate a random string of fixed length"""
@@ -65,16 +67,17 @@ class InteropRunner:
         debug: bool,
         save_files=False,
         log_dir="",
+        skip_compliance_check=False,
     ):
         logger = logging.getLogger()
         logger.setLevel(logging.DEBUG)
-        console = logging.StreamHandler(stream=sys.stderr)
 
         if debug:
-            console.setLevel(logging.DEBUG)
+            CONSOLE_LOG_HANDLER.setLevel(logging.DEBUG)
         else:
-            console.setLevel(logging.INFO)
-        logger.addHandler(console)
+            CONSOLE_LOG_HANDLER.setLevel(logging.INFO)
+        logger.addHandler(CONSOLE_LOG_HANDLER)
+
         self._start_time = datetime.now()
         self._tests = tests
         self._measurements = measurements
@@ -84,6 +87,7 @@ class InteropRunner:
         self._output = output
         self._log_dir = log_dir
         self._save_files = save_files
+        self._skip_compliance_check = skip_compliance_check
 
         if len(self._log_dir) == 0:
             self._log_dir = f"logs_{self._start_time:%Y-%m-%dT%H:%M:%S}"
@@ -101,6 +105,7 @@ class InteropRunner:
 
                 for test in self._tests:
                     self.test_results[server][client][test] = {}
+
                 self.measurement_results[server][client] = {}
 
                 for measurement in measurements:
@@ -515,7 +520,9 @@ class InteropRunner:
                     self._implementations[client]["image"],
                 )
 
-                if not (
+                if self._skip_compliance_check:
+                    logging.info(f"Skipping compliance check for {server} and {client}")
+                elif not (
                     self._check_impl_is_compliant(server)
                     and self._check_impl_is_compliant(client)
                 ):
