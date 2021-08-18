@@ -1762,6 +1762,40 @@ class MeasurementCrossTraffic(MeasurementGoodput):
         return ["iperf_server", "iperf_client"]
 
 
+class MeasurementSatellite(MeasurementGoodput):
+    FILESIZE = 10 * MB
+    _result = 0.0
+
+    @staticmethod
+    def name():
+        return "satellite"
+
+    @staticmethod
+    def abbreviation():
+        return "SAT"
+
+    @staticmethod
+    def desc():
+        return "Measures connection goodput over a satellite link."
+
+    @staticmethod
+    def repetitions() -> int:
+        #  return 3
+        return 2
+
+    @staticmethod
+    def scenario() -> str:
+        """Scenario for the ns3 simulator"""
+
+        return "simple-p2p --delay=600ms --bandwidth=20Mbps --queue=25"
+
+    @staticmethod
+    def timeout() -> int:
+        """timeout in s"""
+
+        return 60
+
+
 TESTCASES: List[Type[TestCase]] = [
     TestCaseHandshake,
     TestCaseTransfer,
@@ -1791,4 +1825,5 @@ TESTCASES: List[Type[TestCase]] = [
 MEASUREMENTS: List[Type[Measurement]] = [
     MeasurementGoodput,
     MeasurementCrossTraffic,
+    MeasurementSatellite,
 ]
