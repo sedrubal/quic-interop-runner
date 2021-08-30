@@ -1787,7 +1787,11 @@ class MeasurementSatellite(MeasurementGoodput):
     def scenario() -> str:
         """Scenario for the ns3 simulator"""
 
-        return "simple-p2p --delay=600ms --bandwidth=20Mbps --queue=25"
+        return (
+            "asymmetric-p2p --delay=300ms "
+            "--forward-data-rate=20Mbps --return-data-rate=2Mbps "
+            "--forward-queue=25 --return-queue=25"
+        )
 
     @staticmethod
     def timeout() -> int:
