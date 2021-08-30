@@ -3,13 +3,14 @@
 """Run sat test for all implementation combinations that support it (that succeeded in a previous run)."""
 
 import argparse
-import json
 import os
 import shutil
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any, Union
+from typing import Union
+
+from termcolor import colored, cprint
 
 from evaluation_tools.result_parser import Result
 from implementations import IMPLEMENTATIONS, Role
@@ -92,7 +93,7 @@ def get_args():
 
 def find_succeeding(result: Result) -> set[tuple[str, str]]:
     """Find implementation combinations that succeeded before."""
-    print(f"Loading results from {result.file_path}")
+    cprint(f"Loading results from {result.file_path}", color="cyan")
 
     combinations_succeeded = set[tuple[str, str]]()
 
@@ -145,7 +146,7 @@ def run_single(
                 skip_compliance_check=skip_compliance_check,
             ).run()
 
-            print("copy result files to final destination")
+            cprint("copy result files to final destination", color="cyan")
             owner = log_dir.owner()
             group = log_dir.group()
             # 1. merge results json files
@@ -154,7 +155,10 @@ def run_single(
             if output.is_file():
                 final_result = Result(output)
                 final_result = final_result.merge(
-                    tmp_result, file_path=output.absolute(), log_dir=log_dir.absolute()
+                    tmp_result,
+                    file_path=output.absolute(),
+                    log_dir=log_dir.absolute(),
+                    update_failed=True,
                 )
             else:
                 tmp_result.log_dir = log_dir.absolute()
@@ -172,15 +176,19 @@ def run_single(
             combi_dst_log_dir_path = log_dir / combination
 
             if combi_tmp_log_dir_path.is_dir():
+                if combi_dst_log_dir_path.is_dir():
+                    cprint(f"Overwriting log dir {combi_dst_log_dir_path}", color="red")
+                    shutil.rmtree(combi_dst_log_dir_path)
                 shutil.move(combi_tmp_log_dir_path, combi_dst_log_dir_path)
                 try:
                     recursive_chown(combi_dst_log_dir_path, user=owner, group=group)
                 except PermissionError:
                     pass
             else:
-                print(
+                cprint(
                     f"Log dir {combi_tmp_log_dir_path} does not exist",
                     file=sys.stderr,
+                    color="red",
                 )
                 breakpoint()
 
@@ -193,18 +201,22 @@ def main():
 
     # find succeeding combinations from previous run
     combinations_succeeded = find_succeeding(args.last_results)
-    print(f"These combinations succeeded for test case {TEST_ABBR}")
+    cprint(f"These combinations succeeded for test case {TEST_ABBR}", color="green")
 
     for server, client in combinations_succeeded:
-        print(f"- {server}_{client}")
+        print(colored(" -", color="green"), f"{server}_{client}")
 
     # omit combinations that already ran according to the output file
 
     if args.json.is_file():
-        print(f"WARNING: Output file {args.json} exists!")
+        cprint(f"WARNING: Output file {args.json} exists!", color="yellow")
         combinations_already_run = find_succeeding(Result(args.json))
         print(
-            f"Will skip {len(combinations_already_run)} combinations that already ran according to {args.json}."
+            colored("Will skip", color="cyan"),
+            colored(str(len(combinations_already_run)), color="cyan", attrs=["bold"]),
+            colored(
+                f"combinations that already ran according to {args.json}.", color="cyan"
+            ),
         )
     else:
         combinations_already_run = frozenset()
@@ -213,12 +225,16 @@ def main():
         args.additional_combinations
     )
     combinations_to_run.difference_update(combinations_already_run)
-    print(f"Will run {len(combinations_to_run)} combinations")
+    print(
+        colored("Will run", color="cyan"),
+        colored(str(len(combinations_to_run)), color="cyan", attrs=["bold"]),
+        colored("combinations", color="cyan"),
+    )
 
     # create output logs directory
 
     if args.log_dir.is_dir():
-        print(f"WARNING: Log dir {args.log_dir} exists!", file=sys.stderr)
+        cprint(f"WARNING: Log dir {args.log_dir} exists!", file=sys.stderr, color="red")
     args.log_dir.mkdir(parents=True, exist_ok=True)
     try:
         shutil.chown(
