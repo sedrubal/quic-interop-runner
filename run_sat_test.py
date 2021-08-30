@@ -4,12 +4,14 @@
 
 import argparse
 import json
+import os
 import shutil
 import sys
 import tempfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Union
 
+from evaluation_tools.result_parser import Result
 from implementations import IMPLEMENTATIONS, Role
 from interop import InteropRunner
 from run import implementations
@@ -23,6 +25,19 @@ AVAILABLE_COMBINATIONS = {
     for client_name, client in IMPLEMENTATIONS.items()
     if client["role"] in (Role.BOTH, Role.CLIENT)
 }
+
+
+def recursive_chown(
+    root: Path, user: Union[str, int, None] = None, group: Union[str, int, None] = None
+):
+    """Run chown/chgrp recursively on a path."""
+
+    for cur_root, _dirs, files in os.walk(root):
+        cur_path = Path(cur_root)
+        shutil.chown(cur_path, user=user, group=group)
+
+        for file in files:
+            shutil.chown(cur_path / file, user=user, group=group)
 
 
 def get_args():
@@ -68,163 +83,30 @@ def get_args():
     )
     parser.add_argument(
         "last_results",
-        type=Path,
+        type=Result,
         help="output the matrix to file in json format",
     )
 
     return parser.parse_args()
 
 
-def find_succeeding(results_file_path: Path) -> set[tuple[str, str]]:
+def find_succeeding(result: Result) -> set[tuple[str, str]]:
     """Find implementation combinations that succeeded before."""
-    print(f"Loading results from {results_file_path}")
+    print(f"Loading results from {result.file_path}")
 
     combinations_succeeded = set[tuple[str, str]]()
 
-    with results_file_path.open("r") as results_file:
-        previous_results = json.load(results_file)
-
-    servers = previous_results["servers"]
-    clients = previous_results["clients"]
-    tests = previous_results["tests"].keys()
-
-    if TEST_ABBR not in tests:
+    if TEST_ABBR not in result.tests.keys():
         sys.exit("`SAT` testcase was not executed in this run")
 
-    for i, tests in enumerate(previous_results["measurements"]):
-        sat_tests = [test for test in tests if test["abbr"] == TEST_ABBR]
-        assert len(sat_tests) == 1
-        sat_test = sat_tests[0]
-        succeeded = sat_test["result"] == "succeeded"
-
-        if succeeded:
-            client_index, server_index = divmod(i, len(servers))
-            server = servers[server_index]
-            client = clients[client_index]
-            combinations_succeeded.add((server, client))
+    for measurement_result in result.get_all_measuements_of_type(
+        TEST_ABBR, succeeding=True
+    ):
+        combinations_succeeded.add(
+            (measurement_result.server.name, measurement_result.client.name)
+        )
 
     return combinations_succeeded
-
-
-def merge_results(result1: dict, result2: dict, log_dir: str) -> dict:
-    """Merge two result files."""
-    assert result1["quic_draft"] == result2["quic_draft"]
-    assert result1["quic_version"] == result2["quic_version"]
-    tests1 = dict[str, dict[str, dict[str, Any]]]()
-    meass1 = dict[str, dict[str, dict[str, Any]]]()
-    tests2 = dict[str, dict[str, dict[str, Any]]]()
-    meass2 = dict[str, dict[str, dict[str, Any]]]()
-    servers1: list[str] = result1["servers"]
-    servers2: list[str] = result2["servers"]
-    clients1: list[str] = result1["clients"]
-    clients2: list[str] = result2["clients"]
-
-    servers_merged = sorted(frozenset(servers1) | frozenset(servers2))
-    clients_merged = sorted(frozenset(clients1) | frozenset(clients2))
-
-    for server_index, server in enumerate(servers1):
-        tests1[server] = {}
-        meass1[server] = {}
-
-        for client_index, client in enumerate(clients1):
-            tests1[server][client] = {}
-            meass1[server][client] = {}
-
-            try:
-                test_index = client_index * len(servers1) + server_index
-
-                for test in result1["results"][test_index]:
-                    tests1[server][client][test["abbr"]] = test
-
-                for meas in result1["measurements"][test_index]:
-                    meass1[server][client][meas["abbr"]] = meas
-            except IndexError as err:
-                breakpoint()
-                sys.exit(err)
-
-    for server_index, server in enumerate(servers2):
-        tests2[server] = {}
-        meass2[server] = {}
-
-        for client_index, client in enumerate(clients2):
-            tests2[server][client] = {}
-            meass2[server][client] = {}
-
-            try:
-                test_index = client_index * len(servers2) + server_index
-
-                for test in result2["results"][test_index]:
-                    tests2[server][client][test["abbr"]] = test
-
-                for meas in result2["measurements"][test_index]:
-                    meass2[server][client][meas["abbr"]] = meas
-            except IndexError as err:
-                breakpoint()
-                sys.exit(err)
-
-    # check and merge test and measurements
-    tests_merged = dict[str, dict[str, dict[str, Any]]]()
-    meass_merged = dict[str, dict[str, dict[str, Any]]]()
-
-    for server in servers_merged:
-        tests_merged[server] = {}
-        meass_merged[server] = {}
-
-        for client in clients_merged:
-            # merge tests
-            tests_for_combi1 = tests1.get(server, {}).get(client, {})
-            tests_for_combi2 = tests2.get(server, {}).get(client, {})
-            test_abbrs1 = frozenset(tests_for_combi1.keys())
-            test_abbrs2 = frozenset(tests_for_combi2.keys())
-            common_tests = test_abbrs1 & test_abbrs2
-
-            if common_tests:
-                breakpoint()
-                sys.exit(
-                    f"Both results have same test results for {server}_{client}: {', '.join(common_tests)}"
-                )
-
-            tests_merged[server][client] = {**tests_for_combi1, **tests_for_combi2}
-
-            # merge measurements
-            meass_for_combi1 = meass1.get(server, {}).get(client, {})
-            meass_for_combi2 = meass2.get(server, {}).get(client, {})
-            meas_abbrs1 = frozenset(meass_for_combi1.keys())
-            meas_abbrs2 = frozenset(meass_for_combi2.keys())
-            common_meass = meas_abbrs1 & meas_abbrs2
-
-            if common_meass:
-                breakpoint()
-                sys.exit(
-                    f"Both results have same measurement results for {server}_{client}: {', '.join(common_meass)}"
-                )
-
-            meass_merged[server][client] = {**meass_for_combi1, **meass_for_combi2}
-
-    # linearize tests and measurements
-    tests_lin = list[list[Any]]()
-    meass_lin = list[list[Any]]()
-
-    for client in clients_merged:
-        for server in servers_merged:
-            tests_lin.append(list(tests_merged[server][client].values()))
-            meass_lin.append(list(meass_merged[server][client].values()))
-
-    output = {
-        "start_time": min(result1["start_time"], result2["start_time"]),
-        "end_time": min(result1["end_time"], result2["end_time"]),
-        "log_dir": log_dir,
-        "servers": servers_merged,
-        "clients": clients_merged,
-        "urls": {**result1.get("urls", {}), **result2.get("urls", {})},
-        "tests": {**result1.get("tests", {}), **result2.get("tests", {})},
-        "quic_draft": result1["quic_draft"],
-        "quic_version": result1["quic_version"],
-        "results": tests_lin,
-        "measurements": meass_lin,
-    }
-
-    return output
 
 
 def run_single(
@@ -236,7 +118,7 @@ def run_single(
     save_files=False,
     skip_compliance_check=False,
 ) -> int:
-    """docstring for run_single"""
+    """Run measurement for a single combination."""
 
     combination = f"{server}_{client}"
 
@@ -264,36 +146,43 @@ def run_single(
             ).run()
 
             print("copy result files to final destination")
+            owner = log_dir.owner()
+            group = log_dir.group()
             # 1. merge results json files
-            tmp_result = json.load(tmp_results_file)
+            tmp_result = Result(file_path=tmp_results_file.name)
 
             if output.is_file():
-                with output.open("r") as final_result_file:
-                    final_result = json.load(final_result_file)
-
-                final_result = merge_results(
-                    final_result,
-                    tmp_result,
-                    log_dir=str(log_dir.absolute()),
+                final_result = Result(output)
+                final_result = final_result.merge(
+                    tmp_result, file_path=output.absolute(), log_dir=log_dir.absolute()
                 )
             else:
+                tmp_result.log_dir = log_dir.absolute()
+                tmp_result.file_path = output
                 final_result = tmp_result
-                final_result["log_dir"] = str(output.absolute())
 
-            with output.open("w") as final_result_file:
-                json.dump(final_result, fp=final_result_file)
+            final_result.save()
+            try:
+                shutil.chown(final_result.file_path, user=owner, group=group)
+            except PermissionError:
+                pass
 
             # 2. move files from log dir
-            combination_log_dir_path = tmp_log_dir_path / combination
+            combi_tmp_log_dir_path = tmp_log_dir_path / combination
+            combi_dst_log_dir_path = log_dir / combination
 
-            if combination_log_dir_path.is_dir():
-                shutil.move(combination_log_dir_path, log_dir / combination)
+            if combi_tmp_log_dir_path.is_dir():
+                shutil.move(combi_tmp_log_dir_path, combi_dst_log_dir_path)
+                try:
+                    recursive_chown(combi_dst_log_dir_path, user=owner, group=group)
+                except PermissionError:
+                    pass
             else:
-                breakpoint()
                 print(
-                    f"Log dir {combination_log_dir_path} does not exist",
+                    f"Log dir {combi_tmp_log_dir_path} does not exist",
                     file=sys.stderr,
                 )
+                breakpoint()
 
     return ret
 
@@ -304,7 +193,7 @@ def main():
 
     # find succeeding combinations from previous run
     combinations_succeeded = find_succeeding(args.last_results)
-    print(f"This combinations succeeded for test case {TEST_ABBR}")
+    print(f"These combinations succeeded for test case {TEST_ABBR}")
 
     for server, client in combinations_succeeded:
         print(f"- {server}_{client}")
@@ -313,7 +202,7 @@ def main():
 
     if args.json.is_file():
         print(f"WARNING: Output file {args.json} exists!")
-        combinations_already_run = find_succeeding(args.json)
+        combinations_already_run = find_succeeding(Result(args.json))
         print(
             f"Will skip {len(combinations_already_run)} combinations that already ran according to {args.json}."
         )
@@ -331,6 +220,14 @@ def main():
     if args.log_dir.is_dir():
         print(f"WARNING: Log dir {args.log_dir} exists!", file=sys.stderr)
     args.log_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        shutil.chown(
+            args.log_dir,
+            user=args.log_dir.parent.owner(),
+            group=args.log_dir.parent.group(),
+        )
+    except PermissionError:
+        pass
 
     # run it
 
