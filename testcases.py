@@ -2020,6 +2020,53 @@ class MeasurementSatellite(MeasurementGoodput):
         return 60
 
 
+class MeasurementSatelliteLoss(MeasurementSatellite):
+
+    drop_rate_percent: ClassVar[int] = 1
+
+    @classmethod
+    @property
+    def name(cls):
+        return "satloss"
+
+    @classmethod
+    @property
+    def abbreviation(cls):
+        return "SATL"
+
+    @classmethod
+    @property
+    def desc(cls):
+        return (
+            "Measures connection goodput over a lossy satellite link. "
+            f"File: {int(cls.FILESIZE / FileSize.MB)} MB; "
+            f"RTT: {cls.rtt_ms} ms; "
+            f"Data Rate: {cls.forward_data_rate // DataRate.MBPS}/{cls.return_data_rate // DataRate.MBPS} Mbps; "
+            f"Loss Rate: {cls.drop_rate_percent} %"
+        )
+
+    @classmethod
+    @property
+    def theoretical_max_value(cls):
+        return cls.forward_data_rate * (1 - cls.drop_rate_percent / 100) / DataRate.KBPS
+
+    @classmethod
+    @property
+    def scenario(cls) -> str:
+        return (
+            f"{super().scenario} "
+            f"--drop-rate-to-server={cls.drop_rate_percent} "
+            f"--drop-rate-to-client={cls.drop_rate_percent} "
+        )
+
+    @classmethod
+    @property
+    def timeout(cls) -> int:
+        """timeout in s"""
+
+        return super().timeout * 3
+
+
 TESTCASES: list[Type[TestCase]] = [
     TestCaseHandshake,
     TestCaseTransfer,
@@ -2050,4 +2097,5 @@ MEASUREMENTS: list[Type[Measurement]] = [
     MeasurementGoodput,
     MeasurementCrossTraffic,
     MeasurementSatellite,
+    MeasurementSatelliteLoss,
 ]
