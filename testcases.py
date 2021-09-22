@@ -11,15 +11,25 @@ import tempfile
 from datetime import timedelta
 from enum import Enum, IntEnum
 from functools import cached_property
+from pathlib import Path
 from trace import Direction, PacketType, TraceAnalyzer, get_direction, get_packet_type
-from typing import Dict, List, Optional, Type, Union
+from typing import ClassVar, Optional, Type, Union
 
 from Crypto.Cipher import AES
 
 from result import TestResult
 
-KB = 1 << 10
-MB = 1 << 20
+
+class FileSize:
+    KB: ClassVar[int] = 1 << 10
+    MB: ClassVar[int] = 1 << 20
+
+
+class DataRate:
+    KBPS: ClassVar[int] = 10 ** 3
+    MBPS: ClassVar[int] = 10 ** 6
+    GBPS: ClassVar[int] = 10 ** 9
+
 
 QUIC_DRAFT = 34  # draft-34
 QUIC_VERSION = hex(0x1)
@@ -61,13 +71,7 @@ def generate_cert_chain(directory: str, length: int = 1):
 
 
 class TestCase(abc.ABC):
-    _files: List[str] = []
-    _www_dir: Optional[tempfile.TemporaryDirectory] = None
-    _client_keylog_file: str
-    _server_keylog_file: str
-    _download_dir: Optional[tempfile.TemporaryDirectory] = None
-    _sim_log_dir: tempfile.TemporaryDirectory
-    _cert_dir: Optional[tempfile.TemporaryDirectory] = None
+    data_rate: ClassVar[int] = 10 * DataRate.MBPS
 
     def __init__(
         self,
@@ -77,75 +81,100 @@ class TestCase(abc.ABC):
     ):
         self._server_keylog_file = server_keylog_file
         self._client_keylog_file = client_keylog_file
-        self._files = []
+        self._files = list[str]()
         self._sim_log_dir = sim_log_dir
+        self._www_dir: Optional[tempfile.TemporaryDirectory] = None
+        self._download_dir: Optional[tempfile.TemporaryDirectory] = None
+        self._cert_dir: Optional[tempfile.TemporaryDirectory] = None
 
-    @staticmethod
+    @classmethod
+    @property
     @abc.abstractmethod
-    def name() -> str:
+    def name(cls) -> str:
         pass
 
-    @staticmethod
+    @classmethod
+    @property
     @abc.abstractmethod
-    def desc() -> str:
+    def desc(cls) -> str:
         pass
 
     def __str__(self):
-        return self.name()
+        return self.name
 
-    def testname(self, p: Perspective):
+    @classmethod
+    def testname(cls, perspective: Perspective):
         """The name of testcase presented to the endpoint Docker images"""
 
-        return self.name()
+        return cls.name
 
-    @staticmethod
-    def scenario() -> str:
-        """Scenario for the ns3 simulator"""
+    @classmethod
+    @property
+    def scenario(cls) -> str:
+        """Scenario for the ns3 simulator."""
 
-        return "simple-p2p --delay=15ms --bandwidth=10Mbps --queue=25"
+        return " ".join(
+            (
+                "simple-p2p",
+                "--delay=15ms",
+                f"--bandwidth={cls.data_rate // DataRate.MBPS}Mbps",
+                "--queue=25",
+            )
+        )
 
-    @staticmethod
-    def timeout() -> int:
+    @classmethod
+    @property
+    def timeout(cls) -> int:
         """timeout in s"""
 
         return 60
 
-    @staticmethod
-    def urlprefix() -> str:
+    @classmethod
+    def to_json(cls) -> dict:
+        return {
+            "name": cls.name,
+            "desc": cls.desc,
+        }
+
+    @classmethod
+    def urlprefix(cls) -> str:
         """URL prefix"""
 
         return "https://server4:443/"
 
-    @staticmethod
-    def additional_envs() -> Dict[str, Union[str, int, float]]:
+    @classmethod
+    def additional_envs(cls) -> dict[str, Union[str, int, float]]:
         """Additional environment variables."""
 
         return {}
 
-    @staticmethod
-    def additional_containers() -> List[str]:
+    @classmethod
+    def additional_containers(cls) -> list[str]:
         return [""]
 
-    def www_dir(self) -> str:
+    @property
+    def www_dir(self) -> Path:
         if not self._www_dir:
             self._www_dir = tempfile.TemporaryDirectory(dir="/tmp", prefix="www_")
 
-        return self._www_dir.name + "/"
+        return Path(self._www_dir.name)
 
-    def download_dir(self) -> str:
+    @property
+    def download_dir(self) -> Path:
         if not self._download_dir:
             self._download_dir = tempfile.TemporaryDirectory(
                 dir="/tmp", prefix="download_"
             )
 
-        return self._download_dir.name + "/"
+        return Path(self._download_dir.name)
 
-    def certs_dir(self) -> str:
+    @property
+    def certs_dir(self) -> Path:
         if not self._cert_dir:
             self._cert_dir = tempfile.TemporaryDirectory(dir="/tmp", prefix="certs_")
             generate_cert_chain(self._cert_dir.name)
 
-        return self._cert_dir.name + "/"
+        return Path(self._cert_dir.name)
 
     def _is_valid_keylog(self, filename) -> bool:
         if not os.path.isfile(filename) or os.path.getsize(filename) == 0:
@@ -169,7 +198,10 @@ class TestCase(abc.ABC):
             logging.debug("Using the server's key log file.")
 
             return self._server_keylog_file
+
         logging.debug("No key log file found.")
+
+        return None
 
     @cached_property
     def _client_trace(self):
@@ -187,7 +219,7 @@ class TestCase(abc.ABC):
         """See https://www.stefanocappellini.it/generate-pseudorandom-bytes-with-python/ for benchmarks"""
         filename = random_string(filename_len)
         enc = AES.new(os.urandom(32), AES.MODE_OFB, b"a" * 16)
-        with open(self.www_dir() + filename, "wb") as file:
+        with (self.www_dir / filename).open("wb") as file:
             file.write(enc.encrypt(b" " * size))
         logging.debug("Generated random file: %s of size: %d", filename, size)
 
@@ -212,9 +244,9 @@ class TestCase(abc.ABC):
         if len(self._files) == 0:
             raise Exception("No test files generated.")
         files = [
-            n
-            for n in os.listdir(self.download_dir())
-            if os.path.isfile(os.path.join(self.download_dir(), n))
+            n.name
+            for n in self.download_dir.iterdir()
+            if (self.download_dir / n).is_file()
         ]
         too_many = [f for f in files if f not in self._files]
 
@@ -228,36 +260,36 @@ class TestCase(abc.ABC):
         if len(too_many) != 0 or len(too_few) != 0:
             return False
 
-        for f in self._files:
-            fp = self.download_dir() + f
+        for file_name in self._files:
+            file_path = self.download_dir / file_name
 
-            if not os.path.isfile(fp):
-                logging.info("File %s does not exist.", fp)
+            if not os.path.isfile(file_path):
+                logging.info("File %s does not exist.", file_path)
 
                 return False
             try:
-                size = os.path.getsize(self.www_dir() + f)
-                downloaded_size = os.path.getsize(fp)
+                size = (self.www_dir / file_name).stat().st_size
+                downloaded_size = os.path.getsize(file_path)
 
                 if size != downloaded_size:
                     logging.info(
                         "File size of %s doesn't match. Original: %d bytes, downloaded: %d bytes.",
-                        fp,
+                        file_path,
                         size,
                         downloaded_size,
                     )
 
                     return False
 
-                if not filecmp.cmp(self.www_dir() + f, fp, shallow=False):
-                    logging.info("File contents of %s do not match.", fp)
+                if not filecmp.cmp(self.www_dir / file_name, file_path, shallow=False):
+                    logging.info("File contents of %s do not match.", file_path)
 
                     return False
             except Exception as exception:
                 logging.info(
                     "Could not compare files %s and %s: %s",
-                    self.www_dir() + f,
-                    fp,
+                    self.www_dir / file_name,
+                    file_path,
                     exception,
                 )
 
@@ -286,7 +318,7 @@ class TestCase(abc.ABC):
             for packet in self._server_trace.get_initial(Direction.FROM_SERVER)
         }
 
-    def _payload_size(self, packets: List) -> int:
+    def _payload_size(self, packets: list) -> int:
         """Get the sum of the payload sizes of all packets"""
         size = 0
 
@@ -312,7 +344,7 @@ class TestCase(abc.ABC):
             self._download_dir = None
 
     @abc.abstractmethod
-    def get_paths(self) -> List[str]:
+    def get_paths(self) -> list[str]:
         pass
 
     @abc.abstractmethod
@@ -321,32 +353,56 @@ class TestCase(abc.ABC):
 
 
 class Measurement(TestCase):
-    @abc.abstractmethod
+    _result = 0.0
+
+    @property
     def result(self) -> float:
+        return self._result
+
+    @classmethod
+    @property
+    @abc.abstractmethod
+    def theoretical_max_value(cls) -> Union[float, int]:
+        """Return the maximum value, that could be reached theoretically in ``unit``."""
+
+    @classmethod
+    @property
+    @abc.abstractmethod
+    def unit(cls) -> str:
         pass
 
-    @staticmethod
+    @classmethod
+    @property
     @abc.abstractmethod
-    def unit() -> str:
+    def repetitions(cls) -> int:
         pass
 
-    @staticmethod
-    @abc.abstractmethod
-    def repetitions() -> int:
-        pass
+    @classmethod
+    def to_json(cls) -> dict:
+        return {
+            **super().to_json(),
+            **{
+                "theoretical_max_value": cls.theoretical_max_value,
+                "repetitions": cls.repetitions,
+            },
+        }
 
 
 class TestCaseVersionNegotiation(TestCase):
-    @staticmethod
-    def name():
+    @classmethod
+    @property
+    def name(cls):
+        """A longer human and machine readable name. Used e.g. in path names."""
         return "versionnegotiation"
 
-    @staticmethod
-    def abbreviation():
+    @classmethod
+    @property
+    def abbreviation(cls):
         return "V"
 
-    @staticmethod
-    def desc():
+    @classmethod
+    @property
+    def desc(cls):
         return "A version negotiation packet is elicited and acted on."
 
     def get_paths(self):
@@ -378,20 +434,23 @@ class TestCaseVersionNegotiation(TestCase):
 
 
 class TestCaseHandshake(TestCase):
-    @staticmethod
-    def name():
+    @classmethod
+    @property
+    def name(cls):
         return "handshake"
 
-    @staticmethod
-    def abbreviation():
+    @classmethod
+    @property
+    def abbreviation(cls):
         return "H"
 
-    @staticmethod
-    def desc():
+    @classmethod
+    @property
+    def desc(cls):
         return "Handshake completes successfully."
 
     def get_paths(self):
-        self._files = [self._generate_random_file(1 * KB)]
+        self._files = [self._generate_random_file(1 * FileSize.KB)]
 
         return self._files
 
@@ -414,27 +473,40 @@ class TestCaseHandshake(TestCase):
 
 
 class TestCaseLongRTT(TestCaseHandshake):
-    @staticmethod
-    def abbreviation():
+    rtt_ms = 1500
+    data_rate = 10 * DataRate.MBPS
+    queue_size = 25
+
+    @classmethod
+    @property
+    def abbreviation(cls):
         return "LR"
 
-    @staticmethod
-    def name():
+    @classmethod
+    @property
+    def name(cls):
         return "longrtt"
 
-    @staticmethod
-    def testname(p: Perspective):
+    @classmethod
+    def testname(cls, perspective: Perspective):
         return "handshake"
 
-    @staticmethod
-    def desc():
-        return "Handshake completes when RTT is long."
+    @classmethod
+    @property
+    def desc(cls):
+        return f"Handshake completes when RTT is very high ({cls.rtt_ms / 1000} s)."
 
-    @staticmethod
-    def scenario() -> str:
-        """Scenario for the ns3 simulator"""
-
-        return "simple-p2p --delay=750ms --bandwidth=10Mbps --queue=25"
+    @classmethod
+    @property
+    def scenario(cls) -> str:
+        return " ".join(
+            (
+                "simple-p2p",
+                f"--delay={cls.rtt_ms // 2}ms",
+                f"--bandwidth={cls.data_rate // DataRate.MBPS}Mbps",
+                f"--queue={cls.queue_size}",
+            )
+        )
 
     def check(self) -> TestResult:
         num_handshakes = self._count_handshakes()
@@ -462,23 +534,26 @@ class TestCaseLongRTT(TestCaseHandshake):
 
 
 class TestCaseTransfer(TestCase):
-    @staticmethod
-    def name():
+    @classmethod
+    @property
+    def name(cls):
         return "transfer"
 
-    @staticmethod
-    def abbreviation():
+    @classmethod
+    @property
+    def abbreviation(cls):
         return "DC"
 
-    @staticmethod
-    def desc():
+    @classmethod
+    @property
+    def desc(cls):
         return "Stream data is being sent and received correctly. Connection close completes with a zero error code."
 
     def get_paths(self):
         self._files = [
-            self._generate_random_file(2 * MB),
-            self._generate_random_file(3 * MB),
-            self._generate_random_file(5 * MB),
+            self._generate_random_file(2 * FileSize.MB),
+            self._generate_random_file(3 * FileSize.MB),
+            self._generate_random_file(5 * FileSize.MB),
         ]
 
         return self._files
@@ -498,24 +573,27 @@ class TestCaseTransfer(TestCase):
 
 
 class TestCaseChaCha20(TestCase):
-    @staticmethod
-    def name():
+    @classmethod
+    @property
+    def name(cls):
         return "chacha20"
 
-    @staticmethod
-    def testname(p: Perspective):
+    @classmethod
+    def testname(cls, perspective: Perspective):
         return "chacha20"
 
-    @staticmethod
-    def abbreviation():
+    @classmethod
+    @property
+    def abbreviation(cls):
         return "C20"
 
-    @staticmethod
-    def desc():
+    @classmethod
+    @property
+    def desc(cls):
         return "Handshake completes using ChaCha20."
 
     def get_paths(self):
-        self._files = [self._generate_random_file(3 * MB)]
+        self._files = [self._generate_random_file(3 * FileSize.MB)]
 
         return self._files
 
@@ -548,20 +626,23 @@ class TestCaseChaCha20(TestCase):
 
 
 class TestCaseMultiplexing(TestCase):
-    @staticmethod
-    def name():
+    @classmethod
+    @property
+    def name(cls):
         return "multiplexing"
 
-    @staticmethod
-    def testname(p: Perspective):
+    @classmethod
+    def testname(cls, perspective: Perspective):
         return "transfer"
 
-    @staticmethod
-    def abbreviation():
+    @classmethod
+    @property
+    def abbreviation(cls):
         return "M"
 
-    @staticmethod
-    def desc():
+    @classmethod
+    @property
+    def desc(cls):
         return "Thousands of files are transferred over a single connection, and server increased stream limits to accomodate client requests."
 
     def get_paths(self):
@@ -609,21 +690,24 @@ class TestCaseMultiplexing(TestCase):
 
 
 class TestCaseRetry(TestCase):
-    @staticmethod
-    def name():
+    @classmethod
+    @property
+    def name(cls):
         return "retry"
 
-    @staticmethod
-    def abbreviation():
+    @classmethod
+    @property
+    def abbreviation(cls):
         return "S"
 
-    @staticmethod
-    def desc():
+    @classmethod
+    @property
+    def desc(cls):
         return "Server sends a Retry, and a subsequent connection using the Retry token completes successfully."
 
     def get_paths(self):
         self._files = [
-            self._generate_random_file(10 * KB),
+            self._generate_random_file(10 * FileSize.KB),
         ]
 
         return self._files
@@ -692,22 +776,25 @@ class TestCaseRetry(TestCase):
 
 
 class TestCaseResumption(TestCase):
-    @staticmethod
-    def name():
+    @classmethod
+    @property
+    def name(cls):
         return "resumption"
 
-    @staticmethod
-    def abbreviation():
+    @classmethod
+    @property
+    def abbreviation(cls):
         return "R"
 
-    @staticmethod
-    def desc():
+    @classmethod
+    @property
+    def desc(cls):
         return "Connection is established using TLS Session Resumption."
 
     def get_paths(self):
         self._files = [
-            self._generate_random_file(5 * KB),
-            self._generate_random_file(10 * KB),
+            self._generate_random_file(5 * FileSize.KB),
+            self._generate_random_file(10 * FileSize.KB),
         ]
 
         return self._files
@@ -764,16 +851,19 @@ class TestCaseZeroRTT(TestCase):
     FILESIZE = 32  # in bytes
     FILENAMELEN = 250
 
-    @staticmethod
-    def name():
+    @classmethod
+    @property
+    def name(cls):
         return "zerortt"
 
-    @staticmethod
-    def abbreviation():
+    @classmethod
+    @property
+    def abbreviation(cls):
         return "Z"
 
-    @staticmethod
-    def desc():
+    @classmethod
+    @property
+    def desc(cls):
         return "0-RTT data is being sent and acted on."
 
     def get_paths(self):
@@ -816,23 +906,26 @@ class TestCaseZeroRTT(TestCase):
 
 
 class TestCaseHTTP3(TestCase):
-    @staticmethod
-    def name():
+    @classmethod
+    @property
+    def name(cls):
         return "http3"
 
-    @staticmethod
-    def abbreviation():
+    @classmethod
+    @property
+    def abbreviation(cls):
         return "3"
 
-    @staticmethod
-    def desc():
+    @classmethod
+    @property
+    def desc(cls):
         return "An H3 transaction succeeded."
 
     def get_paths(self):
         self._files = [
-            self._generate_random_file(5 * KB),
-            self._generate_random_file(10 * KB),
-            self._generate_random_file(500 * KB),
+            self._generate_random_file(5 * FileSize.KB),
+            self._generate_random_file(10 * FileSize.KB),
+            self._generate_random_file(500 * FileSize.KB),
         ]
 
         return self._files
@@ -852,38 +945,50 @@ class TestCaseHTTP3(TestCase):
 
 
 class TestCaseAmplificationLimit(TestCase):
-    @staticmethod
-    def name():
+    @classmethod
+    @property
+    def name(cls):
         return "amplificationlimit"
 
-    @staticmethod
-    def testname(p: Perspective):
+    @classmethod
+    def testname(cls, perspective: Perspective):
         return "transfer"
 
-    @staticmethod
-    def abbreviation():
+    @classmethod
+    @property
+    def abbreviation(cls):
         return "A"
 
-    @staticmethod
-    def desc():
+    @classmethod
+    @property
+    def desc(cls):
         return "The server obeys the 3x amplification limit."
 
+    @property
     def certs_dir(self):
         if not self._cert_dir:
             self._cert_dir = tempfile.TemporaryDirectory(dir="/tmp", prefix="certs_")
             generate_cert_chain(self._cert_dir.name, 9)
 
-        return self._cert_dir.name + "/"
+        return Path(self._cert_dir.name)
 
-    @staticmethod
-    def scenario() -> str:
-        """Scenario for the ns3 simulator"""
+    @classmethod
+    @property
+    def scenario(cls) -> str:
         # Let the ClientHello pass, but drop a bunch of retransmissions afterwards.
 
-        return "droplist --delay=15ms --bandwidth=10Mbps --queue=25 --drops_to_server=2,3,4,5,6,7"
+        return " ".join(
+            (
+                "droplist",
+                "--delay=15ms",
+                f"--bandwidth={cls.data_rate // DataRate.MBPS}Mbps",
+                "--queue=25",
+                "--drops_to_server=2,3,4,5,6,7",
+            )
+        )
 
     def get_paths(self):
-        self._files = [self._generate_random_file(5 * KB)]
+        self._files = [self._generate_random_file(5 * FileSize.KB)]
 
         return self._files
 
@@ -996,30 +1101,41 @@ class TestCaseAmplificationLimit(TestCase):
 
 
 class TestCaseBlackhole(TestCase):
-    @staticmethod
-    def name():
+    @classmethod
+    @property
+    def name(cls):
         return "blackhole"
 
-    @staticmethod
-    def testname(p: Perspective):
+    @classmethod
+    def testname(cls, perspective: Perspective):
         return "transfer"
 
-    @staticmethod
-    def abbreviation():
+    @classmethod
+    @property
+    def abbreviation(cls):
         return "B"
 
-    @staticmethod
-    def desc():
+    @classmethod
+    @property
+    def desc(cls):
         return "Transfer succeeds despite underlying network blacking out for a few seconds."
 
-    @staticmethod
-    def scenario() -> str:
-        """Scenario for the ns3 simulator"""
-
-        return "blackhole --delay=15ms --bandwidth=10Mbps --queue=25 --on=5s --off=2s"
+    @classmethod
+    @property
+    def scenario(cls) -> str:
+        return " ".join(
+            (
+                "blackhole",
+                "--delay=15ms",
+                f"--bandwidth={cls.data_rate // DataRate.MBPS}Mbps",
+                "--queue=25",
+                "--on=5s",
+                "--off=2s",
+            )
+        )
 
     def get_paths(self):
-        self._files = [self._generate_random_file(10 * MB)]
+        self._files = [self._generate_random_file(10 * FileSize.MB)]
 
         return self._files
 
@@ -1038,27 +1154,30 @@ class TestCaseBlackhole(TestCase):
 
 
 class TestCaseKeyUpdate(TestCaseHandshake):
-    @staticmethod
-    def name():
+    @classmethod
+    @property
+    def name(cls):
         return "keyupdate"
 
-    @staticmethod
-    def testname(p: Perspective):
+    @classmethod
+    def testname(cls, perspective: Perspective):
         if p is Perspective.CLIENT:
             return "keyupdate"
 
         return "transfer"
 
-    @staticmethod
-    def abbreviation():
+    @classmethod
+    @property
+    def abbreviation(cls):
         return "U"
 
-    @staticmethod
-    def desc():
+    @classmethod
+    @property
+    def desc(cls):
         return "One of the two endpoints updates keys and the peer responds correctly."
 
     def get_paths(self):
-        self._files = [self._generate_random_file(3 * MB)]
+        self._files = [self._generate_random_file(3 * FileSize.MB)]
 
         return self._files
 
@@ -1126,35 +1245,47 @@ class TestCaseKeyUpdate(TestCaseHandshake):
 class TestCaseHandshakeLoss(TestCase):
     _num_runs = 50
 
-    @staticmethod
-    def name():
+    @classmethod
+    @property
+    def name(cls):
         return "handshakeloss"
 
-    @staticmethod
-    def testname(p: Perspective):
+    @classmethod
+    def testname(cls, perspective: Perspective):
         return "multiconnect"
 
-    @staticmethod
-    def abbreviation():
+    @classmethod
+    @property
+    def abbreviation(cls):
         return "L1"
 
-    @staticmethod
-    def desc():
+    @classmethod
+    @property
+    def desc(cls):
         return "Handshake completes under extreme packet loss."
 
-    @staticmethod
-    def timeout() -> int:
+    @classmethod
+    @property
+    def timeout(cls) -> int:
         return 300
 
-    @staticmethod
-    def scenario() -> str:
-        """Scenario for the ns3 simulator"""
-
-        return "drop-rate --delay=15ms --bandwidth=10Mbps --queue=25 --rate_to_server=30 --rate_to_client=30"
+    @classmethod
+    @property
+    def scenario(cls) -> str:
+        return " ".join(
+            (
+                "drop-rate",
+                "--delay=15ms",
+                f"--bandwidth={cls.data_rate // DataRate.MBPS}Mbps",
+                "--queue=25",
+                "--rate_to_server=30",
+                "--rate_to_client=30",
+            )
+        )
 
     def get_paths(self):
         for _ in range(self._num_runs):
-            self._files.append(self._generate_random_file(1 * KB))
+            self._files.append(self._generate_random_file(1 * FileSize.KB))
 
         return self._files
 
@@ -1175,31 +1306,42 @@ class TestCaseHandshakeLoss(TestCase):
 
 
 class TestCaseTransferLoss(TestCase):
-    @staticmethod
-    def name():
+    @classmethod
+    @property
+    def name(cls):
         return "transferloss"
 
-    @staticmethod
-    def testname(p: Perspective):
+    @classmethod
+    def testname(cls, perspective: Perspective):
         return "transfer"
 
-    @staticmethod
-    def abbreviation():
+    @classmethod
+    @property
+    def abbreviation(cls):
         return "L2"
 
-    @staticmethod
-    def desc():
+    @classmethod
+    @property
+    def desc(cls):
         return "Transfer completes under moderate packet loss."
 
-    @staticmethod
-    def scenario() -> str:
-        """Scenario for the ns3 simulator"""
-
-        return "drop-rate --delay=15ms --bandwidth=10Mbps --queue=25 --rate_to_server=2 --rate_to_client=2"
+    @classmethod
+    @property
+    def scenario(cls) -> str:
+        return " ".join(
+            (
+                "drop-rate",
+                "--delay=15ms",
+                f"--bandwidth={cls.data_rate // DataRate.MBPS}Mbps",
+                "--queue=25",
+                "--rate_to_server=2",
+                "--rate_to_client=2",
+            )
+        )
 
     def get_paths(self):
         # At a packet loss rate of 2% and a MTU of 1500 bytes, we can expect 27 dropped packets.
-        self._files = [self._generate_random_file(2 * MB)]
+        self._files = [self._generate_random_file(2 * FileSize.MB)]
 
         return self._files
 
@@ -1218,52 +1360,76 @@ class TestCaseTransferLoss(TestCase):
 
 
 class TestCaseHandshakeCorruption(TestCaseHandshakeLoss):
-    @staticmethod
-    def name():
+    @classmethod
+    @property
+    def name(cls):
         return "handshakecorruption"
 
-    @staticmethod
-    def abbreviation():
+    @classmethod
+    @property
+    def abbreviation(cls):
         return "C1"
 
-    @staticmethod
-    def desc():
+    @classmethod
+    @property
+    def desc(cls):
         return "Handshake completes under extreme packet corruption."
 
-    @staticmethod
-    def scenario() -> str:
-        """Scenario for the ns3 simulator"""
-
-        return "corrupt-rate --delay=15ms --bandwidth=10Mbps --queue=25 --rate_to_server=30 --rate_to_client=30"
+    @classmethod
+    @property
+    def scenario(cls) -> str:
+        return " ".join(
+            (
+                "corrupt-rate",
+                "--delay=15ms",
+                f"--bandwidth={cls.data_rate // DataRate.MBPS}Mbps",
+                "--queue=25",
+                "--rate_to_server=30",
+                "--rate_to_client=30",
+            )
+        )
 
 
 class TestCaseTransferCorruption(TestCaseTransferLoss):
-    @staticmethod
-    def name():
+    @classmethod
+    @property
+    def name(cls):
         return "transfercorruption"
 
-    @staticmethod
-    def abbreviation():
+    @classmethod
+    @property
+    def abbreviation(cls):
         return "C2"
 
-    @staticmethod
-    def desc():
+    @classmethod
+    @property
+    def desc(cls):
         return "Transfer completes under moderate packet corruption."
 
-    @staticmethod
-    def scenario() -> str:
-        """Scenario for the ns3 simulator"""
-
-        return "corrupt-rate --delay=15ms --bandwidth=10Mbps --queue=25 --rate_to_server=2 --rate_to_client=2"
+    @classmethod
+    @property
+    def scenario(cls) -> str:
+        return " ".join(
+            (
+                "corrupt-rate",
+                "--delay=15ms",
+                f"--bandwidth={cls.data_rate // DataRate.MBPS}Mbps",
+                "--queue=25",
+                "--rate_to_server=2",
+                "--rate_to_client=2",
+            )
+        )
 
 
 class TestCaseECN(TestCaseHandshake):
-    @staticmethod
-    def name():
+    @classmethod
+    @property
+    def name(cls):
         return "ecn"
 
-    @staticmethod
-    def abbreviation():
+    @classmethod
+    @property
+    def abbreviation(cls):
         return "E"
 
     def _count_ecn(self, tr):
@@ -1356,34 +1522,45 @@ class TestCaseECN(TestCaseHandshake):
 
 
 class TestCasePortRebinding(TestCaseTransfer):
-    @staticmethod
-    def name():
+    @classmethod
+    @property
+    def name(cls):
         return "rebind-port"
 
-    @staticmethod
-    def abbreviation():
+    @classmethod
+    @property
+    def abbreviation(cls):
         return "BP"
 
-    @staticmethod
-    def testname(p: Perspective):
+    @classmethod
+    def testname(cls, perspective: Perspective):
         return "transfer"
 
-    @staticmethod
-    def desc():
+    @classmethod
+    @property
+    def desc(cls):
         return "Transfer completes under frequent port rebindings on the client side."
 
     def get_paths(self):
         self._files = [
-            self._generate_random_file(10 * MB),
+            self._generate_random_file(10 * FileSize.MB),
         ]
 
         return self._files
 
-    @staticmethod
-    def scenario() -> str:
-        """Scenario for the ns3 simulator"""
-
-        return "rebind --delay=15ms --bandwidth=10Mbps --queue=25 --first-rebind=1s --rebind-freq=5s"
+    @classmethod
+    @property
+    def scenario(cls) -> str:
+        return " ".join(
+            (
+                "rebind",
+                "--delay=15ms",
+                f"--bandwidth={cls.data_rate // DataRate.MBPS}Mbps",
+                "--queue=25",
+                "--first-rebind=1s",
+                "--rebind-freq=5s",
+            )
+        )
 
     def check(self) -> TestResult:
         if not self._keylog_file():
@@ -1479,24 +1656,28 @@ class TestCasePortRebinding(TestCaseTransfer):
 
 
 class TestCaseAddressRebinding(TestCasePortRebinding):
-    @staticmethod
-    def name():
+    @classmethod
+    @property
+    def name(cls):
         return "rebind-addr"
 
-    @staticmethod
-    def abbreviation():
+    @classmethod
+    @property
+    def abbreviation(cls):
         return "BA"
 
-    @staticmethod
-    def desc():
+    @classmethod
+    @property
+    def desc(cls):
         return "Transfer completes under frequent IP address and port rebindings on the client side."
 
-    @staticmethod
-    def scenario() -> str:
+    @classmethod
+    @property
+    def scenario(cls) -> str:
         """Scenario for the ns3 simulator"""
 
         return (
-            super(TestCaseAddressRebinding, TestCaseAddressRebinding).scenario()
+            super(TestCaseAddressRebinding, TestCaseAddressRebinding).scenario
             + " --rebind-addr"
         )
 
@@ -1537,30 +1718,33 @@ class TestCaseAddressRebinding(TestCasePortRebinding):
 
 
 class TestCaseIPv6(TestCaseTransfer):
-    @staticmethod
-    def name():
+    @classmethod
+    @property
+    def name(cls):
         return "ipv6"
 
-    @staticmethod
-    def abbreviation():
+    @classmethod
+    @property
+    def abbreviation(cls):
         return "6"
 
-    @staticmethod
-    def testname(p: Perspective):
+    @classmethod
+    def testname(cls, perspective: Perspective):
         return "transfer"
 
     @staticmethod
     def urlprefix() -> str:
         return "https://server6:443/"
 
-    @staticmethod
-    def desc():
+    @classmethod
+    @property
+    def desc(cls):
         return "A transfer across an IPv6-only network succeeded."
 
     def get_paths(self):
         self._files = [
-            self._generate_random_file(5 * KB),
-            self._generate_random_file(10 * KB),
+            self._generate_random_file(5 * FileSize.KB),
+            self._generate_random_file(10 * FileSize.KB),
         ]
 
         return self._files
@@ -1585,32 +1769,36 @@ class TestCaseIPv6(TestCaseTransfer):
 
 
 class TestCaseConnectionMigration(TestCaseAddressRebinding):
-    @staticmethod
-    def name():
+    @classmethod
+    @property
+    def name(cls):
         return "connectionmigration"
 
-    @staticmethod
-    def abbreviation():
+    @classmethod
+    @property
+    def abbreviation(cls):
         return "CM"
 
-    @staticmethod
-    def testname(p: Perspective):
-        if p is Perspective.CLIENT:
+    @classmethod
+    def testname(cls, perspective: Perspective):
+        if perspective is Perspective.CLIENT:
             return "connectionmigration"
 
         return "transfer"
 
-    @staticmethod
-    def desc():
+    @classmethod
+    @property
+    def desc(cls):
         return "A transfer succeeded during which the client performed an active migration."
 
-    @staticmethod
-    def scenario() -> str:
-        return super(TestCaseTransfer, TestCaseTransfer).scenario()
+    @classmethod
+    @property
+    def scenario(cls) -> str:
+        return super(TestCaseTransfer, TestCaseTransfer).scenario
 
     def get_paths(self):
         self._files = [
-            self._generate_random_file(2 * MB),
+            self._generate_random_file(2 * FileSize.MB),
         ]
 
         return self._files
@@ -1666,32 +1854,41 @@ class TestCaseConnectionMigration(TestCaseAddressRebinding):
 
 
 class MeasurementGoodput(Measurement):
-    FILESIZE = 10 * MB
-    _result = 0.0
+    FILESIZE = 10 * FileSize.MB
 
-    @staticmethod
-    def name():
+    @classmethod
+    @property
+    def name(cls):
         return "goodput"
 
-    @staticmethod
-    def unit() -> str:
+    @classmethod
+    @property
+    def unit(cls) -> str:
         return "kbps"
 
-    @staticmethod
-    def testname(p: Perspective):
+    @classmethod
+    def testname(cls, perspective: Perspective):
         return "transfer"
 
-    @staticmethod
-    def abbreviation():
+    @classmethod
+    @property
+    def abbreviation(cls):
         return "G"
 
-    @staticmethod
-    def desc():
+    @classmethod
+    @property
+    def desc(cls):
         return "Measures connection goodput over a 10Mbps link."
 
-    @staticmethod
-    def repetitions() -> int:
-        return 5
+    @classmethod
+    @property
+    def theoretical_max_value(cls):
+        return cls.data_rate / DataRate.KBPS
+
+    @classmethod
+    @property
+    def repetitions(cls) -> int:
+        return 2
 
     def get_paths(self):
         self._files = [self._generate_random_file(self.FILESIZE)]
@@ -1710,7 +1907,7 @@ class MeasurementGoodput(Measurement):
             return TestResult.FAILED
 
         packets = self._client_trace.get_1rtt(Direction.FROM_SERVER)
-        packet_times: List[timedelta] = [packet.sniff_time for packet in packets]
+        packet_times: list[timedelta] = [packet.sniff_time for packet in packets]
         first = min(packet_times)
         last = max(packet_times)
         time = last - first
@@ -1722,7 +1919,7 @@ class MeasurementGoodput(Measurement):
         goodput_kbps = (8 * self.FILESIZE) / time_ms
         logging.debug(
             "Transferring %d MB took %d ms. Goodput: %d kbps",
-            self.FILESIZE / MB,
+            self.FILESIZE / FileSize.MB,
             time_ms,
             goodput_kbps,
         )
@@ -1730,77 +1927,100 @@ class MeasurementGoodput(Measurement):
 
         return TestResult.SUCCEEDED
 
-    def result(self) -> float:
-        return self._result
-
 
 class MeasurementCrossTraffic(MeasurementGoodput):
-    FILESIZE = 25 * MB
+    FILESIZE = 25 * FileSize.MB
 
-    @staticmethod
-    def name():
+    @classmethod
+    @property
+    def name(cls):
         return "crosstraffic"
 
-    @staticmethod
-    def abbreviation():
+    @classmethod
+    @property
+    def abbreviation(cls):
         return "C"
 
-    @staticmethod
-    def desc():
+    @classmethod
+    @property
+    def desc(cls):
         return "Measures goodput over a 10Mbps link when competing with a TCP (cubic) connection."
 
-    @staticmethod
-    def timeout() -> int:
+    @classmethod
+    @property
+    def timeout(cls) -> int:
         return 180
 
     @staticmethod
-    def additional_envs() -> Dict[str, Union[str, int, float]]:
+    def additional_envs() -> dict[str, Union[str, int, float]]:
         return {"IPERF_CONGESTION": "cubic"}
 
     @staticmethod
-    def additional_containers() -> List[str]:
+    def additional_containers() -> list[str]:
         return ["iperf_server", "iperf_client"]
 
 
 class MeasurementSatellite(MeasurementGoodput):
-    FILESIZE = 10 * MB
+    FILESIZE = 10 * FileSize.MB
+    rtt_ms = 600
+    forward_data_rate = 20 * DataRate.MBPS
+    return_data_rate = 2 * DataRate.MBPS
+    queue_size = 25
     _result = 0.0
 
-    @staticmethod
-    def name():
-        return "satellite"
+    @classmethod
+    @property
+    def name(cls):
+        return "sat"
 
-    @staticmethod
-    def abbreviation():
+    @classmethod
+    @property
+    def abbreviation(cls):
         return "SAT"
 
-    @staticmethod
-    def desc():
-        return "Measures connection goodput over a satellite link."
-
-    @staticmethod
-    def repetitions() -> int:
-        #  return 3
-        return 2
-
-    @staticmethod
-    def scenario() -> str:
-        """Scenario for the ns3 simulator"""
-
+    @classmethod
+    @property
+    def desc(cls):
         return (
-            "asymmetric-p2p --delay=300ms "
-            "--forward-data-rate=20Mbps --return-data-rate=2Mbps "
-            "--forward-queue=25 --return-queue=25"
+            "Measures connection goodput over a satellite link. "
+            f"File: {int(cls.FILESIZE / FileSize.MB)} MB; "
+            f"RTT: {cls.rtt_ms} ms; "
+            f"Data Rate: {cls.forward_data_rate // DataRate.MBPS}/{cls.return_data_rate // DataRate.MBPS} Mbps; "
         )
 
-    @staticmethod
-    def timeout() -> int:
+    @classmethod
+    @property
+    def theoretical_max_value(cls):
+        return cls.forward_data_rate / DataRate.KBPS
+
+    @classmethod
+    @property
+    def repetitions(cls) -> int:
+        #  return 3
+
+        return 2
+
+    @classmethod
+    @property
+    def scenario(cls) -> str:
+        return (
+            "asymmetric-p2p "
+            f"--delay={cls.rtt_ms // 2}ms "
+            f"--forward-data-rate={cls.forward_data_rate // DataRate.MBPS}Mbps "
+            f"--return-data-rate={cls.return_data_rate // DataRate.MBPS}Mbps "
+            f"--forward-queue={cls.queue_size} "
+            f"--return-queue={cls.queue_size}"
+        )
+
+    @classmethod
+    @property
+    def timeout(cls) -> int:
         """timeout in s"""
 
         return 60
 
 
-TESTCASES: List[Type[TestCase]] = [
+TESTCASES: list[Type[TestCase]] = [
     TestCaseHandshake,
     TestCaseTransfer,
     TestCaseLongRTT,
@@ -1826,7 +2046,7 @@ TESTCASES: List[Type[TestCase]] = [
     # TestCaseConnectionMigration,
 ]
 
-MEASUREMENTS: List[Type[Measurement]] = [
+MEASUREMENTS: list[Type[Measurement]] = [
     MeasurementGoodput,
     MeasurementCrossTraffic,
     MeasurementSatellite,
