@@ -124,6 +124,10 @@ class InteropRunner:
                     f"You specified another log_dir than the result file {self._output} used before"
                 )
 
+            self._start_time = result.start_time
+            assert testcases.QUIC_VERSION == result.quic_version
+            assert testcases.QUIC_DRAFT == result.quic_draft
+
             testcases_mapping = {
                 testcase.abbreviation: testcase for testcase in TESTCASES
             }
