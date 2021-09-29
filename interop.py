@@ -114,19 +114,23 @@ class InteropRunner:
 
         if self._output and self._output.is_file():
             logging.warning(
-                "Output directory %s already exists. Trying to resume run...",
+                "Output json file %s already exists. Trying to resume run...",
                 self._output,
             )
             result = Result(self._output)
 
-            if result.log_dir.absolute() != self._log_dir.absolute():
+            if result.log_dir.path.absolute() != self._log_dir.absolute():
                 sys.exit(
                     f"You specified another log_dir than the result file {self._output} used before"
                 )
 
             self._start_time = result.start_time
-            assert testcases.QUIC_VERSION == result.quic_version
-            assert testcases.QUIC_DRAFT == result.quic_draft
+            assert (
+                int(testcases.QUIC_VERSION, base=16) == result.quic_version
+            ), f"QUIC VERSION differs: {int(testcases.QUIC_VERSION, base=16)} != {result.quic_version}"
+            assert (
+                testcases.QUIC_DRAFT == result.quic_draft
+            ), f"QUIC draft differs: {testcases.QUIC_DRAFT} != {result.quic_draft}"
 
             testcases_mapping = {
                 testcase.abbreviation: testcase for testcase in TESTCASES
@@ -147,7 +151,7 @@ class InteropRunner:
             for res_meas in result.all_measurement_results:
                 meas_cls = measuements_mapping[res_meas.test.abbr]
 
-                if res_meas.num_repetitions != meas_cls.repetitions:
+                if res_meas.test.repetitions != meas_cls.repetitions:
                     logging.debug(
                         (
                             "Measurement %s for server=%s and client=%s has a different amount "
