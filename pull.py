@@ -6,7 +6,7 @@ import sys
 
 from implementations import IMPLEMENTATIONS
 
-SIMULATOR_IMAGE = "martenseemann/quic-network-simulator"
+SIMULATOR_IMAGE = "therealsedrubal/quic-network-simulator"
 IPERF_IMAGE = "martenseemann/quic-interop-iperf-endpoint"
 
 
