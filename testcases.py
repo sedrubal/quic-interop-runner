@@ -21,8 +21,8 @@ from result import TestResult
 
 
 class FileSize:
-    KB: ClassVar[int] = 1 << 10
-    MB: ClassVar[int] = 1 << 20
+    KiB: ClassVar[int] = 1 << 10
+    MiB: ClassVar[int] = 1 << 20
 
 
 class DataRate:
@@ -450,7 +450,7 @@ class TestCaseHandshake(TestCase):
         return "Handshake completes successfully."
 
     def get_paths(self):
-        self._files = [self._generate_random_file(1 * FileSize.KB)]
+        self._files = [self._generate_random_file(1 * FileSize.KiB)]
 
         return self._files
 
@@ -551,9 +551,9 @@ class TestCaseTransfer(TestCase):
 
     def get_paths(self):
         self._files = [
-            self._generate_random_file(2 * FileSize.MB),
-            self._generate_random_file(3 * FileSize.MB),
-            self._generate_random_file(5 * FileSize.MB),
+            self._generate_random_file(2 * FileSize.MiB),
+            self._generate_random_file(3 * FileSize.MiB),
+            self._generate_random_file(5 * FileSize.MiB),
         ]
 
         return self._files
@@ -593,7 +593,7 @@ class TestCaseChaCha20(TestCase):
         return "Handshake completes using ChaCha20."
 
     def get_paths(self):
-        self._files = [self._generate_random_file(3 * FileSize.MB)]
+        self._files = [self._generate_random_file(3 * FileSize.MiB)]
 
         return self._files
 
@@ -707,7 +707,7 @@ class TestCaseRetry(TestCase):
 
     def get_paths(self):
         self._files = [
-            self._generate_random_file(10 * FileSize.KB),
+            self._generate_random_file(10 * FileSize.KiB),
         ]
 
         return self._files
@@ -793,8 +793,8 @@ class TestCaseResumption(TestCase):
 
     def get_paths(self):
         self._files = [
-            self._generate_random_file(5 * FileSize.KB),
-            self._generate_random_file(10 * FileSize.KB),
+            self._generate_random_file(5 * FileSize.KiB),
+            self._generate_random_file(10 * FileSize.KiB),
         ]
 
         return self._files
@@ -923,9 +923,9 @@ class TestCaseHTTP3(TestCase):
 
     def get_paths(self):
         self._files = [
-            self._generate_random_file(5 * FileSize.KB),
-            self._generate_random_file(10 * FileSize.KB),
-            self._generate_random_file(500 * FileSize.KB),
+            self._generate_random_file(5 * FileSize.KiB),
+            self._generate_random_file(10 * FileSize.KiB),
+            self._generate_random_file(500 * FileSize.KiB),
         ]
 
         return self._files
@@ -988,7 +988,7 @@ class TestCaseAmplificationLimit(TestCase):
         )
 
     def get_paths(self):
-        self._files = [self._generate_random_file(5 * FileSize.KB)]
+        self._files = [self._generate_random_file(5 * FileSize.KiB)]
 
         return self._files
 
@@ -1135,7 +1135,7 @@ class TestCaseBlackhole(TestCase):
         )
 
     def get_paths(self):
-        self._files = [self._generate_random_file(10 * FileSize.MB)]
+        self._files = [self._generate_random_file(10 * FileSize.MiB)]
 
         return self._files
 
@@ -1177,7 +1177,7 @@ class TestCaseKeyUpdate(TestCaseHandshake):
         return "One of the two endpoints updates keys and the peer responds correctly."
 
     def get_paths(self):
-        self._files = [self._generate_random_file(3 * FileSize.MB)]
+        self._files = [self._generate_random_file(3 * FileSize.MiB)]
 
         return self._files
 
@@ -1285,7 +1285,7 @@ class TestCaseHandshakeLoss(TestCase):
 
     def get_paths(self):
         for _ in range(self._num_runs):
-            self._files.append(self._generate_random_file(1 * FileSize.KB))
+            self._files.append(self._generate_random_file(1 * FileSize.KiB))
 
         return self._files
 
@@ -1341,7 +1341,7 @@ class TestCaseTransferLoss(TestCase):
 
     def get_paths(self):
         # At a packet loss rate of 2% and a MTU of 1500 bytes, we can expect 27 dropped packets.
-        self._files = [self._generate_random_file(2 * FileSize.MB)]
+        self._files = [self._generate_random_file(2 * FileSize.MiB)]
 
         return self._files
 
@@ -1543,7 +1543,7 @@ class TestCasePortRebinding(TestCaseTransfer):
 
     def get_paths(self):
         self._files = [
-            self._generate_random_file(10 * FileSize.MB),
+            self._generate_random_file(10 * FileSize.MiB),
         ]
 
         return self._files
@@ -1743,8 +1743,8 @@ class TestCaseIPv6(TestCaseTransfer):
 
     def get_paths(self):
         self._files = [
-            self._generate_random_file(5 * FileSize.KB),
-            self._generate_random_file(10 * FileSize.KB),
+            self._generate_random_file(5 * FileSize.KiB),
+            self._generate_random_file(10 * FileSize.KiB),
         ]
 
         return self._files
@@ -1798,7 +1798,7 @@ class TestCaseConnectionMigration(TestCaseAddressRebinding):
 
     def get_paths(self):
         self._files = [
-            self._generate_random_file(2 * FileSize.MB),
+            self._generate_random_file(2 * FileSize.MiB),
         ]
 
         return self._files
@@ -1854,7 +1854,7 @@ class TestCaseConnectionMigration(TestCaseAddressRebinding):
 
 
 class MeasurementGoodput(Measurement):
-    FILESIZE = 10 * FileSize.MB
+    FILESIZE = 10 * FileSize.MiB
 
     @classmethod
     @property
@@ -1918,8 +1918,8 @@ class MeasurementGoodput(Measurement):
         time_ms = time.total_seconds() * 1000
         goodput_kbps = (8 * self.FILESIZE) / time_ms
         logging.debug(
-            "Transferring %d MB took %d ms. Goodput: %d kbps",
-            self.FILESIZE / FileSize.MB,
+            "Transferring %d MiB took %d ms. Goodput: %d kbps",
+            self.FILESIZE / FileSize.MiB,
             time_ms,
             goodput_kbps,
         )
@@ -1929,7 +1929,7 @@ class MeasurementGoodput(Measurement):
 
 
 class MeasurementCrossTraffic(MeasurementGoodput):
-    FILESIZE = 25 * FileSize.MB
+    FILESIZE = 25 * FileSize.MiB
 
     @classmethod
     @property
@@ -1961,7 +1961,7 @@ class MeasurementCrossTraffic(MeasurementGoodput):
 
 
 class MeasurementSatellite(MeasurementGoodput):
-    FILESIZE = 10 * FileSize.MB
+    FILESIZE = 10 * FileSize.MiB
     rtt_ms = 600
     forward_data_rate = 20 * DataRate.MBPS
     return_data_rate = 2 * DataRate.MBPS
@@ -1983,7 +1983,7 @@ class MeasurementSatellite(MeasurementGoodput):
     def desc(cls):
         return (
             "Measures connection goodput over a satellite link. "
-            f"File: {int(cls.FILESIZE / FileSize.MB)} MB; "
+            f"File: {int(cls.FILESIZE / FileSize.MiB)} MiB; "
             f"RTT: {cls.rtt_ms} ms; "
             f"Data Rate: {cls.forward_data_rate // DataRate.MBPS}/{cls.return_data_rate // DataRate.MBPS} Mbps; "
         )
@@ -2039,7 +2039,7 @@ class MeasurementSatelliteLoss(MeasurementSatellite):
     def desc(cls):
         return (
             "Measures connection goodput over a lossy satellite link. "
-            f"File: {int(cls.FILESIZE / FileSize.MB)} MB; "
+            f"File: {int(cls.FILESIZE / FileSize.MiB)} MiB; "
             f"RTT: {cls.rtt_ms} ms; "
             f"Data Rate: {cls.forward_data_rate // DataRate.MBPS}/{cls.return_data_rate // DataRate.MBPS} Mbps; "
             f"Loss Rate: {cls.drop_rate_percent} %"
