@@ -132,6 +132,11 @@ class InteropRunner:
                 testcases.QUIC_DRAFT == result.quic_draft
             ), f"QUIC draft differs: {testcases.QUIC_DRAFT} != {result.quic_draft}"
 
+            for impl_name, implementation in self._implementations.items():
+                old_impl = result.get_image_info(impl_name)
+                old_img_id = old_impl.get("id")
+                assert not old_img_id or old_img_id == implementation.image_id
+
             testcases_mapping = {
                 testcase.abbreviation: testcase for testcase in TESTCASES
             }
@@ -220,7 +225,7 @@ class InteropRunner:
             "WWW": www_dir.name,
             "DOWNLOADS": downloads_dir.name,
             "SCENARIO": "simple-p2p --delay=15ms --bandwidth=10Mbps --queue=25",
-            "CLIENT": self._implementations[name]["image"],
+            "CLIENT": self._implementations[name].image,
         }
         cmd = "docker-compose up --timeout 0 --abort-on-container-exit -V sim client"
         proc = subprocess.run(
@@ -251,7 +256,7 @@ class InteropRunner:
             "CLIENT_LOGS": "/dev/null",
             "WWW": www_dir.name,
             "DOWNLOADS": downloads_dir.name,
-            "SERVER": self._implementations[name]["image"],
+            "SERVER": self._implementations[name].image,
         }
         cmd = "docker-compose up -V server"
         output = subprocess.check_output(
@@ -344,7 +349,10 @@ class InteropRunner:
             "servers": [name for name in self._servers],
             "clients": [name for name in self._clients],
             "urls": {
-                x: self._implementations[x]["url"]
+                x: self._implementations[x].url for x in self._servers + self._clients
+            },
+            "versions": {
+                x: self._implementations[x].img_info_json()
                 for x in self._servers + self._clients
             },
             "tests": {
@@ -465,8 +473,8 @@ class InteropRunner:
             "SERVER_LOGS": server_log_dir.name,
             "CLIENT_LOGS": client_log_dir.name,
             "SCENARIO": testcase.scenario,
-            "CLIENT": self._implementations[client]["image"],
-            "SERVER": self._implementations[server]["image"],
+            "CLIENT": self._implementations[client].image,
+            "SERVER": self._implementations[server].image,
             "REQUESTS": reqs,
             "VERSION": testcases.QUIC_VERSION,
         }
@@ -624,9 +632,9 @@ class InteropRunner:
                 logging.debug(
                     "Running with server %s (%s) and client %s (%s)",
                     server,
-                    self._implementations[server]["image"],
+                    self._implementations[server].image,
                     client,
-                    self._implementations[client]["image"],
+                    self._implementations[client].image,
                 )
 
                 if self._skip_compliance_check:
