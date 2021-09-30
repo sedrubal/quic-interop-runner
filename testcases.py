@@ -31,6 +31,11 @@ class DataRate:
     GBPS: ClassVar[int] = 10 ** 9
 
 
+class Time:
+    S: ClassVar[int] = 1
+    MS: ClassVar[float] = 10 ** -3
+
+
 QUIC_DRAFT = 34  # draft-34
 QUIC_VERSION = hex(0x1)
 
@@ -72,6 +77,7 @@ def generate_cert_chain(directory: str, length: int = 1):
 
 class TestCase(abc.ABC):
     data_rate: ClassVar[int] = 10 * DataRate.MBPS
+    rtt = 30 * Time.MS
 
     def __init__(
         self,
@@ -116,7 +122,7 @@ class TestCase(abc.ABC):
         return " ".join(
             (
                 "simple-p2p",
-                "--delay=15ms",
+                f"--delay={cls.rtt / Time.MS / 2:.0f}ms",
                 f"--bandwidth={cls.data_rate // DataRate.MBPS}Mbps",
                 "--queue=25",
             )
@@ -393,6 +399,7 @@ class TestCaseVersionNegotiation(TestCase):
     @property
     def name(cls):
         """A longer human and machine readable name. Used e.g. in path names."""
+
         return "versionnegotiation"
 
     @classmethod
@@ -473,7 +480,7 @@ class TestCaseHandshake(TestCase):
 
 
 class TestCaseLongRTT(TestCaseHandshake):
-    rtt_ms = 1500
+    rtt = 1500 * Time.MS
     data_rate = 10 * DataRate.MBPS
     queue_size = 25
 
@@ -494,7 +501,7 @@ class TestCaseLongRTT(TestCaseHandshake):
     @classmethod
     @property
     def desc(cls):
-        return f"Handshake completes when RTT is very high ({cls.rtt_ms / 1000} s)."
+        return f"Handshake completes when RTT is very high ({cls.rtt / Time.S:.1f} s)."
 
     @classmethod
     @property
@@ -502,7 +509,7 @@ class TestCaseLongRTT(TestCaseHandshake):
         return " ".join(
             (
                 "simple-p2p",
-                f"--delay={cls.rtt_ms // 2}ms",
+                f"--delay={cls.rtt / Time.MS / 2:.0f}ms",
                 f"--bandwidth={cls.data_rate // DataRate.MBPS}Mbps",
                 f"--queue={cls.queue_size}",
             )
@@ -1880,10 +1887,10 @@ class MeasurementGoodput(Measurement):
     def desc(cls):
         return "Measures connection goodput over a 10Mbps link."
 
-    @classmethod
-    @property
-    def theoretical_max_value(cls):
-        return cls.data_rate / DataRate.KBPS
+    #  @classmethod
+    #  @property
+    #  def theoretical_max_value(cls):
+    #      return 1 / ((1 / cls.data_rate) + (cls.rtt / cls.FILESIZE)) / DataRate.KBPS
 
     @classmethod
     @property
@@ -1962,7 +1969,7 @@ class MeasurementCrossTraffic(MeasurementGoodput):
 
 class MeasurementSatellite(MeasurementGoodput):
     FILESIZE = 10 * FileSize.MiB
-    rtt_ms = 600
+    rtt = 600 * Time.MS
     forward_data_rate = 20 * DataRate.MBPS
     return_data_rate = 2 * DataRate.MBPS
     queue_size = 25
@@ -1984,7 +1991,7 @@ class MeasurementSatellite(MeasurementGoodput):
         return (
             "Measures connection goodput over a satellite link. "
             f"File: {int(cls.FILESIZE / FileSize.MiB)} MiB; "
-            f"RTT: {cls.rtt_ms} ms; "
+            f"RTT: {cls.rtt / Time.MS:.0f} ms; "
             f"Data Rate: {cls.forward_data_rate // DataRate.MBPS}/{cls.return_data_rate // DataRate.MBPS} Mbps; "
         )
 
@@ -2005,7 +2012,7 @@ class MeasurementSatellite(MeasurementGoodput):
     def scenario(cls) -> str:
         return (
             "asymmetric-p2p "
-            f"--delay={cls.rtt_ms // 2}ms "
+            f"--delay={cls.rtt / Time.MS // 2}ms "
             f"--forward-data-rate={cls.forward_data_rate // DataRate.MBPS}Mbps "
             f"--return-data-rate={cls.return_data_rate // DataRate.MBPS}Mbps "
             f"--forward-queue={cls.queue_size} "
@@ -2017,7 +2024,7 @@ class MeasurementSatellite(MeasurementGoodput):
     def timeout(cls) -> int:
         """timeout in s"""
 
-        return 60
+        return 120
 
 
 class MeasurementSatelliteLoss(MeasurementSatellite):
@@ -2040,15 +2047,15 @@ class MeasurementSatelliteLoss(MeasurementSatellite):
         return (
             "Measures connection goodput over a lossy satellite link. "
             f"File: {int(cls.FILESIZE / FileSize.MiB)} MiB; "
-            f"RTT: {cls.rtt_ms} ms; "
+            f"RTT: {cls.rtt / Time.MS:.0f} ms; "
             f"Data Rate: {cls.forward_data_rate // DataRate.MBPS}/{cls.return_data_rate // DataRate.MBPS} Mbps; "
             f"Loss Rate: {cls.drop_rate_percent} %"
         )
 
-    @classmethod
-    @property
-    def theoretical_max_value(cls):
-        return cls.forward_data_rate * (1 - cls.drop_rate_percent / 100) / DataRate.KBPS
+    #  @classmethod
+    #  @property
+    #  def theoretical_max_value(cls):
+    #      return cls.forward_data_rate * (1 - cls.drop_rate_percent / 100) / DataRate.KBPS
 
     @classmethod
     @property
