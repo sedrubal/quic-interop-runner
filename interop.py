@@ -21,6 +21,7 @@ from termcolor import colored, cprint
 import testcases
 from evaluation_tools.result_parser import Result
 from evaluation_tools.utils import TerminalFormatter
+from implementations import Implementation
 from result import TestResult
 from testcases import MEASUREMENTS, TESTCASES, Perspective
 
@@ -51,7 +52,7 @@ class LogFileFormatter(logging.Formatter):
 class InteropRunner:
     def __init__(
         self,
-        implementations: dict,
+        implementations: dict[str, Implementation],
         servers: list[str],
         clients: list[str],
         tests: list[Type[testcases.TestCase]],
@@ -133,7 +134,7 @@ class InteropRunner:
             ), f"QUIC draft differs: {testcases.QUIC_DRAFT} != {result.quic_draft}"
 
             for impl_name, implementation in self._implementations.items():
-                old_impl = result.get_image_info(impl_name)
+                old_impl = result.get_image_metadata(impl_name)
                 old_img_id = old_impl.get("id")
                 assert not old_img_id or old_img_id == implementation.image_id
 
@@ -186,8 +187,6 @@ class InteropRunner:
             sys.exit(f"Log dir {self._log_dir} already exists.")
         logging.info("Saving logs to %s.", self._log_dir)
 
-        #: TODO store this information in result
-        self.compliant = dict[str, bool]()
 
         logging.info("Will run %d tests and measurement runs", self._nr_runs)
 
@@ -199,12 +198,12 @@ class InteropRunner:
     def _check_impl_is_compliant(self, name: str) -> bool:
         """check if an implementation return UNSUPPORTED for unknown test cases"""
 
-        if name in self.compliant:
-            logging.debug(
-                "%s already tested for compliance: %s", name, str(self.compliant)
-            )
+        is_compliant = self._implementations[name].compliant
 
-            return self.compliant[name]
+        if is_compliant:
+            logging.debug("%s already tested for compliance: %s", name, is_compliant)
+
+            return is_compliant
 
         client_log_dir = tempfile.TemporaryDirectory(dir="/tmp", prefix="logs_client_")
         www_dir = tempfile.TemporaryDirectory(dir="/tmp", prefix="compliance_www_")
@@ -270,13 +269,13 @@ class InteropRunner:
         if not self._is_unsupported(output.splitlines()):
             logging.error("%s server not compliant.", name)
             logging.debug("%s", output)
-            self.compliant[name] = False
+            self._implementations[name].compliant = False
 
             return False
-        logging.debug("%s server compliant.", name)
+        logging.debug("%s server is compliant.", name)
 
         # remember compliance test outcome
-        self.compliant[name] = True
+        self._implementations[name].compliant = True
 
         return True
 
@@ -351,8 +350,8 @@ class InteropRunner:
             "urls": {
                 x: self._implementations[x].url for x in self._servers + self._clients
             },
-            "versions": {
-                x: self._implementations[x].img_info_json()
+            "images": {
+                x: self._implementations[x].img_metadata_json()
                 for x in self._servers + self._clients
             },
             "tests": {
@@ -638,7 +637,9 @@ class InteropRunner:
                 )
 
                 if self._skip_compliance_check:
-                    logging.info(f"Skipping compliance check for {server} and {client}")
+                    logging.info(
+                        "Skipping compliance check for %s and %s", server, client
+                    )
                 elif not (
                     self._check_impl_is_compliant(server)
                     and self._check_impl_is_compliant(client)

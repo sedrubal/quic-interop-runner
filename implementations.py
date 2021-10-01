@@ -19,6 +19,7 @@ class Implementation:
     image: str
     url: str
     role: Role
+    compliant: Optional[bool] = None
     _img_versions: Optional[list[str]] = None
     _img_id: Optional[str] = None
     _img_created: Optional[datetime] = None
@@ -64,7 +65,7 @@ class Implementation:
     #
     #      return self._img_revision
 
-    def img_info_json(self) -> dict[str, Union[str, list[str], None]]:
+    def img_metadata_json(self) -> dict[str, Union[str, list[str], None, bool]]:
         return {
             "image": self.image,
             "id": self.image_id,
@@ -74,6 +75,7 @@ class Implementation:
                 if self.image_created
                 else None
             ),
+            "compliant": self.compliant,
             #  "revision": self.image_revision,
         }
 

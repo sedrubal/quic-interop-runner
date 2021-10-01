@@ -9,19 +9,15 @@ from implementations import IMPLEMENTATIONS, Role
 from interop import InteropRunner
 from testcases import MEASUREMENTS, TESTCASES
 
-implementations = {
-    name: {"image": value["image"], "url": value["url"]}
-    for name, value in IMPLEMENTATIONS.items()
-}
 client_implementations = [
     name
     for name, value in IMPLEMENTATIONS.items()
-    if value["role"] in (Role.BOTH, Role.CLIENT)
+    if value.role in (Role.BOTH, Role.CLIENT)
 ]
 server_implementations = [
     name
     for name, value in IMPLEMENTATIONS.items()
-    if value["role"] in (Role.BOTH, Role.SERVER)
+    if value.role in (Role.BOTH, Role.SERVER)
 ]
 
 
@@ -106,7 +102,8 @@ def main():
         if name not in IMPLEMENTATIONS:
             sys.exit(f"Implementation {name} not found.")
 
-        implementations[name]["image"] = image
+        print(f"Using image {image} for {name} instead of {IMPLEMENTATIONS[name].image}")
+        IMPLEMENTATIONS[name].image = image
 
     def get_tests_and_measurements(
         arg,
@@ -149,7 +146,7 @@ def main():
     tests, measurements = get_tests_and_measurements(args.test)
 
     return InteropRunner(
-        implementations=implementations,
+        implementations=IMPLEMENTATIONS,
         servers=args.server or server_implementations,
         clients=args.client or client_implementations,
         tests=tests,
