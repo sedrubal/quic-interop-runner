@@ -35,6 +35,39 @@ def random_string(length: int):
     return "".join(random.choice(letters) for i in range(length))
 
 
+def find_docker_compose() -> str:
+    """Find the docker compose command. Use full path to avoid aliase."""
+    pathes = [Path(p) for p in os.environ.get("PATH", "/usr/bin").split(":")]
+    commands = {
+        "docker-compose": "version",
+        "docker compose": "version",
+        "podman-compose": "--help",
+    }
+
+    for doco_cmd_str, check_arg in commands.items():
+        for path in pathes:
+            prog_str, *subproc = doco_cmd_str.split()
+            prog = path / prog_str
+            doco_cmd = [str(prog), *subproc]
+            doco_cmd_str = " ".join(doco_cmd)
+
+            if prog.is_file():
+                try:
+                    output = subprocess.check_output(
+                        [*doco_cmd, check_arg], text=True
+                    ).strip()
+                    logging.debug("docker-compose check output: %s", output)
+                    logging.info("Using `%s` as docker-compose command.", doco_cmd_str)
+
+                    return doco_cmd_str
+                except subprocess.CalledProcessError as err:
+                    continue
+
+    sys.exit(
+        f"docker-compose not found. We tried to execute {', '.join(commands.values())}"
+    )
+
+
 @dataclass
 class MeasurementResult:
     result: TestResult
@@ -187,8 +220,8 @@ class InteropRunner:
             sys.exit(f"Log dir {self._log_dir} already exists.")
         logging.info("Saving logs to %s.", self._log_dir)
 
-
         logging.info("Will run %d tests and measurement runs", self._nr_runs)
+        self._doco_cmd = find_docker_compose()
 
     def _is_unsupported(self, lines: list[str]) -> bool:
         return any("exited with code 127" in line for line in lines) or any(
@@ -225,8 +258,14 @@ class InteropRunner:
             "DOWNLOADS": downloads_dir.name,
             "SCENARIO": "simple-p2p --delay=15ms --bandwidth=10Mbps --queue=25",
             "CLIENT": self._implementations[name].image,
+            "SERVER": self._implementations[name].image,
         }
-        cmd = "docker-compose up --timeout 0 --abort-on-container-exit -V sim client"
+        cmd = f"{self._doco_cmd} up --timeout 0 --abort-on-container-exit -V sim client"
+        logging.debug(
+            "Command: %s %s",
+            " ".join((f'{k}="{v}"' for k, v in env.items())),
+            cmd,
+        )
         proc = subprocess.run(
             cmd,
             shell=True,
@@ -240,24 +279,15 @@ class InteropRunner:
         if not self._is_unsupported(proc.stdout.splitlines()):
             logging.error("%s client not compliant.", name)
             logging.debug("%s", proc.stdout)
-            self.compliant[name] = False
+            self._implementations[name].compliant = False
 
             return False
-        logging.debug("%s client compliant.", name)
+        logging.debug("%s client is compliant.", name)
 
         # check that the server is capable of returning UNSUPPORTED
         logging.debug("Checking compliance of %s server", name)
         server_log_dir = tempfile.TemporaryDirectory(dir="/tmp", prefix="logs_server_")
-        env = {
-            "CERTS": certs_dir.name,
-            "TESTCASE_SERVER": random_string(6),
-            "SERVER_LOGS": server_log_dir.name,
-            "CLIENT_LOGS": "/dev/null",
-            "WWW": www_dir.name,
-            "DOWNLOADS": downloads_dir.name,
-            "SERVER": self._implementations[name].image,
-        }
-        cmd = "docker-compose up -V server"
+        cmd = f"{self._doco_cmd} up -V server"
         output = subprocess.check_output(
             cmd,
             shell=True,
@@ -407,7 +437,7 @@ class InteropRunner:
     def _copy_logs(self, container: str, dir: tempfile.TemporaryDirectory):
         try:
             subprocess.check_output(
-                f'docker cp "$(docker-compose --log-level ERROR ps -q {container})":/logs/. {dir.name}',
+                f'docker cp "$(${self._doco_cmd} --log-level ERROR ps -q {container})":/logs/. {dir.name}',
                 shell=True,
                 stderr=subprocess.STDOUT,
                 text=True,
@@ -479,7 +509,7 @@ class InteropRunner:
         }
         params.update(testcase.additional_envs())
         containers = f"sim client server {' '.join(testcase.additional_containers())}"
-        cmd = f"docker-compose up --timeout 1 --abort-on-container-exit {containers}"
+        cmd = f"{self._doco_cmd} up --timeout 1 --abort-on-container-exit {containers}"
         logging.debug(
             "Command: %s %s",
             " ".join((f'{k}="{v}"' for k, v in params.items())),
@@ -511,7 +541,7 @@ class InteropRunner:
             logging.debug("Test failed: took longer than %ds.", testcase.timeout)
             try:
                 proc = subprocess.run(
-                    f"docker-compose stop {containers}",
+                    f"{self._doco_cmd} stop {containers}",
                     shell=True,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
