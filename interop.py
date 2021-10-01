@@ -209,7 +209,7 @@ class InteropRunner:
                     result=TestResult(res_meas.result),
                     details=res_meas.details,
                 )
-                self._num_skip_runs += res_meas.num_repetitions
+                self._num_skip_runs += meas_cls.repetitions
 
             logging.info(
                 "Skipping %d tests and measurement runs from previous run",
@@ -219,8 +219,8 @@ class InteropRunner:
         elif self._log_dir.is_dir():
             sys.exit(f"Log dir {self._log_dir} already exists.")
         logging.info("Saving logs to %s.", self._log_dir)
+        logging.info("Will run %d tests and measurement runs", self._nr_runs - self._num_skip_runs)
 
-        logging.info("Will run %d tests and measurement runs", self._nr_runs)
         self._doco_cmd = find_docker_compose()
 
     def _is_unsupported(self, lines: list[str]) -> bool:
