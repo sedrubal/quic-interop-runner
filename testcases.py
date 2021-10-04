@@ -19,6 +19,8 @@ from Crypto.Cipher import AES
 
 from result import TestResult
 
+LOGGER = logging.getLogger(name="quic-interop-runner")
+
 
 class FileSize:
     KiB: ClassVar[int] = 1 << 10
@@ -60,19 +62,20 @@ def random_string(length: int):
 
 
 def generate_cert_chain(directory: str, length: int = 1):
+    LOGGER.debug("Generating cert chain into directory %s...", directory)
     try:
         stdout = subprocess.check_output(
             f"./certs.sh {directory} {length}",
             shell=True,
             stderr=subprocess.STDOUT,
             text=True,
-        )
-        logging.debug("%s", stdout)
+        ).strip()
     except subprocess.CalledProcessError:
-        logging.info("Unable to create certificates")
+        LOGGER.info("Unable to create certificates")
         sys.exit(1)
 
-    logging.debug("%s", stdout)
+    if stdout:
+        LOGGER.debug("%s", stdout)
 
 
 class TestCase(abc.ABC):
@@ -81,9 +84,9 @@ class TestCase(abc.ABC):
 
     def __init__(
         self,
-        sim_log_dir: tempfile.TemporaryDirectory,
-        client_keylog_file: str,
-        server_keylog_file: str,
+        sim_log_dir: Path,
+        client_keylog_file: Path,
+        server_keylog_file: Path,
     ):
         self._server_keylog_file = server_keylog_file
         self._client_keylog_file = client_keylog_file
@@ -189,7 +192,7 @@ class TestCase(abc.ABC):
             if not re.search(
                 r"^SERVER_HANDSHAKE_TRAFFIC_SECRET", file.read(), re.MULTILINE
             ):
-                logging.info("Key log file %s is using incorrect format.", filename)
+                LOGGER.info("Key log file %s is using incorrect format.", filename)
 
                 return False
 
@@ -197,15 +200,15 @@ class TestCase(abc.ABC):
 
     def _keylog_file(self) -> Optional[str]:
         if self._is_valid_keylog(self._client_keylog_file):
-            logging.debug("Using the client's key log file.")
+            LOGGER.debug("Using the client's key log file.")
 
             return self._client_keylog_file
         elif self._is_valid_keylog(self._server_keylog_file):
-            logging.debug("Using the server's key log file.")
+            LOGGER.debug("Using the server's key log file.")
 
             return self._server_keylog_file
 
-        logging.debug("No key log file found.")
+        LOGGER.debug("No key log file found.")
 
         return None
 
@@ -227,7 +230,7 @@ class TestCase(abc.ABC):
         enc = AES.new(os.urandom(32), AES.MODE_OFB, b"a" * 16)
         with (self.www_dir / filename).open("wb") as file:
             file.write(enc.encrypt(b" " * size))
-        logging.debug("Generated random file: %s of size: %d", filename, size)
+        LOGGER.debug("Generated random file: %s of size: %d", filename, size)
 
         return filename
 
@@ -238,12 +241,12 @@ class TestCase(abc.ABC):
         versions = [hex(int(v, 0)) for v in self._get_versions()]
 
         if len(versions) != 1:
-            logging.info("Expected exactly one version. Got %s", versions)
+            LOGGER.info("Expected exactly one version. Got %s", versions)
 
             return False
 
         if QUIC_VERSION not in versions:
-            logging.info("Wrong version. Expected %s, got %s", QUIC_VERSION, versions)
+            LOGGER.info("Wrong version. Expected %s, got %s", QUIC_VERSION, versions)
 
             return False
 
@@ -257,11 +260,11 @@ class TestCase(abc.ABC):
         too_many = [f for f in files if f not in self._files]
 
         if len(too_many) != 0:
-            logging.info("Found unexpected downloaded files: %s", too_many)
+            LOGGER.info("Found unexpected downloaded files: %s", too_many)
         too_few = [f for f in self._files if f not in files]
 
         if len(too_few) != 0:
-            logging.info("Missing files: %s", too_few)
+            LOGGER.info("Missing files: %s", too_few)
 
         if len(too_many) != 0 or len(too_few) != 0:
             return False
@@ -270,7 +273,7 @@ class TestCase(abc.ABC):
             file_path = self.download_dir / file_name
 
             if not os.path.isfile(file_path):
-                logging.info("File %s does not exist.", file_path)
+                LOGGER.info("File %s does not exist.", file_path)
 
                 return False
             try:
@@ -278,7 +281,7 @@ class TestCase(abc.ABC):
                 downloaded_size = os.path.getsize(file_path)
 
                 if size != downloaded_size:
-                    logging.info(
+                    LOGGER.info(
                         "File size of %s doesn't match. Original: %d bytes, downloaded: %d bytes.",
                         file_path,
                         size,
@@ -288,11 +291,11 @@ class TestCase(abc.ABC):
                     return False
 
                 if not filecmp.cmp(self.www_dir / file_name, file_path, shallow=False):
-                    logging.info("File contents of %s do not match.", file_path)
+                    LOGGER.info("File contents of %s do not match.", file_path)
 
                     return False
             except Exception as exception:
-                logging.info(
+                LOGGER.info(
                     "Could not compare files %s and %s: %s",
                     self.www_dir / file_name,
                     file_path,
@@ -300,7 +303,7 @@ class TestCase(abc.ABC):
                 )
 
                 return False
-        logging.debug("Check of downloaded files succeeded.")
+        LOGGER.debug("Check of downloaded files succeeded.")
 
         return True
 
@@ -425,7 +428,7 @@ class TestCaseVersionNegotiation(TestCase):
             break
 
         if dcid == "":
-            logging.info("Didn't find an Initial / a DCID.")
+            LOGGER.info("Didn't find an Initial / a DCID.")
 
             return TestResult.FAILED
 
@@ -435,7 +438,7 @@ class TestCaseVersionNegotiation(TestCase):
             if packet.scid == dcid:
                 return TestResult.SUCCEEDED
 
-        logging.info("Didn't find a Version Negotiation Packet with matching SCID.")
+        LOGGER.info("Didn't find a Version Negotiation Packet with matching SCID.")
 
         return TestResult.FAILED
 
@@ -466,13 +469,13 @@ class TestCaseHandshake(TestCase):
             return TestResult.FAILED
 
         if self._retry_sent():
-            logging.info("Didn't expect a Retry to be sent.")
+            LOGGER.info("Didn't expect a Retry to be sent.")
 
             return TestResult.FAILED
         num_handshakes = self._count_handshakes()
 
         if num_handshakes != 1:
-            logging.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
+            LOGGER.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
 
             return TestResult.FAILED
 
@@ -519,7 +522,7 @@ class TestCaseLongRTT(TestCaseHandshake):
         num_handshakes = self._count_handshakes()
 
         if num_handshakes != 1:
-            logging.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
+            LOGGER.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
 
             return TestResult.FAILED
 
@@ -533,7 +536,7 @@ class TestCaseLongRTT(TestCaseHandshake):
                     num_ch += 1
 
         if num_ch < 2:
-            logging.info("Expected at least 2 ClientHellos. Got: %d", num_ch)
+            LOGGER.info("Expected at least 2 ClientHellos. Got: %d", num_ch)
 
             return TestResult.FAILED
 
@@ -569,7 +572,7 @@ class TestCaseTransfer(TestCase):
         num_handshakes = self._count_handshakes()
 
         if num_handshakes != 1:
-            logging.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
+            LOGGER.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
 
             return TestResult.FAILED
 
@@ -608,7 +611,7 @@ class TestCaseChaCha20(TestCase):
         num_handshakes = self._count_handshakes()
 
         if num_handshakes != 1:
-            logging.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
+            LOGGER.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
 
             return TestResult.FAILED
 
@@ -619,7 +622,7 @@ class TestCaseChaCha20(TestCase):
                 ciphersuites.add(packet.tls_handshake_ciphersuite)
 
         if len(ciphersuites) != 1 or "4867" not in ciphersuites:
-            logging.info(
+            LOGGER.info(
                 "Expected only ChaCha20 cipher suite to be offered. Got: %s",
                 ciphersuites,
             )
@@ -660,13 +663,13 @@ class TestCaseMultiplexing(TestCase):
 
     def check(self) -> TestResult:
         if not self._keylog_file():
-            logging.info("Can't check test result. SSLKEYLOG required.")
+            LOGGER.info("Can't check test result. SSLKEYLOG required.")
 
             return TestResult.UNSUPPORTED
         num_handshakes = self._count_handshakes()
 
         if num_handshakes != 1:
-            logging.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
+            LOGGER.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
 
             return TestResult.FAILED
 
@@ -681,15 +684,15 @@ class TestCaseMultiplexing(TestCase):
                 stream_limit = int(
                     getattr(packet, "tls.quic.parameter.initial_max_streams_bidi")
                 )
-                logging.debug("Server set bidirectional stream limit: %d", stream_limit)
+                LOGGER.debug("Server set bidirectional stream limit: %d", stream_limit)
 
                 if stream_limit > 1000:
-                    logging.info("Server set a stream limit > 1000.")
+                    LOGGER.info("Server set a stream limit > 1000.")
 
                     return TestResult.FAILED
 
         if not checked_stream_limit:
-            logging.info("Couldn't check stream limit.")
+            LOGGER.info("Couldn't check stream limit.")
 
             return TestResult.FAILED
 
@@ -726,14 +729,14 @@ class TestCaseRetry(TestCase):
 
         for packet in retries:
             if not hasattr(packet, "retry_token"):
-                logging.info("Retry packet doesn't have a retry_token")
-                logging.info(packet)
+                LOGGER.info("Retry packet doesn't have a retry_token")
+                LOGGER.info(packet)
 
                 return False
             tokens += [packet.retry_token.replace(":", "")]
 
         if len(tokens) == 0:
-            logging.info("Didn't find any Retry packets.")
+            LOGGER.info("Didn't find any Retry packets.")
 
             return False
 
@@ -749,7 +752,7 @@ class TestCaseRetry(TestCase):
                 continue
 
             if pn <= highest_pn_before_retry:
-                logging.debug(
+                LOGGER.debug(
                     "Client reset the packet number. Check failed for PN %d", pn
                 )
 
@@ -758,10 +761,10 @@ class TestCaseRetry(TestCase):
             token = packet.token.replace(":", "")
 
             if token in tokens:
-                logging.debug("Check of Retry succeeded. Token used: %s", token)
+                LOGGER.debug("Check of Retry succeeded. Token used: %s", token)
 
                 return True
-        logging.info("Didn't find any Initial packet using a Retry token.")
+        LOGGER.info("Didn't find any Initial packet using a Retry token.")
 
         return False
 
@@ -769,7 +772,7 @@ class TestCaseRetry(TestCase):
         num_handshakes = self._count_handshakes()
 
         if num_handshakes != 1:
-            logging.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
+            LOGGER.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
 
             return TestResult.FAILED
 
@@ -808,13 +811,13 @@ class TestCaseResumption(TestCase):
 
     def check(self) -> TestResult:
         if not self._keylog_file():
-            logging.info("Can't check test result. SSLKEYLOG required.")
+            LOGGER.info("Can't check test result. SSLKEYLOG required.")
 
             return TestResult.UNSUPPORTED
         num_handshakes = self._count_handshakes()
 
         if num_handshakes != 2:
-            logging.info("Expected exactly 2 handshake. Got: %d", num_handshakes)
+            LOGGER.info("Expected exactly 2 handshake. Got: %d", num_handshakes)
 
             return TestResult.FAILED
 
@@ -828,20 +831,20 @@ class TestCaseResumption(TestCase):
                     first_handshake_has_cert = True
             elif packet.scid == cids[len(cids) - 1]:  # second handshake
                 if hasattr(packet, "tls_handshake_certificates_length"):
-                    logging.info(
+                    LOGGER.info(
                         "Server sent a Certificate message in the second handshake."
                     )
 
                     return TestResult.FAILED
             else:
-                logging.info(
+                LOGGER.info(
                     "Found handshake packet that neither belongs to the first nor the second handshake."
                 )
 
                 return TestResult.FAILED
 
         if not first_handshake_has_cert:
-            logging.info(
+            LOGGER.info(
                 "Didn't find a Certificate message in the first handshake. That's weird."
             )
 
@@ -885,7 +888,7 @@ class TestCaseZeroRTT(TestCase):
         num_handshakes = self._count_handshakes()
 
         if num_handshakes != 2:
-            logging.info("Expected exactly 2 handshakes. Got: %d", num_handshakes)
+            LOGGER.info("Expected exactly 2 handshakes. Got: %d", num_handshakes)
 
             return TestResult.FAILED
 
@@ -896,16 +899,16 @@ class TestCaseZeroRTT(TestCase):
         oneRTTSize = self._payload_size(
             self._client_trace.get_1rtt(Direction.FROM_CLIENT)
         )
-        logging.debug("0-RTT size: %d", zeroRTTSize)
-        logging.debug("1-RTT size: %d", oneRTTSize)
+        LOGGER.debug("0-RTT size: %d", zeroRTTSize)
+        LOGGER.debug("1-RTT size: %d", oneRTTSize)
 
         if zeroRTTSize == 0:
-            logging.info("Client didn't send any 0-RTT data.")
+            LOGGER.info("Client didn't send any 0-RTT data.")
 
             return TestResult.FAILED
 
         if oneRTTSize > 0.5 * self.FILENAMELEN * self.NUM_FILES:
-            logging.info("Client sent too much data in 1-RTT packets.")
+            LOGGER.info("Client sent too much data in 1-RTT packets.")
 
             return TestResult.FAILED
 
@@ -941,7 +944,7 @@ class TestCaseHTTP3(TestCase):
         num_handshakes = self._count_handshakes()
 
         if num_handshakes != 1:
-            logging.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
+            LOGGER.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
 
             return TestResult.FAILED
 
@@ -1001,13 +1004,13 @@ class TestCaseAmplificationLimit(TestCase):
 
     def check(self) -> TestResult:
         if not self._keylog_file():
-            logging.info("Can't check test result. SSLKEYLOG required.")
+            LOGGER.info("Can't check test result. SSLKEYLOG required.")
 
             return TestResult.UNSUPPORTED
         num_handshakes = self._count_handshakes()
 
         if num_handshakes != 1:
-            logging.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
+            LOGGER.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
 
             return TestResult.FAILED
 
@@ -1025,13 +1028,13 @@ class TestCaseAmplificationLimit(TestCase):
                 )
 
         if max_handshake_offset < 7500:
-            logging.info(
+            LOGGER.info(
                 "Server sent too little Handshake CRYPTO data (%d bytes). Not using the provided cert chain?",
                 max_handshake_offset,
             )
 
             return TestResult.FAILED
-        logging.debug(
+        LOGGER.debug(
             "Server sent %d bytes in Handshake CRYPTO frames.", max_handshake_offset
         )
 
@@ -1047,13 +1050,13 @@ class TestCaseAmplificationLimit(TestCase):
             packet_type = get_packet_type(packet)
 
             if packet_type == PacketType.VERSIONNEGOTIATION:
-                logging.info("Didn't expect a Version Negotiation packet.")
+                LOGGER.info("Didn't expect a Version Negotiation packet.")
 
                 return TestResult.FAILED
             packet_size = int(packet.udp.length) - 8  # subtract the UDP header length
 
             if packet_type == PacketType.INVALID:
-                logging.debug("Couldn't determine packet type.")
+                LOGGER.debug("Couldn't determine packet type.")
 
                 return TestResult.FAILED
 
@@ -1092,7 +1095,7 @@ class TestCaseAmplificationLimit(TestCase):
                 allowed_with_tolerance -= packet_size
                 allowed -= packet_size
             else:
-                logging.debug("Couldn't determine sender of packet.")
+                LOGGER.debug("Couldn't determine sender of packet.")
 
                 return TestResult.FAILED
 
@@ -1102,7 +1105,7 @@ class TestCaseAmplificationLimit(TestCase):
             log_level = logging.INFO
 
         for msg in log_output:
-            logging.log(log_level, msg)
+            LOGGER.log(log_level, msg)
 
         return res
 
@@ -1150,7 +1153,7 @@ class TestCaseBlackhole(TestCase):
         num_handshakes = self._count_handshakes()
 
         if num_handshakes != 1:
-            logging.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
+            LOGGER.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
 
             return TestResult.FAILED
 
@@ -1190,14 +1193,14 @@ class TestCaseKeyUpdate(TestCaseHandshake):
 
     def check(self) -> TestResult:
         if not self._keylog_file():
-            logging.info("Can't check test result. SSLKEYLOG required.")
+            LOGGER.info("Can't check test result. SSLKEYLOG required.")
 
             return TestResult.UNSUPPORTED
 
         num_handshakes = self._count_handshakes()
 
         if num_handshakes != 1:
-            logging.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
+            LOGGER.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
 
             return TestResult.FAILED
 
@@ -1213,7 +1216,7 @@ class TestCaseKeyUpdate(TestCaseHandshake):
             for packet in self._server_trace.get_1rtt(Direction.FROM_SERVER):
                 server[int(packet.key_phase)] += 1
         except Exception:
-            logging.info(
+            LOGGER.info(
                 "Failed to read key phase bits. Potentially incorrect SSLKEYLOG?"
             )
 
@@ -1226,13 +1229,13 @@ class TestCaseKeyUpdate(TestCaseHandshake):
         if succeeded:
             log_level = logging.DEBUG
 
-        logging.log(
+        LOGGER.log(
             log_level,
             "Client sent %d key phase 0 and %d key phase 1 packets.",
             client[0],
             client[1],
         )
-        logging.log(
+        LOGGER.log(
             log_level,
             "Server sent %d key phase 0 and %d key phase 1 packets.",
             server[0],
@@ -1240,7 +1243,7 @@ class TestCaseKeyUpdate(TestCaseHandshake):
         )
 
         if not succeeded:
-            logging.info(
+            LOGGER.info(
                 "Expected to see packets sent with key phase 1 from both client and server."
             )
 
@@ -1300,7 +1303,7 @@ class TestCaseHandshakeLoss(TestCase):
         num_handshakes = self._count_handshakes()
 
         if num_handshakes != self._num_runs:
-            logging.info(
+            LOGGER.info(
                 "Expected %d handshakes. Got: %d", self._num_runs, num_handshakes
             )
 
@@ -1356,7 +1359,7 @@ class TestCaseTransferLoss(TestCase):
         num_handshakes = self._count_handshakes()
 
         if num_handshakes != 1:
-            logging.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
+            LOGGER.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
 
             return TestResult.FAILED
 
@@ -1447,7 +1450,7 @@ class TestCaseECN(TestCaseHandshake):
             ecn[e] += 1
 
         for e in ECN:
-            logging.debug("%s %d", e, ecn[e])
+            LOGGER.debug("%s %d", e, ecn[e])
 
         return ecn
 
@@ -1472,7 +1475,7 @@ class TestCaseECN(TestCaseHandshake):
 
     def check(self) -> TestResult:
         if not self._keylog_file():
-            logging.info("Can't check test result. SSLKEYLOG required.")
+            LOGGER.info("Can't check test result. SSLKEYLOG required.")
 
             return TestResult.UNSUPPORTED
 
@@ -1498,22 +1501,22 @@ class TestCaseECN(TestCaseHandshake):
         ack_ecn_server_ok = self._check_ack_ecn(tr_server)
 
         if ecn_client_any_marked is False:
-            logging.info("Client did not mark any packets ECT(0) or ECT(1)")
+            LOGGER.info("Client did not mark any packets ECT(0) or ECT(1)")
         else:
             if ack_ecn_server_ok is False:
-                logging.info("Server did not send any ACK-ECN frames")
+                LOGGER.info("Server did not send any ACK-ECN frames")
             elif ecn_client_all_ok is False:
-                logging.info(
+                LOGGER.info(
                     "Not all client packets were consistently marked with ECT(0) or ECT(1)"
                 )
 
         if ecn_server_any_marked is False:
-            logging.info("Server did not mark any packets ECT(0) or ECT(1)")
+            LOGGER.info("Server did not mark any packets ECT(0) or ECT(1)")
         else:
             if ack_ecn_client_ok is False:
-                logging.info("Client did not send any ACK-ECN frames")
+                LOGGER.info("Client did not send any ACK-ECN frames")
             elif ecn_server_all_ok is False:
-                logging.info(
+                LOGGER.info(
                     "Not all server packets were consistently marked with ECT(0) or ECT(1)"
                 )
 
@@ -1571,7 +1574,7 @@ class TestCasePortRebinding(TestCaseTransfer):
 
     def check(self) -> TestResult:
         if not self._keylog_file():
-            logging.info("Can't check test result. SSLKEYLOG required.")
+            LOGGER.info("Can't check test result. SSLKEYLOG required.")
 
             return TestResult.UNSUPPORTED
 
@@ -1586,10 +1589,10 @@ class TestCasePortRebinding(TestCaseTransfer):
 
         ports = list(set(getattr(p["udp"], "dstport") for p in tr_server))
 
-        logging.info("Server saw these client ports: %s", ports)
+        LOGGER.info("Server saw these client ports: %s", ports)
 
         if len(ports) <= 1:
-            logging.info("Server saw only a single client port in use; test broken?")
+            LOGGER.info("Server saw only a single client port in use; test broken?")
 
             return TestResult.FAILED
 
@@ -1615,11 +1618,11 @@ class TestCasePortRebinding(TestCaseTransfer):
                 # packet to different IP/port, should have a PATH_CHALLENGE frame
 
                 if hasattr(p["quic"], "path_challenge.data") is False:
-                    logging.info(
+                    LOGGER.info(
                         "First server packet to new client destination %s did not contain a PATH_CHALLENGE frame",
                         cur,
                     )
-                    logging.info(p["quic"])
+                    LOGGER.info(p["quic"])
 
                     return TestResult.FAILED
 
@@ -1636,7 +1639,7 @@ class TestCasePortRebinding(TestCaseTransfer):
         )
 
         if len(challenges) < num_migrations:
-            logging.info(
+            LOGGER.info(
                 "Saw %d migrations, but only %d unique PATH_CHALLENGE frames",
                 len(challenges),
                 num_migrations,
@@ -1655,7 +1658,7 @@ class TestCasePortRebinding(TestCaseTransfer):
         unresponded = [c for c in challenges if c not in responses]
 
         if unresponded != []:
-            logging.info("PATH_CHALLENGE without a PATH_RESPONSE: %s", unresponded)
+            LOGGER.info("PATH_CHALLENGE without a PATH_RESPONSE: %s", unresponded)
 
             return TestResult.FAILED
 
@@ -1690,7 +1693,7 @@ class TestCaseAddressRebinding(TestCasePortRebinding):
 
     def check(self) -> TestResult:
         if not self._keylog_file():
-            logging.info("Can't check test result. SSLKEYLOG required.")
+            LOGGER.info("Can't check test result. SSLKEYLOG required.")
 
             return TestResult.UNSUPPORTED
 
@@ -1707,10 +1710,10 @@ class TestCaseAddressRebinding(TestCasePortRebinding):
                 ip_vers = "ipv6"
             ips.add(getattr(p[ip_vers], "dst"))
 
-        logging.info("Server saw these client addresses: %s", ips)
+        LOGGER.info("Server saw these client addresses: %s", ips)
 
         if len(ips) <= 1:
-            logging.info(
+            LOGGER.info(
                 "Server saw only a single client IP address in use; test broken?"
             )
 
@@ -1768,7 +1771,7 @@ class TestCaseIPv6(TestCaseTransfer):
         )
 
         if tr_server:
-            logging.info("Packet trace contains %s IPv4 packets.", len(tr_server))
+            LOGGER.info("Packet trace contains %s IPv4 packets.", len(tr_server))
 
             return TestResult.FAILED
 
@@ -1844,16 +1847,16 @@ class TestCaseConnectionMigration(TestCaseAddressRebinding):
                 # packet to different IP/port, should have a new DCID
 
                 if dcid == getattr(p["quic"], "dcid"):
-                    logging.info(
+                    LOGGER.info(
                         "First client packet during active migration to %s used previous DCID %s",
                         cur,
                         dcid,
                     )
-                    logging.info(p["quic"])
+                    LOGGER.info(p["quic"])
 
                     return TestResult.FAILED
                 dcid = getattr(p["quic"], "dcid")
-                logging.info(
+                LOGGER.info(
                     "DCID changed to %s during active migration to %s", dcid, cur
                 )
 
@@ -1906,7 +1909,7 @@ class MeasurementGoodput(Measurement):
         num_handshakes = self._count_handshakes()
 
         if num_handshakes != 1:
-            logging.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
+            LOGGER.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
 
             return TestResult.FAILED
 
@@ -1924,7 +1927,7 @@ class MeasurementGoodput(Measurement):
 
         time_ms = time.total_seconds() * 1000
         goodput_kbps = (8 * self.FILESIZE) / time_ms
-        logging.debug(
+        LOGGER.debug(
             "Transferring %d MiB took %d ms. Goodput: %d kbps",
             self.FILESIZE / FileSize.MiB,
             time_ms,

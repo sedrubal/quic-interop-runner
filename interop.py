@@ -1,71 +1,32 @@
 import json
 import logging
-import os
-import random
 import re
 import shutil
 import statistics
-import string
-import subprocess
 import sys
 import tempfile
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Optional, Type
+from typing import Optional, Type
 
 import prettytable
-from termcolor import colored, cprint
+from termcolor import colored
 
 import testcases
+from deployment import Deployment
 from evaluation_tools.result_parser import Result
 from evaluation_tools.utils import TerminalFormatter
-from implementations import Implementation
+from implementations import Implementation, Role
 from result import TestResult
-from testcases import MEASUREMENTS, TESTCASES, Perspective
+from testcases import MEASUREMENTS, TESTCASES
 
 CONSOLE_LOG_HANDLER = logging.StreamHandler(stream=sys.stderr)
 
+LOGGER = logging.getLogger(name="quic-interop-runner")
 
-def random_string(length: int):
-    """Generate a random string of fixed length"""
-    letters = string.ascii_lowercase
-
-    return "".join(random.choice(letters) for i in range(length))
-
-
-def find_docker_compose() -> str:
-    """Find the docker compose command. Use full path to avoid aliase."""
-    pathes = [Path(p) for p in os.environ.get("PATH", "/usr/bin").split(":")]
-    commands = {
-        "docker-compose": "version",
-        "docker compose": "version",
-        "podman-compose": "--help",
-    }
-
-    for doco_cmd_str, check_arg in commands.items():
-        for path in pathes:
-            prog_str, *subproc = doco_cmd_str.split()
-            prog = path / prog_str
-            doco_cmd = [str(prog), *subproc]
-            doco_cmd_str = " ".join(doco_cmd)
-
-            if prog.is_file():
-                try:
-                    output = subprocess.check_output(
-                        [*doco_cmd, check_arg], text=True
-                    ).strip()
-                    logging.debug("docker-compose check output: %s", output)
-                    logging.info("Using `%s` as docker-compose command.", doco_cmd_str)
-
-                    return doco_cmd_str
-                except subprocess.CalledProcessError as err:
-                    continue
-
-    sys.exit(
-        f"docker-compose not found. We tried to execute {', '.join(commands.values())}"
-    )
+UNSUPPORTED_EXIT_CODE = 127
 
 
 @dataclass
@@ -96,15 +57,14 @@ class InteropRunner:
         log_dir: Optional[str] = None,
         skip_compliance_check=False,
     ):
-        logger = logging.getLogger()
-        logger.setLevel(logging.DEBUG)
+        LOGGER.setLevel(logging.DEBUG)
 
         if debug:
             CONSOLE_LOG_HANDLER.setLevel(logging.DEBUG)
         else:
             CONSOLE_LOG_HANDLER.setLevel(logging.INFO)
         CONSOLE_LOG_HANDLER.setFormatter(TerminalFormatter())
-        logger.addHandler(CONSOLE_LOG_HANDLER)
+        LOGGER.addHandler(CONSOLE_LOG_HANDLER)
 
         self._start_time = datetime.now()
         self._tests = tests
@@ -113,6 +73,7 @@ class InteropRunner:
         self._clients = clients
         self._implementations = implementations
         self._output = Path(output) if output else None
+        self._deployment = Deployment()
 
         if not log_dir:
             self._log_dir = Path(f"logs_{self._start_time:%Y-%m-%dT%H:%M:%S}")
@@ -147,7 +108,7 @@ class InteropRunner:
         self._nr_run = 0
 
         if self._output and self._output.is_file():
-            logging.warning(
+            LOGGER.warning(
                 "Output json file %s already exists. Trying to resume run...",
                 self._output,
             )
@@ -191,7 +152,7 @@ class InteropRunner:
                 meas_cls = measuements_mapping[res_meas.test.abbr]
 
                 if res_meas.test.repetitions != meas_cls.repetitions:
-                    logging.debug(
+                    LOGGER.debug(
                         (
                             "Measurement %s for server=%s and client=%s has a different amount "
                             "of repetitions. Will delete logs and run measurement again.",
@@ -211,34 +172,31 @@ class InteropRunner:
                 )
                 self._num_skip_runs += meas_cls.repetitions
 
-            logging.info(
+            LOGGER.info(
                 "Skipping %d tests and measurement runs from previous run",
                 self._num_skip_runs,
             )
 
         elif self._log_dir.is_dir():
             sys.exit(f"Log dir {self._log_dir} already exists.")
-        logging.info("Saving logs to %s.", self._log_dir)
-        logging.info("Will run %d tests and measurement runs", self._nr_runs - self._num_skip_runs)
-
-        self._doco_cmd = find_docker_compose()
-
-    def _is_unsupported(self, lines: list[str]) -> bool:
-        return any("exited with code 127" in line for line in lines) or any(
-            "exit status 127" in line for line in lines
+        LOGGER.info("Saving logs to %s.", self._log_dir)
+        LOGGER.info(
+            "Will run %d tests and measurement runs",
+            self._nr_runs - self._num_skip_runs,
         )
 
-    def _check_impl_is_compliant(self, name: str) -> bool:
-        """check if an implementation return UNSUPPORTED for unknown test cases"""
+    def _check_impl_is_compliant(self, implementation: Implementation) -> bool:
+        """Check if an implementation return UNSUPPORTED for unknown test cases."""
 
-        is_compliant = self._implementations[name].compliant
+        if implementation.compliant is not None:
+            LOGGER.debug(
+                "%s already tested for compliance: %s",
+                implementation.name,
+                implementation.compliant,
+            )
 
-        if is_compliant:
-            logging.debug("%s already tested for compliance: %s", name, is_compliant)
+            return implementation.compliant
 
-            return is_compliant
-
-        client_log_dir = tempfile.TemporaryDirectory(dir="/tmp", prefix="logs_client_")
         www_dir = tempfile.TemporaryDirectory(dir="/tmp", prefix="compliance_www_")
         certs_dir = tempfile.TemporaryDirectory(dir="/tmp", prefix="compliance_certs_")
         downloads_dir = tempfile.TemporaryDirectory(
@@ -247,71 +205,43 @@ class InteropRunner:
 
         testcases.generate_cert_chain(certs_dir.name)
 
-        # check that the client is capable of returning UNSUPPORTED
-        logging.info("Checking compliance of %s client", name)
-        env = {
-            "CERTS": certs_dir.name,
-            "TESTCASE_CLIENT": random_string(6),
-            "SERVER_LOGS": "/dev/null",
-            "CLIENT_LOGS": client_log_dir.name,
-            "WWW": www_dir.name,
-            "DOWNLOADS": downloads_dir.name,
-            "SCENARIO": "simple-p2p --delay=15ms --bandwidth=10Mbps --queue=25",
-            "CLIENT": self._implementations[name].image,
-            "SERVER": self._implementations[name].image,
-        }
-        cmd = f"{self._doco_cmd} up --timeout 0 --abort-on-container-exit -V sim client"
-        logging.debug(
-            "Command: %s %s",
-            " ".join((f'{k}="{v}"' for k, v in env.items())),
-            cmd,
-        )
-        proc = subprocess.run(
-            cmd,
-            shell=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-            env=env,
-            check=False,
-        )
+        for role in (Role.SERVER, Role.CLIENT):
 
-        if not self._is_unsupported(proc.stdout.splitlines()):
-            logging.error("%s client not compliant.", name)
-            logging.debug("%s", proc.stdout)
-            self._implementations[name].compliant = False
+            exec_result = self._deployment.run_compliance_check(
+                implementation=implementation,
+                role=role,
+                local_certs_path=Path(certs_dir.name),
+                local_www_path=Path(www_dir.name),
+                local_downloads_path=Path(downloads_dir.name),
+                version=testcases.QUIC_VERSION,
+            )
 
-            return False
-        logging.debug("%s client is compliant.", name)
+            if exec_result.timed_out:
+                LOGGER.error(
+                    "Compliance check for %s %s timed out.",
+                    implementation.name,
+                    role.value,
+                )
+                implementation.compliant = False
 
-        # check that the server is capable of returning UNSUPPORTED
-        logging.debug("Checking compliance of %s server", name)
-        server_log_dir = tempfile.TemporaryDirectory(dir="/tmp", prefix="logs_server_")
-        cmd = f"{self._doco_cmd} up -V server"
-        output = subprocess.check_output(
-            cmd,
-            shell=True,
-            stderr=subprocess.STDOUT,
-            env=env,
-            text=True,
-        )
+                return False
 
-        if not self._is_unsupported(output.splitlines()):
-            logging.error("%s server not compliant.", name)
-            logging.debug("%s", output)
-            self._implementations[name].compliant = False
+            if exec_result.exit_codes[role.value] != UNSUPPORTED_EXIT_CODE:
+                LOGGER.error("%s %s is not compliant.", implementation.name, role.value)
+                implementation.compliant = False
 
-            return False
-        logging.debug("%s server is compliant.", name)
+                return False
 
-        # remember compliance test outcome
-        self._implementations[name].compliant = True
+            LOGGER.debug("%s %s is compliant.", implementation.name, role.value)
+
+        # remember compliance test result
+        implementation.compliant = True
 
         return True
 
     def _print_results(self):
         """print the interop table"""
-        logging.info("Run took %s", datetime.now() - self._start_time)
+        LOGGER.info("Run took %s", datetime.now() - self._start_time)
 
         def get_letters(result):
             return "".join([test.abbreviation for test in cell if cell[test] is result])
@@ -434,17 +364,6 @@ class InteropRunner:
         with open(self._output, "w") as file:
             json.dump(out, file)
 
-    def _copy_logs(self, container: str, dir: tempfile.TemporaryDirectory):
-        try:
-            subprocess.check_output(
-                f'docker cp "$(${self._doco_cmd} --log-level ERROR ps -q {container})":/logs/. {dir.name}',
-                shell=True,
-                stderr=subprocess.STDOUT,
-                text=True,
-            )
-        except subprocess.CalledProcessError as err:
-            logging.info("Copying logs from %s failed: %s", container, err.stdout)
-
     def _run_testcase(
         self,
         server: str,
@@ -461,21 +380,34 @@ class InteropRunner:
         test: Type[testcases.TestCase],
     ) -> tuple[TestResult, Optional[float]]:
         start_time = datetime.now()
-        sim_log_dir = tempfile.TemporaryDirectory(dir="/tmp", prefix="logs_sim_")
-        server_log_dir = tempfile.TemporaryDirectory(dir="/tmp", prefix="logs_server_")
-        client_log_dir = tempfile.TemporaryDirectory(dir="/tmp", prefix="logs_client_")
+        log_dir: Path = self._log_dir / f"{server}_{client}" / test.name
+
+        if log_dir_prefix:
+            log_dir /= log_dir_prefix
+
+        if log_dir.is_dir():
+            LOGGER.warning("Target log dir %s exists. Overwriting...", log_dir)
+            shutil.rmtree(log_dir)
+
+        sim_log_dir = log_dir / "sim"
+        server_log_dir = log_dir / "server"
+        client_log_dir = log_dir / "client"
+        sim_log_dir.mkdir(parents=True)
+        server_log_dir.mkdir(parents=True)
+        client_log_dir.mkdir(parents=True)
+
         log_file = tempfile.NamedTemporaryFile(dir="/tmp", prefix="output_log_")
         log_handler = logging.FileHandler(log_file.name)
         log_handler.setLevel(logging.DEBUG)
 
         formatter = LogFileFormatter("%(asctime)s %(message)s")
         log_handler.setFormatter(formatter)
-        logging.getLogger().addHandler(log_handler)
+        LOGGER.addHandler(log_handler)
 
         testcase = test(
             sim_log_dir=sim_log_dir,
-            client_keylog_file=client_log_dir.name + "/keys.log",
-            server_keylog_file=server_log_dir.name + "/keys.log",
+            client_keylog_file=client_log_dir / "keys.log",
+            server_keylog_file=server_log_dir / "keys.log",
         )
         msg = "  ".join(
             (
@@ -491,103 +423,43 @@ class InteropRunner:
         print(msg)
 
         reqs = " ".join([testcase.urlprefix() + p for p in testcase.get_paths()])
-        logging.debug("Requests: %s", reqs)
-        params = {
-            "WAITFORSERVER": "server:443",
-            "CERTS": testcase.certs_dir,
-            "TESTCASE_SERVER": testcase.testname(Perspective.SERVER),
-            "TESTCASE_CLIENT": testcase.testname(Perspective.CLIENT),
-            "WWW": testcase.www_dir,
-            "DOWNLOADS": testcase.download_dir,
-            "SERVER_LOGS": server_log_dir.name,
-            "CLIENT_LOGS": client_log_dir.name,
-            "SCENARIO": testcase.scenario,
-            "CLIENT": self._implementations[client].image,
-            "SERVER": self._implementations[server].image,
-            "REQUESTS": reqs,
-            "VERSION": testcases.QUIC_VERSION,
-        }
-        params.update(testcase.additional_envs())
-        containers = f"sim client server {' '.join(testcase.additional_containers())}"
-        cmd = f"{self._doco_cmd} up --timeout 1 --abort-on-container-exit {containers}"
-        logging.debug(
-            "Command: %s %s",
-            " ".join((f'{k}="{v}"' for k, v in params.items())),
-            cmd,
-        )
+        LOGGER.debug("Requests: %s", reqs)
 
         status = TestResult.FAILED
-        output = ""
-        expired = False
-        try:
-            proc = subprocess.run(
-                cmd,
-                shell=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                timeout=testcase.timeout,
-                text=True,
-                env=params,
-                check=False,
-            )
-            output = proc.stdout
-        except subprocess.TimeoutExpired as ex:
-            output = ex.stdout.decode("utf-8")
-            expired = True
 
-        logging.debug("%s", output)
+        exec_result = self._deployment.run_testcase(
+            log_path=log_dir,
+            timeout=testcase.timeout,
+            testcase=testcase,
+            local_certs_path=Path(testcase.certs_dir),
+            local_www_path=Path(testcase.www_dir),
+            local_downloads_path=Path(testcase.download_dir),
+            client=self._implementations[client],
+            server=self._implementations[server],
+            request_urls=reqs,
+            version=testcases.QUIC_VERSION,
+        )
 
-        if expired:
-            logging.debug("Test failed: took longer than %ds.", testcase.timeout)
-            try:
-                proc = subprocess.run(
-                    f"{self._doco_cmd} stop {containers}",
-                    shell=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.STDOUT,
-                    timeout=60,
-                    text=True,
-                    check=False,
-                )
-                logging.debug("%s", proc.stdout)
-            except subprocess.TimeoutExpired as ex:
-                logging.debug(ex.stdout.decode("utf-8"))
-                logging.error(str(ex))
-
-        # copy the pcaps from the simulator
-        self._copy_logs("sim", sim_log_dir)
-        self._copy_logs("client", client_log_dir)
-        self._copy_logs("server", server_log_dir)
-
-        if not expired:
-            lines = output.splitlines()
-
-            if self._is_unsupported(lines):
+        if exec_result.timed_out:
+            LOGGER.debug("Test failed: took longer than %ds.", testcase.timeout)
+        else:
+            if any(
+                exit_code == UNSUPPORTED_EXIT_CODE
+                for exit_code in exec_result.exit_codes.values()
+            ):
                 status = TestResult.UNSUPPORTED
-            elif any("client exited with code 0" in str(line) for line in lines):
+            elif exec_result.exit_codes["client"] == 0:
                 try:
                     status = testcase.check()
                 except FileNotFoundError as err:
-                    logging.error("testcase.check() threw FileNotFoundError: %s", err)
+                    LOGGER.error("testcase.check() threw FileNotFoundError: %s", err)
                     status = TestResult.FAILED
 
         # save logs
-        logging.getLogger().removeHandler(log_handler)
+        LOGGER.removeHandler(log_handler)
         log_handler.close()
 
         if status in (TestResult.FAILED, TestResult.SUCCEEDED):
-            log_dir = self._log_dir / f"{server}_{client}" / str(testcase)
-
-            if log_dir_prefix:
-                log_dir /= log_dir_prefix
-
-            if log_dir.is_dir():
-                logging.warning("Target log dir %s exists. Overwriting...", log_dir)
-                shutil.rmtree(log_dir)
-
-            shutil.copytree(server_log_dir.name, log_dir / "server")
-            shutil.copytree(client_log_dir.name, log_dir / "client")
-            shutil.copytree(sim_log_dir.name, log_dir / "sim")
             shutil.copyfile(log_file.name, log_dir / "output.txt")
 
             if self._save_files and status == TestResult.FAILED:
@@ -595,13 +467,10 @@ class InteropRunner:
                 try:
                     shutil.copytree(testcase.download_dir, log_dir / "downloads")
                 except Exception as exception:
-                    logging.info("Could not copy downloaded files: %s", exception)
+                    LOGGER.info("Could not copy downloaded files: %s", exception)
 
         testcase.cleanup()
-        server_log_dir.cleanup()
-        client_log_dir.cleanup()
-        sim_log_dir.cleanup()
-        logging.debug("Test took %ss", (datetime.now() - start_time).total_seconds())
+        LOGGER.debug("Test took %ss", (datetime.now() - start_time).total_seconds())
 
         # measurements also have a value
 
@@ -636,7 +505,7 @@ class InteropRunner:
                 return res
             values.append(value)
 
-        logging.debug(values)
+        LOGGER.debug(values)
         res = MeasurementResult(
             result=TestResult.SUCCEEDED,
             details="{:.0f} (± {:.0f}) {}".format(
@@ -658,7 +527,9 @@ class InteropRunner:
 
         for server in self._servers:
             for client in self._clients:
-                logging.debug(
+                server_implementation = self._implementations[server]
+                client_implementation = self._implementations[client]
+                LOGGER.debug(
                     "Running with server %s (%s) and client %s (%s)",
                     server,
                     self._implementations[server].image,
@@ -667,14 +538,14 @@ class InteropRunner:
                 )
 
                 if self._skip_compliance_check:
-                    logging.info(
+                    LOGGER.info(
                         "Skipping compliance check for %s and %s", server, client
                     )
                 elif not (
-                    self._check_impl_is_compliant(server)
-                    and self._check_impl_is_compliant(client)
+                    self._check_impl_is_compliant(server_implementation)
+                    and self._check_impl_is_compliant(client_implementation)
                 ):
-                    logging.info("Not compliant, skipping")
+                    LOGGER.info("Not compliant, skipping")
 
                     continue
 
@@ -682,7 +553,7 @@ class InteropRunner:
 
                 for testcase in self._tests:
                     if testcase in self.test_results[server][client].keys():
-                        logging.info(
+                        LOGGER.info(
                             "Skipping testcase %s for server=%s and client=%s, because it was executed before.",
                             testcase.abbreviation,
                             server,
@@ -704,7 +575,7 @@ class InteropRunner:
 
                 for measurement in self._measurements:
                     if measurement in self.measurement_results[server][client].keys():
-                        logging.info(
+                        LOGGER.info(
                             "Skipping measurement %s for server=%s and client=%s, because it was executed before.",
                             measurement.abbreviation,
                             server,

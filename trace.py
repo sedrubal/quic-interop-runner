@@ -4,6 +4,8 @@ from typing import List, Optional
 
 import pyshark
 
+LOGGER = logging.getLogger(name="quic-interop-runner")
+
 IP4_CLIENT = "193.167.0.100"
 IP4_SERVER = "193.167.100.100"
 IP6_CLIENT = "fd00:cafe:cafe:0::100"
@@ -102,13 +104,13 @@ class TraceAnalyzer:
                 packets.append(packet)
             cap.close()
         except Exception as exc:
-            logging.debug(exc)
+            LOGGER.debug(exc)
 
         if self._keylog_file is not None:
             for packet in packets:
                 if hasattr(packet["quic"], "decryption_failed"):
-                    logging.info("At least one QUIC packet could not be decrypted")
-                    logging.debug(packet)
+                    LOGGER.info("At least one QUIC packet could not be decrypted")
+                    LOGGER.debug(packet)
 
                     break
 
