@@ -1,5 +1,6 @@
 import logging
 from enum import Enum
+from pathlib import Path
 from typing import List, Optional
 
 import pyshark
@@ -66,10 +67,8 @@ def get_packet_type(p) -> PacketType:
 
 
 class TraceAnalyzer:
-    _filename = ""
-
-    def __init__(self, filename: str, keylog_file: Optional[str] = None):
-        self._filename = filename
+    def __init__(self, pcap_path: Path, keylog_file: Optional[Path] = None):
+        self._pcap_path = pcap_path
         self._keylog_file = keylog_file
 
     def _get_direction_filter(self, direction: Direction) -> str:
@@ -88,9 +87,9 @@ class TraceAnalyzer:
         override_prefs = {}
 
         if self._keylog_file is not None:
-            override_prefs["ssl.keylog_file"] = self._keylog_file
+            override_prefs["ssl.keylog_file"] = str(self._keylog_file)
         cap = pyshark.FileCapture(
-            self._filename,
+            str(self._pcap_path),
             display_filter=display_filter,
             override_prefs=override_prefs,
             disable_protocol="http3",  # see https://github.com/marten-seemann/quic-interop-runner/pull/179/

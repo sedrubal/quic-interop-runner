@@ -75,6 +75,10 @@ class InteropRunner:
         self._output = Path(output) if output else None
         self._deployment = Deployment()
 
+        for impl_name in frozenset(self._servers) | frozenset(self._clients):
+            implementation = self._implementations[impl_name]
+            implementation.gather_infos_from_docker(self._deployment)
+
         if not log_dir:
             self._log_dir = Path(f"logs_{self._start_time:%Y-%m-%dT%H:%M:%S}")
         else:

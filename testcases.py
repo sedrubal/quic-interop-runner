@@ -198,7 +198,8 @@ class TestCase(abc.ABC):
 
         return True
 
-    def _keylog_file(self) -> Optional[str]:
+    @property
+    def _keylog_file(self) -> Optional[Path]:
         if self._is_valid_keylog(self._client_keylog_file):
             LOGGER.debug("Using the client's key log file.")
 
@@ -215,13 +216,13 @@ class TestCase(abc.ABC):
     @cached_property
     def _client_trace(self):
         return TraceAnalyzer(
-            self._sim_log_dir.name + "/trace_node_left.pcap", self._keylog_file()
+            self._sim_log_dir / "trace_node_left.pcap", self._keylog_file
         )
 
     @cached_property
     def _server_trace(self):
         return TraceAnalyzer(
-            self._sim_log_dir.name + "/trace_node_right.pcap", self._keylog_file()
+            self._sim_log_dir / "trace_node_right.pcap", self._keylog_file
         )
 
     def _generate_random_file(self, size: int, filename_len=10) -> str:
@@ -662,7 +663,7 @@ class TestCaseMultiplexing(TestCase):
         return self._files
 
     def check(self) -> TestResult:
-        if not self._keylog_file():
+        if not self._keylog_file:
             LOGGER.info("Can't check test result. SSLKEYLOG required.")
 
             return TestResult.UNSUPPORTED
@@ -810,7 +811,7 @@ class TestCaseResumption(TestCase):
         return self._files
 
     def check(self) -> TestResult:
-        if not self._keylog_file():
+        if not self._keylog_file:
             LOGGER.info("Can't check test result. SSLKEYLOG required.")
 
             return TestResult.UNSUPPORTED
@@ -1003,7 +1004,7 @@ class TestCaseAmplificationLimit(TestCase):
         return self._files
 
     def check(self) -> TestResult:
-        if not self._keylog_file():
+        if not self._keylog_file:
             LOGGER.info("Can't check test result. SSLKEYLOG required.")
 
             return TestResult.UNSUPPORTED
@@ -1192,7 +1193,7 @@ class TestCaseKeyUpdate(TestCaseHandshake):
         return self._files
 
     def check(self) -> TestResult:
-        if not self._keylog_file():
+        if not self._keylog_file:
             LOGGER.info("Can't check test result. SSLKEYLOG required.")
 
             return TestResult.UNSUPPORTED
@@ -1474,7 +1475,7 @@ class TestCaseECN(TestCaseHandshake):
         return False
 
     def check(self) -> TestResult:
-        if not self._keylog_file():
+        if not self._keylog_file:
             LOGGER.info("Can't check test result. SSLKEYLOG required.")
 
             return TestResult.UNSUPPORTED
@@ -1573,7 +1574,7 @@ class TestCasePortRebinding(TestCaseTransfer):
         )
 
     def check(self) -> TestResult:
-        if not self._keylog_file():
+        if not self._keylog_file:
             LOGGER.info("Can't check test result. SSLKEYLOG required.")
 
             return TestResult.UNSUPPORTED
@@ -1692,7 +1693,7 @@ class TestCaseAddressRebinding(TestCasePortRebinding):
         )
 
     def check(self) -> TestResult:
-        if not self._keylog_file():
+        if not self._keylog_file:
             LOGGER.info("Can't check test result. SSLKEYLOG required.")
 
             return TestResult.UNSUPPORTED

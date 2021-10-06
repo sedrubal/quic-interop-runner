@@ -2,12 +2,14 @@
 
 import ipaddress
 import logging
+import sys
 import tarfile
 import threading
 import time
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
+from io import BytesIO
 from pathlib import Path
 from typing import Any, Callable, Optional, Type, Union
 
@@ -110,6 +112,18 @@ class ExecResult:
     timed_out: bool
     exit_codes: dict[str, int]
 
+    def __str__(self):
+        log_str = f"log: {len(self.log)} lines"
+
+        if self.timed_out:
+            return f"<Result: Timeout; {log_str}>"
+
+        exit_codes_str = " ".join(
+            f"{container}: {code}" for container, code in self.exit_codes
+        )
+
+        return f"<Result: {exit_codes_str}; {log_str}>"
+
 
 class Deployment:
 
@@ -143,6 +157,7 @@ class Deployment:
         log_callback(container, "Starting...", False)
         try:
             container.start()
+            container.reload()
         except docker.errors.APIError as err:
             log_callback(container, str(err), False)
             end_callback()
@@ -294,7 +309,11 @@ class Deployment:
         for container, container_data_structure in data_structure.items():
             thread: threading.Thread = container_data_structure.monitor_thread
             thread_timeout = max(0, timeout - (time.time() - start))
-            thread.join(timeout=thread_timeout)
+            try:
+                thread.join(timeout=thread_timeout)
+            except KeyboardInterrupt:
+                end_callback(force=True)
+                sys.exit("\rQuit")
 
             if thread.is_alive():
                 # timeout
@@ -317,7 +336,14 @@ class Deployment:
             assert network
 
             for container in network.containers:
-                network.disconnect(container)
+                try:
+                    network.disconnect(container)
+                except docker.errors.NotFound:
+                    LOGGER.debug(
+                        "Could not disconnect %s from %s as it was not found(?!?)",
+                        container.name,
+                        network.name,
+                    )
 
         return ExecResult(
             log=logs,
@@ -330,21 +356,43 @@ class Deployment:
 
     def _copy_logs(self, container: Container, dst: Path):
         src = Path("/logs")
-        target_archive = dst.parent / f"{dst.name}.tar"
-        with target_archive.open("wb") as file:
-            bits, _stat = container.get_archive(src)
-            # TODO progress bar with stat["size"]
+        archive_buf = BytesIO()
+        bits, _stat = container.get_archive(src)
+        # TODO progress bar with stat["size"]
 
-            for chunk in bits:
-                file.write(chunk)
+        for tar_chunk in bits:
+            archive_buf.write(tar_chunk)
 
-        if not target_archive.is_file():
-            logging.error("Failed to copy %s:%s to %s", container.name, src, dst)
+        archive_buf.seek(0)
+        with tarfile.open(fileobj=archive_buf) as archive:
+            # don't use archive.extractall() because we can't control the target file to extract to.
 
-            return
+            for member in archive.getmembers():
+                if member.isfile():
+                    # construct target path: strip logs/
+                    target_path = dst
 
-        with tarfile.open(target_archive) as archive:
-            archive.extractall()
+                    for part in Path(member.path).parts[1:]:
+                        target_path /= part
+
+                    LOGGER.debug(
+                        "Extracting %s:%s to %s",
+                        container.name,
+                        member.path,
+                        target_path,
+                    )
+                    target_path.parent.mkdir(exist_ok=True, parents=True)
+                    with target_path.open("wb") as target_file:
+                        extracted = archive.extractfile(member)
+                        assert extracted
+
+                        while True:
+                            chunk = extracted.read(10240)
+
+                            if not chunk:
+                                break
+
+                            target_file.write(chunk)
 
     def run_compliance_check(
         self,
@@ -400,10 +448,6 @@ class Deployment:
         request_urls: str,
         version: str,
     ) -> ExecResult:
-        # gather information
-        client.gather_infos_from_docker(docker_cli=self.docker_clis[Role.CLIENT])
-        server.gather_infos_from_docker(docker_cli=self.docker_clis[Role.SERVER])
-
         # TODO extra containers
         sim_container = self._create_sim(
             waitforserver=True,
@@ -467,11 +511,11 @@ class Deployment:
                 ipam=docker.types.IPAMConfig(
                     pool_configs=[
                         docker.types.IPAMPool(
-                            subnet=str(NETWORKS[role].get_subnet(ip_version)),
-                            gateway=str(
+                            subnet=NETWORKS[role].get_subnet(ip_version).exploded,
+                            gateway=(
                                 NETWORKS[role].get_subnet(ip_version).network_address
                                 + 1
-                            ),
+                            ).exploded,
                         )
                         for ip_version in IPVersion
                     ],
@@ -511,6 +555,12 @@ class Deployment:
 
         return NETWORKS[role].subnet_v6.network_address + offset
 
+    def get_sim_ipv4(self, perspective: Role) -> ipaddress.IPv4Address:
+        return NETWORKS[perspective].subnet_v4.network_address + 2
+
+    def get_sim_ipv6(self, perspective: Role) -> ipaddress.IPv6Address:
+        return NETWORKS[perspective].subnet_v6.network_address + 0x2
+
     def get_network_name(self, role: Role) -> str:
         return f"{self.project_name}_{NETWORKS[role].name}"
 
@@ -528,10 +578,14 @@ class Deployment:
         )
 
         return {
-            f"{other_role.value}4": str(other_ipv4),
-            f"{other_role.value}6": str(other_ipv6),
-            f"{other_role.value}46": str(other_ipv4),
-            f"{other_role.value}46 ": str(other_ipv6),
+            f"{other_role.value}4": other_ipv4.exploded,
+            f"{other_role.value}6": other_ipv6.exploded,
+            f"{other_role.value}46": other_ipv4.exploded,
+            f"{other_role.value}46 ": other_ipv6.exploded,
+            f"sim4": self.get_sim_ipv4(role).exploded,
+            f"sim6": self.get_sim_ipv6(role).exploded,
+            f"sim46": self.get_sim_ipv4(role).exploded,
+            f"sim46 ": self.get_sim_ipv6(role).exploded,
         }
 
     def _create_sim(self, scenario: str, waitforserver: bool = False):
@@ -555,6 +609,15 @@ class Deployment:
             environment=environment,
             extra_hosts={
                 "server": self.get_container_ipv4(Role.SERVER),
+                "server4": self.get_container_ipv4(Role.SERVER),
+                "server6": self.get_container_ipv6(Role.SERVER),
+                "server46": self.get_container_ipv4(Role.SERVER),
+                "server46 ": self.get_container_ipv6(Role.SERVER),
+                "client": self.get_container_ipv4(Role.CLIENT),
+                "client4": self.get_container_ipv4(Role.CLIENT),
+                "client6": self.get_container_ipv6(Role.CLIENT),
+                "client46": self.get_container_ipv4(Role.CLIENT),
+                "client46 ": self.get_container_ipv6(Role.CLIENT),
             },
             hostname=name,
             labels={
@@ -564,7 +627,7 @@ class Deployment:
                 "de.sedrubal.interop.stage": "0",
             },
             name=container_name,
-            network=self.get_network_name(Role.CLIENT),
+            network=None,
             stdin_open=True,
             tty=True,
         )
@@ -576,8 +639,8 @@ class Deployment:
             network = self.get_network(role)
             network.connect(
                 container,
-                ipv4_address=str(NETWORKS[role].subnet_v4.network_address + 2),
-                ipv6_address=str(NETWORKS[role].subnet_v6.network_address + 0x2),
+                ipv4_address=self.get_sim_ipv4(perspective=role).exploded,
+                ipv6_address=self.get_sim_ipv6(perspective=role).exploded,
             )
 
         return container
@@ -687,7 +750,7 @@ class Deployment:
                 "de.sedrubal.interop.stage": "1",
             },
             name=container_name,
-            network=network.name,
+            network=None,
             stdin_open=True,
             tty=True,
             ulimits=[MEMLOCK_ULIMIT],
@@ -696,8 +759,9 @@ class Deployment:
 
         network.connect(
             container,
-            ipv4_address=str(ipv4_address),
-            ipv6_address=str(ipv6_address),
+            ipv4_address=ipv4_address.exploded,
+            ipv6_address=ipv6_address.exploded,
         )
+        container.reload()
 
         return container

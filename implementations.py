@@ -1,11 +1,17 @@
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Optional, Union
+from typing import TYPE_CHECKING, Optional, Union
 
 import docker
 from dateutil.parser import parse as parse_date
+
+if TYPE_CHECKING:
+    from deployment import Deployment
+
+LOGGER = logging.getLogger(name="quic-interop-runner")
 
 
 class Role(Enum):
@@ -25,12 +31,29 @@ class Implementation:
     _img_id: Optional[str] = None
     _img_created: Optional[datetime] = None
 
-    def gather_infos_from_docker(self, docker_cli: docker.DockerClient):
-        image = docker_cli.images.get(self.image)
+    def gather_infos_from_docker(self, deployment: "Deployment"):
+        try:
+            client_img = deployment.docker_clis[Role.CLIENT].images.get(self.image)
+        except docker.errors.ImageNotFound:
+            LOGGER.info("Pulling image %s on %s host", self.image, Role.CLIENT.value)
+            client_img = deployment.docker_clis[Role.CLIENT].images.pull(self.image)
+
+        try:
+            server_img = deployment.docker_clis[Role.SERVER].images.get(self.image)
+        except docker.errors.ImageNotFound:
+            LOGGER.info("Pulling image %s on %s host", self.image, Role.SERVER.value)
+            server_img = deployment.docker_clis[Role.SERVER].images.pull(self.image)
+
         image_base = self.image.split(":", 1)[0]
-        self._img_versions = [tag.replace(f"{image_base}:", "") for tag in image.tags]
-        self._img_id = image.id
-        created_raw: Optional[str] = image.attrs.get("Created")
+        self._img_id = client_img.id
+        assert self._img_id == server_img.id
+        self._img_versions = [
+            *(tag.replace(f"{image_base}:", "") for tag in client_img.tags),
+            *(tag.replace(f"{image_base}:", "") for tag in server_img.tags),
+        ]
+        created_raw: Optional[str] = client_img.attrs.get(
+            "Created", server_img.attrs.get("Created")
+        )
         self._img_created = parse_date(created_raw) if created_raw else None
 
     @property
