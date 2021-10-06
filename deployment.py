@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Deployment using Docker and SSH (for remote hosts)."""
 
 import ipaddress
@@ -16,19 +17,28 @@ from typing import Any, Callable, Optional, Type, Union
 import docker
 from termcolor import colored
 
-from implementations import Implementation, Role
+from evaluation_tools.utils import TerminalFormatter
+from implementations import IMPLEMENTATIONS, Implementation, Role
 from testcases import Perspective, TestCase
 from utils import random_string
 
 DEFAULT_DOCKER_SOCK = "unix:///var/run/docker.sock"
-MEMLOCK_ULIMIT = docker.types.Ulimit(name="memlock", hard=67108864, soft=0)
+MEMLOCK_ULIMIT = docker.types.Ulimit(name="memlock", hard=67108864, soft=67108864)
 IPERF_ENDPOINT_IMG = "martenseemann/quic-interop-iperf-endpoint"
 SIM_IMG = "therealsedrubal/quic-network-simulator"
+
+VOID_NETWORK = "none"
 
 Container = Type[docker.models.containers.Container]
 Network = Type[docker.models.networks.Network]
 
 LOGGER = logging.getLogger(name="quic-interop-runner")
+
+
+class ContainerStatus(Enum):
+    CREATED = "created"
+    RUNNING = "running"
+    EXITED = "exited"
 
 
 class IPVersion(Enum):
@@ -62,6 +72,10 @@ NETWORKS: dict[Role, NetworkSpec] = {
 
 def get_container_name(container: Container) -> str:
     return container.labels.get("de.sedrubal.interop.service", container.name)
+
+def get_container_status(container: Container) -> ContainerStatus:
+    container.reload()
+    return ContainerStatus(container.status)
 
 
 @dataclass
@@ -119,7 +133,7 @@ class ExecResult:
             return f"<Result: Timeout; {log_str}>"
 
         exit_codes_str = " ".join(
-            f"{container}: {code}" for container, code in self.exit_codes
+            f"{container}: {code}" for container, code in self.exit_codes.items()
         )
 
         return f"<Result: {exit_codes_str}; {log_str}>"
@@ -142,36 +156,34 @@ class Deployment:
             Role.SERVER: None,
             Role.CLIENT: None,
         }
-        self._stage_pending = 0
-        self._stage_pending_cv = threading.Condition()
+        self._stage_status_cv = threading.Condition()
 
     def _thread_monitor_container(
         self,
         container: Container,
         log_callback: Callable[[Container, str, bool], None],
         end_callback: Callable[[], None],
-        running_callback: Callable[[], None],
+        status_changed_callback: Callable[[Container, ContainerStatus], None],
     ):
-        status: str = container.status
-        assert status == "created"
+        status = get_container_status(container)
+        assert status == ContainerStatus.CREATED
         log_callback(container, "Starting...", False)
         try:
             container.start()
-            container.reload()
         except docker.errors.APIError as err:
             log_callback(container, str(err), False)
+            status_changed_callback(container, status)
             end_callback()
 
             return
 
         while True:
-            container.reload()
+            new_status = get_container_status(container)
 
-            if container.status != status:
-                status = container.status
-                log_callback(container, status, False)
-                assert status == "running"
-                running_callback()
+            if new_status != status:
+                status = new_status
+                log_callback(container, status.value, False)
+                status_changed_callback(container, status)
 
                 break
 
@@ -183,11 +195,13 @@ class Deployment:
 
             log_callback(container, chunk_str, True)
 
-        container.reload()
+        # container stopped
 
-        if container.status != status:
-            status = container.status
-            log_callback(container, status, False)
+        new_status = get_container_status(container)
+
+        if new_status != status:
+            status = new_status
+            log_callback(container, status.value, False)
 
         result = container.wait()
         error = result.pop("Error", None)
@@ -202,11 +216,11 @@ class Deployment:
         if result:
             LOGGER.warning("Unknown contianer result: %s", str(result))
 
-        container.reload()
+        new_status = get_container_status(container)
 
-        if container.status != status:
-            status = container.status
-            log_callback(container, status, False)
+        if new_status != status:
+            status = new_status
+            log_callback(container, status.value, False)
 
         # stop all containers when one container exits
         end_callback()
@@ -252,16 +266,15 @@ class Deployment:
             if not is_chunk:
                 log_buf(container)
 
-        def running_callback():
-            with self._stage_pending_cv:
-                self._stage_pending -= 1
-                self._stage_pending_cv.notify()
+        def status_changed_callback(container: Container, status: ContainerStatus):
+            with self._stage_status_cv:
+                data_structure[container].status = status
+                self._stage_status_cv.notify()
 
         def end_callback(force=False):
             for container in reversed(containers):
-                container.reload()
 
-                if container.status in ("running",):
+                if get_container_status(container) in (ContainerStatus.RUNNING,):
                     if force:
                         log_callback(container, "Killing container...")
                         container.kill()
@@ -276,14 +289,21 @@ class Deployment:
         @dataclass
         class DataStructureEntry:
             monitor_thread: threading.Thread
+            status: ContainerStatus
             log_buf: str = ""
 
         data_structure: dict[Container, DataStructureEntry] = {
             container: DataStructureEntry(
                 monitor_thread=threading.Thread(
                     target=self._thread_monitor_container,
-                    args=[container, log_callback, end_callback, running_callback],
-                )
+                    args=[
+                        container,
+                        log_callback,
+                        end_callback,
+                        status_changed_callback,
+                    ],
+                ),
+                status=get_container_status(container),
             )
             for container in containers
         }
@@ -291,29 +311,64 @@ class Deployment:
         # start according to stage
 
         timed_out = False
+        failed = False
 
         for stage in sorted(containers_by_stage.keys()):
             LOGGER.debug("Starting containers in stage %i", stage)
 
-            assert self._stage_pending == 0
-            with self._stage_pending_cv:
-                self._stage_pending = len(containers_by_stage[stage])
+            with self._stage_status_cv:
+                for container in containers_by_stage[stage]:
+                    data_structure[container].status = get_container_status(container)
+                    assert data_structure[container].status == ContainerStatus.CREATED
 
                 for container in containers_by_stage[stage]:
                     data_structure[container].monitor_thread.start()
 
-                timed_out = not self._stage_pending_cv.wait(
-                    timeout=max(0, timeout - (time.time() - start))
-                )
+                timed_out = False
+
+                while any(
+                    data_structure[container].status == ContainerStatus.CREATED
+                    for container in containers_by_stage[stage]
+                ):
+                    timed_out = not self._stage_status_cv.wait(
+                        timeout=max(0, timeout - (time.time() - start))
+                    )
+
+                    if timed_out:
+                        break
+
+                containers_not_running = [
+                    container
+                    for container in containers_by_stage[stage]
+                    if data_structure[container].status != ContainerStatus.RUNNING
+                ]
+
+                if containers_not_running:
+                    different_status_str = ", ".join(
+                        f"{container.name}: {data_structure[container].status.value}"
+                        for container in containers_not_running
+                    )
+                    LOGGER.error("Some containers did not start successfully. Exiting.")
+                    LOGGER.error(different_status_str)
+                    timeout = 0
+                    end_callback()
+                    failed = True
+
+                    # don't start next stage
+
+                    break
+
+        # exit
 
         for container, container_data_structure in data_structure.items():
             thread: threading.Thread = container_data_structure.monitor_thread
             thread_timeout = max(0, timeout - (time.time() - start))
             try:
-                thread.join(timeout=thread_timeout)
+                if thread._started.is_set():  # noqa
+                    thread.join(timeout=thread_timeout)
             except KeyboardInterrupt:
-                end_callback(force=True)
-                sys.exit("\rQuit")
+                print(end="\r", file=sys.stderr)
+                LOGGER.warning("Stopping containers")
 
             if thread.is_alive():
                 # timeout
@@ -326,24 +381,24 @@ class Deployment:
                     thread.join()
 
         for container in containers:
-            container.reload()
+            status = get_container_status(container)
 
-            if container.status != "exited":
-                breakpoint()
-            assert container.status == "exited"
+            if status != ContainerStatus.EXITED:
+                logging.error(
+                    "Container %s did not exit, but is in %s state.",
+                    container.name,
+                    status.value,
+                )
+                #  breakpoint()
+                failed = True
 
-        for network in self._networks.values():
-            assert network
+                break
 
-            for container in network.containers:
-                try:
-                    network.disconnect(container)
-                except docker.errors.NotFound:
-                    LOGGER.debug(
-                        "Could not disconnect %s from %s as it was not found(?!?)",
-                        container.name,
-                        network.name,
-                    )
+        self.disconnect_all_containers()
+
+        if failed:
+            LOGGER.error("Starting containers failed.")
+            sys.exit(1)
 
         return ExecResult(
             log=logs,
@@ -429,6 +484,53 @@ class Deployment:
         # wait
 
         result = self.run_and_wait(containers, timeout=10)
+
+        for container in containers:
+            container.remove()
+
+        return result
+
+    def run_debug_setup(
+        self,
+        client: Implementation = IMPLEMENTATIONS["quic-go"],
+        server: Implementation = IMPLEMENTATIONS["quic-go"],
+    ):
+        timeout = 60 * 60 * 1  # 1h
+        version = 0x1
+        testcase = "transfer"
+        LOGGER.debug("Creating sim container")
+        sim_container = self._create_sim(
+            waitforserver=False,
+            scenario="debug-scenario",
+            entrypoint=["sleep", str(timeout)],
+        )
+        LOGGER.debug("Creating server container")
+        server_container = self._create_implementation(
+            image=server.image,
+            role=Role.SERVER,
+            local_certs_path=Path("/dev/null"),
+            testcase=testcase,
+            version=version,
+            local_www_path=Path("/dev/null"),
+            local_download_path=Path("/dev/null"),
+            entrypoint=["sleep", str(timeout)],
+        )
+        LOGGER.debug("Creating client container")
+        client_container = self._create_implementation(
+            image=client.image,
+            role=Role.CLIENT,
+            local_certs_path=Path("/dev/null"),
+            testcase=testcase,
+            version=version,
+            request_urls="debug-request-url",
+            local_www_path=Path("/dev/null"),
+            local_download_path=Path("/dev/null"),
+            entrypoint=["sleep", str(timeout)],
+        )
+        containers = [sim_container, client_container, server_container]
+        # wait
+        LOGGER.debug("Starting containers")
+        result = self.run_and_wait(containers, timeout=timeout)
 
         for container in containers:
             container.remove()
@@ -539,6 +641,34 @@ class Deployment:
 
         return self._networks[role]
 
+    def get_network_name(self, role: Role) -> str:
+        return f"{self.project_name}_{NETWORKS[role].name}"
+
+    def disconnect_container_from_void(self, container: Container):
+        container.client.networks.get(VOID_NETWORK).disconnect(container)
+
+    def disconnect_all_containers(self):
+        """Disconnect all containers from our networks."""
+
+        for network in self._networks.values():
+            assert network
+
+            try:
+                for container in network.containers:
+                    try:
+                        network.disconnect(container)
+                    except docker.errors.NotFound:
+                        LOGGER.debug(
+                            "Could not disconnect %s from %s as it was not found(?!?)",
+                            container.name,
+                            network.name,
+                        )
+            except docker.errors.NotFound:
+                LOGGER.debug(
+                    "Network %s not found(?!?)",
+                    network.name,
+                )
+
     def get_container_ipv4(self, role: Role) -> ipaddress.IPv4Address:
         return NETWORKS[role].subnet_v4.network_address + 100
 
@@ -561,9 +691,6 @@ class Deployment:
     def get_sim_ipv6(self, perspective: Role) -> ipaddress.IPv6Address:
         return NETWORKS[perspective].subnet_v6.network_address + 0x2
 
-    def get_network_name(self, role: Role) -> str:
-        return f"{self.project_name}_{NETWORKS[role].name}"
-
     def get_extra_hosts(self, role: Role, iperf=False) -> dict[str, str]:
         other_role = Role.CLIENT if role == Role.SERVER else Role.SERVER
         other_ipv4 = (
@@ -582,13 +709,18 @@ class Deployment:
             f"{other_role.value}6": other_ipv6.exploded,
             f"{other_role.value}46": other_ipv4.exploded,
             f"{other_role.value}46 ": other_ipv6.exploded,
-            f"sim4": self.get_sim_ipv4(role).exploded,
-            f"sim6": self.get_sim_ipv6(role).exploded,
-            f"sim46": self.get_sim_ipv4(role).exploded,
-            f"sim46 ": self.get_sim_ipv6(role).exploded,
+            "sim4": self.get_sim_ipv4(role).exploded,
+            "sim6": self.get_sim_ipv6(role).exploded,
+            "sim46": self.get_sim_ipv4(role).exploded,
+            "sim46 ": self.get_sim_ipv6(role).exploded,
         }
 
-    def _create_sim(self, scenario: str, waitforserver: bool = False):
+    def _create_sim(
+        self,
+        scenario: str,
+        waitforserver: bool = False,
+        entrypoint: Optional[list[str]] = None,
+    ):
         # TODO on which host?
         environment = {
             "SCENARIO": scenario,
@@ -606,6 +738,7 @@ class Deployment:
             image=SIM_IMG,
             cap_add="NET_ADMIN",
             detach=True,
+            entrypoint=entrypoint,
             environment=environment,
             extra_hosts={
                 "server": self.get_container_ipv4(Role.SERVER),
@@ -627,13 +760,17 @@ class Deployment:
                 "de.sedrubal.interop.stage": "0",
             },
             name=container_name,
-            network=None,
+            # connect to dummy network to avoid connecting to host
+            network=VOID_NETWORK,
             stdin_open=True,
             tty=True,
         )
         # TODO - why and how?
         #  expose:
         #    - "57832"
+
+        # connect to desired networks
+        self.disconnect_container_from_void(container)
 
         for role in (Role.CLIENT, Role.SERVER):
             network = self.get_network(role)
@@ -645,7 +782,12 @@ class Deployment:
 
         return container
 
-    def _create_iperf(self, role: Role, iperf_congestion="cubic") -> Container:
+    def _create_iperf(
+        self,
+        role: Role,
+        iperf_congestion="cubic",
+        entrypoint: Optional[list[str]] = None,
+    ) -> Container:
         env = {
             "ROLE": role.value,
             "IPERF_CONGESTION": iperf_congestion,
@@ -662,6 +804,7 @@ class Deployment:
             ipv6_address=self.get_iperf_ipv6(role),
             extra_hosts=self.get_extra_hosts(role, iperf=True),
             env=env,
+            entrypoint=entrypoint,
         )
 
     def _create_implementation(
@@ -674,6 +817,7 @@ class Deployment:
         request_urls: Optional[str] = None,
         local_www_path: Optional[Path] = None,
         local_download_path: Optional[Path] = None,
+        entrypoint: Optional[list[str]] = None,
     ) -> Container:
         volumes = {
             local_certs_path: {"bind": "/certs", "mode": "ro"},
@@ -700,11 +844,12 @@ class Deployment:
             image=image,
             role=role,
             name=role.value,
+            entrypoint=entrypoint,
+            env=env,
+            extra_hosts=self.get_extra_hosts(role),
             ipv4_address=self.get_container_ipv4(role),
             ipv6_address=self.get_container_ipv6(role),
-            extra_hosts=self.get_extra_hosts(role),
             volumes=volumes,
-            env=env,
         )
 
     def _remove_existing_container(self, role: Role, container_name: str):
@@ -726,6 +871,7 @@ class Deployment:
         volumes: Optional[dict] = None,
         extra_hosts: Optional[dict[str, str]] = None,
         env: Optional[dict] = None,
+        entrypoint: Optional[list[str]] = None,
     ):
         """Create an endpoint container."""
         assert role != Role.BOTH
@@ -740,6 +886,7 @@ class Deployment:
             image=image,
             cap_add="NET_ADMIN",
             detach=True,
+            entrypoint=entrypoint,
             environment=env,
             extra_hosts=extra_hosts,
             hostname=name,
@@ -750,18 +897,37 @@ class Deployment:
                 "de.sedrubal.interop.stage": "1",
             },
             name=container_name,
-            network=None,
+            # connect to dummy network to avoid connecting to host
+            network=VOID_NETWORK,
             stdin_open=True,
             tty=True,
             ulimits=[MEMLOCK_ULIMIT],
             volumes=volumes,
         )
 
+        self.disconnect_container_from_void(container)
         network.connect(
             container,
             ipv4_address=ipv4_address.exploded,
             ipv6_address=ipv6_address.exploded,
         )
-        container.reload()
 
         return container
+
+
+def main():
+    LOGGER.setLevel(logging.DEBUG)
+    CONSOLE_LOG_HANDLER = logging.StreamHandler(stream=sys.stderr)
+    CONSOLE_LOG_HANDLER.setFormatter(TerminalFormatter())
+    LOGGER.addHandler(CONSOLE_LOG_HANDLER)
+    deployment = Deployment()
+    LOGGER.info(
+        "Starting dev setup. "
+        "Use docker exec to execute a shell inside the containers as soon as they are running."
+    )
+    result = deployment.run_debug_setup()
+    logging.info(str(result))
+
+
+if __name__ == "__main__":
+    main()
