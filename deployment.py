@@ -17,9 +17,17 @@ from typing import Any, Callable, Optional, Type, Union
 import docker
 from termcolor import colored
 
+from docker_utils import (
+    Container,
+    Network,
+    copy_file_to_container,
+    copy_tree_from_container,
+    copy_tree_to_container,
+    force_same_img_version,
+)
 from evaluation_tools.utils import TerminalFormatter
 from implementations import IMPLEMENTATIONS, Implementation, Role
-from testcases import Perspective, TestCase
+from testcases import MeasurementRealLink, Perspective, TestCase
 from utils import random_string
 
 DEFAULT_DOCKER_SOCK = "unix:///var/run/docker.sock"
@@ -29,8 +37,16 @@ SIM_IMG = "therealsedrubal/quic-network-simulator"
 
 VOID_NETWORK = "none"
 
-Container = Type[docker.models.containers.Container]
-Network = Type[docker.models.networks.Network]
+# Pathes inside the containers
+DOWNLOADS_PATH = Path("/downloads")
+CERTS_PATH = Path("/certs")
+WWW_PATH = Path("/www")
+LOGS_PATH = Path("/logs")
+SSLKEYLOG_FILE = LOGS_PATH / "keys.log"
+QLOG_DIR = LOGS_PATH / "qlog/"
+
+
+REAL_LINK_SETUP_SCRIPT = Path(__file__).parent / "real_link_setup.sh"
 
 LOGGER = logging.getLogger(name="quic-interop-runner")
 
@@ -73,8 +89,10 @@ NETWORKS: dict[Role, NetworkSpec] = {
 def get_container_name(container: Container) -> str:
     return container.labels.get("de.sedrubal.interop.service", container.name)
 
+
 def get_container_status(container: Container) -> ContainerStatus:
     container.reload()
+
     return ContainerStatus(container.status)
 
 
@@ -139,91 +157,84 @@ class ExecResult:
         return f"<Result: {exit_codes_str}; {log_str}>"
 
 
+def container_monitor_thread(
+    container: Container,
+    log_callback: Callable[[Container, str, bool], None],
+    end_callback: Callable[[], None],
+    status_changed_callback: Callable[[Container, ContainerStatus], None],
+):
+    status = get_container_status(container)
+    assert status == ContainerStatus.CREATED
+    log_callback(container, "Starting...", False)
+    try:
+        container.start()
+    except docker.errors.APIError as err:
+        log_callback(container, str(err), False)
+        status_changed_callback(container, status)
+        end_callback()
+
+        return
+
+    while True:
+        new_status = get_container_status(container)
+
+        if new_status != status:
+            status = new_status
+            log_callback(container, status.value, False)
+            status_changed_callback(container, status)
+
+            break
+
+    for chunk in container.logs(stream=True):
+        try:
+            chunk_str = chunk.decode("utf-8")
+        except UnicodeDecodeError:
+            chunk_str = str(chunk)
+
+        log_callback(container, chunk_str, True)
+
+    # container stopped
+
+    new_status = get_container_status(container)
+
+    if new_status != status:
+        status = new_status
+        log_callback(container, status.value, False)
+
+    result = container.wait()
+    error = result.pop("Error", None)
+    exit_code = result.pop("StatusCode", None)
+
+    if error:
+        raise Exception(error)
+
+    if exit_code is not None:
+        log_callback(container, f"exit status {exit_code}", False)
+
+    if result:
+        LOGGER.warning("Unknown contianer result: %s", str(result))
+
+    new_status = get_container_status(container)
+
+    if new_status != status:
+        status = new_status
+        log_callback(container, status.value, False)
+
+    # stop all containers when one container exits
+    end_callback()
+
+
 class Deployment:
 
     project_name = "quic-interop-runner"
 
-    def __init__(
-        self,
-        server_host: str = DEFAULT_DOCKER_SOCK,
-        client_host: str = DEFAULT_DOCKER_SOCK,
-    ):
-        self.docker_clis = {
-            Role.SERVER: docker.DockerClient(server_host),
-            Role.CLIENT: docker.DockerClient(client_host),
-        }
+    def __init__(self):
+        self.docker_cli = docker.from_env()
         self._networks: dict[Role, Optional[Network]] = {
             Role.SERVER: None,
             Role.CLIENT: None,
         }
         self._stage_status_cv = threading.Condition()
-
-    def _thread_monitor_container(
-        self,
-        container: Container,
-        log_callback: Callable[[Container, str, bool], None],
-        end_callback: Callable[[], None],
-        status_changed_callback: Callable[[Container, ContainerStatus], None],
-    ):
-        status = get_container_status(container)
-        assert status == ContainerStatus.CREATED
-        log_callback(container, "Starting...", False)
-        try:
-            container.start()
-        except docker.errors.APIError as err:
-            log_callback(container, str(err), False)
-            status_changed_callback(container, status)
-            end_callback()
-
-            return
-
-        while True:
-            new_status = get_container_status(container)
-
-            if new_status != status:
-                status = new_status
-                log_callback(container, status.value, False)
-                status_changed_callback(container, status)
-
-                break
-
-        for chunk in container.logs(stream=True):
-            try:
-                chunk_str = chunk.decode("utf-8")
-            except UnicodeDecodeError:
-                chunk_str = str(chunk)
-
-            log_callback(container, chunk_str, True)
-
-        # container stopped
-
-        new_status = get_container_status(container)
-
-        if new_status != status:
-            status = new_status
-            log_callback(container, status.value, False)
-
-        result = container.wait()
-        error = result.pop("Error", None)
-        exit_code = result.pop("StatusCode", None)
-
-        if error:
-            raise Exception(error)
-
-        if exit_code is not None:
-            log_callback(container, f"exit status {exit_code}", False)
-
-        if result:
-            LOGGER.warning("Unknown contianer result: %s", str(result))
-
-        new_status = get_container_status(container)
-
-        if new_status != status:
-            status = new_status
-            log_callback(container, status.value, False)
-
-        # stop all containers when one container exits
-        end_callback()
 
     def run_and_wait(self, containers: list[Container], timeout: int) -> ExecResult:
         """Return logs and timed_out."""
@@ -295,7 +306,7 @@ class Deployment:
         data_structure: dict[Container, DataStructureEntry] = {
             container: DataStructureEntry(
                 monitor_thread=threading.Thread(
-                    target=self._thread_monitor_container,
+                    target=container_monitor_thread,
                     args=[
                         container,
                         log_callback,
@@ -409,46 +420,6 @@ class Deployment:
             },
         )
 
-    def _copy_logs(self, container: Container, dst: Path):
-        src = Path("/logs")
-        archive_buf = BytesIO()
-        bits, _stat = container.get_archive(src)
-        # TODO progress bar with stat["size"]
-
-        for tar_chunk in bits:
-            archive_buf.write(tar_chunk)
-
-        archive_buf.seek(0)
-        with tarfile.open(fileobj=archive_buf) as archive:
-            # don't use archive.extractall() because we can't control the target file to extract to.
-
-            for member in archive.getmembers():
-                if member.isfile():
-                    # construct target path: strip logs/
-                    target_path = dst
-
-                    for part in Path(member.path).parts[1:]:
-                        target_path /= part
-
-                    LOGGER.debug(
-                        "Extracting %s:%s to %s",
-                        container.name,
-                        member.path,
-                        target_path,
-                    )
-                    target_path.parent.mkdir(exist_ok=True, parents=True)
-                    with target_path.open("wb") as target_file:
-                        extracted = archive.extractfile(member)
-                        assert extracted
-
-                        while True:
-                            chunk = extracted.read(10240)
-
-                            if not chunk:
-                                break
-
-                            target_file.write(chunk)
-
     def run_compliance_check(
         self,
         implementation: Implementation,
@@ -470,7 +441,7 @@ class Deployment:
                 )
             )
         containers.append(
-            self._create_implementation(
+            self._create_implementation_sim(
                 image=implementation.image,
                 role=role,
                 local_certs_path=local_certs_path,
@@ -505,18 +476,17 @@ class Deployment:
             entrypoint=["sleep", str(timeout)],
         )
         LOGGER.debug("Creating server container")
-        server_container = self._create_implementation(
+        server_container = self._create_implementation_sim(
             image=server.image,
             role=Role.SERVER,
             local_certs_path=Path("/dev/null"),
             testcase=testcase,
             version=version,
             local_www_path=Path("/dev/null"),
-            local_download_path=Path("/dev/null"),
             entrypoint=["sleep", str(timeout)],
         )
         LOGGER.debug("Creating client container")
-        client_container = self._create_implementation(
+        client_container = self._create_implementation_sim(
             image=client.image,
             role=Role.CLIENT,
             local_certs_path=Path("/dev/null"),
@@ -550,12 +520,61 @@ class Deployment:
         request_urls: str,
         version: str,
     ) -> ExecResult:
-        # TODO extra containers
+        if testcase.additional_containers:
+            # TODO extra containers
+            raise NotImplementedError(
+                "Additional containers are currently not supported"
+            )
+
+        if isinstance(testcase, MeasurementRealLink):
+            LOGGER.debug("Using a real link for this testcase.")
+
+            return self._run_testcase_with_remote_client(
+                log_path=log_path,
+                timeout=timeout,
+                testcase=testcase,
+                local_certs_path=local_certs_path,
+                local_www_path=local_www_path,
+                local_downloads_path=local_downloads_path,
+                client=client,
+                server=server,
+                request_urls=request_urls,
+                version=version,
+            )
+        else:
+            LOGGER.debug("Using an emulated link for this testcase.")
+
+            return self._run_testcase_with_sim(
+                log_path=log_path,
+                timeout=timeout,
+                testcase=testcase,
+                local_certs_path=local_certs_path,
+                local_www_path=local_www_path,
+                local_downloads_path=local_downloads_path,
+                client=client,
+                server=server,
+                request_urls=request_urls,
+                version=version,
+            )
+
+    def _run_testcase_with_sim(
+        self,
+        log_path: Path,
+        timeout: int,
+        testcase: TestCase,
+        local_certs_path: Path,
+        local_www_path: Path,
+        local_downloads_path: Path,
+        client: Implementation,
+        server: Implementation,
+        request_urls: str,
+        version: str,
+    ) -> ExecResult:
         sim_container = self._create_sim(
             waitforserver=True,
             scenario=testcase.scenario,
         )
-        server_container = self._create_implementation(
+        server_container = self._create_implementation_sim(
             image=server.image,
             role=Role.SERVER,
             local_certs_path=local_certs_path,
@@ -563,9 +582,61 @@ class Deployment:
             version=version,
             request_urls=request_urls,
             local_www_path=local_www_path,
+        )
+        client_container = self._create_implementation_sim(
+            image=client.image,
+            role=Role.CLIENT,
+            local_certs_path=local_certs_path,
+            testcase=testcase.testname(Perspective.CLIENT),
+            version=version,
+            request_urls=request_urls,
             local_download_path=local_downloads_path,
         )
-        client_container = self._create_implementation(
+        containers = [sim_container, client_container, server_container]
+        # wait
+        result = self.run_and_wait(containers, timeout=timeout)
+        # copy logs
+        copy_tree_from_container(server_container, LOGS_PATH, log_path / "server")
+        copy_tree_from_container(client_container, LOGS_PATH, log_path / "client")
+        copy_tree_from_container(sim_container, LOGS_PATH, log_path / "sim")
+
+        for container in containers:
+            container.remove()
+
+        return result
+
+    def _run_testcase_with_remote_client(
+        self,
+        log_path: Path,
+        timeout: int,
+        testcase: MeasurementRealLink,
+        local_certs_path: Path,
+        local_www_path: Path,
+        local_downloads_path: Path,
+        client: Implementation,
+        server: Implementation,
+        request_urls: str,
+        version: str,
+    ) -> ExecResult:
+        remote_cli = docker.DockerClient(testcase.remote_docker_host)
+        # TODO tcpdump containers!
+        # TODO network <<<
+
+        # ensure image version is the same
+        force_same_img_version(client, cli=remote_cli)
+
+        server_container = self._create_implementation_real(
+            cli=self.docker_cli,
+            image=server.image,
+            role=Role.SERVER,
+            local_certs_path=local_certs_path,
+            testcase=testcase.testname(Perspective.SERVER),
+            version=version,
+            request_urls=request_urls,
+            local_www_path=local_www_path,
+        )
+        client_container = self._create_implementation_real(
+            cli=remote_cli,
             image=client.image,
             role=Role.CLIENT,
             local_certs_path=local_certs_path,
@@ -573,15 +644,17 @@ class Deployment:
             version=version,
             request_urls=request_urls,
             local_www_path=local_www_path,
-            local_download_path=local_downloads_path,
         )
-        containers = [sim_container, client_container, server_container]
+        containers = [client_container, server_container]
         # wait
         result = self.run_and_wait(containers, timeout=timeout)
+
+        # copy downloads
+        copy_tree_from_container(client_container, DOWNLOADS_PATH, local_downloads_path)
+
         # copy logs
-        self._copy_logs(server_container, log_path / "server")
-        self._copy_logs(client_container, log_path / "client")
-        self._copy_logs(sim_container, log_path / "sim")
+        copy_tree_from_container(server_container, LOGS_PATH, log_path / "server")
+        copy_tree_from_container(client_container, LOGS_PATH, log_path / "client")
 
         for container in containers:
             container.remove()
@@ -589,13 +662,13 @@ class Deployment:
         return result
 
     def create_networks(self):
+        """Create sim networks."""
+
         for role in (Role.CLIENT, Role.SERVER):
             network_name = self.get_network_name(role)
 
             try:
-                network: Optional[Network] = self.docker_clis[role].networks.get(
-                    network_name
-                )
+                network: Optional[Network] = self.docker_cli.networks.get(network_name)
             except docker.errors.NotFound:
                 network = None
 
@@ -604,7 +677,7 @@ class Deployment:
 
                 continue
 
-            self._networks[role] = self.docker_clis[role].networks.create(
+            self._networks[role] = self.docker_cli.networks.create(
                 name=network_name,
                 driver="bridge",
                 options={
@@ -637,9 +710,10 @@ class Deployment:
         if not self._networks[role]:
             self.create_networks()
 
-        assert self._networks[role]
+        network = self._networks[role]
+        assert network
 
-        return self._networks[role]
+        return network
 
     def get_network_name(self, role: Role) -> str:
         return f"{self.project_name}_{NETWORKS[role].name}"
@@ -651,7 +725,8 @@ class Deployment:
         """Disconnect all containers from our networks."""
 
         for network in self._networks.values():
-            assert network
+            if not network:
+                continue
 
             try:
                 for container in network.containers:
@@ -721,7 +796,6 @@ class Deployment:
         waitforserver: bool = False,
         entrypoint: Optional[list[str]] = None,
     ):
-        # TODO on which host?
         environment = {
             "SCENARIO": scenario,
         }
@@ -729,45 +803,28 @@ class Deployment:
         if waitforserver:
             environment["WAITFORSERVER"] = "server:443"
 
-        name = "sim"
-        container_name = f"{self.project_name}_{name}"
-
-        self._remove_existing_container(role=Role.CLIENT, container_name=container_name)
-
-        container = self.docker_clis[Role.CLIENT].containers.create(
+        container = self._create_container(
+            cli=self.docker_cli,
             image=SIM_IMG,
-            cap_add="NET_ADMIN",
-            detach=True,
             entrypoint=entrypoint,
             environment=environment,
             extra_hosts={
-                "server": self.get_container_ipv4(Role.SERVER),
-                "server4": self.get_container_ipv4(Role.SERVER),
-                "server6": self.get_container_ipv6(Role.SERVER),
-                "server46": self.get_container_ipv4(Role.SERVER),
-                "server46 ": self.get_container_ipv6(Role.SERVER),
-                "client": self.get_container_ipv4(Role.CLIENT),
-                "client4": self.get_container_ipv4(Role.CLIENT),
-                "client6": self.get_container_ipv6(Role.CLIENT),
-                "client46": self.get_container_ipv4(Role.CLIENT),
-                "client46 ": self.get_container_ipv6(Role.CLIENT),
+                "server": self.get_container_ipv4(Role.SERVER).exploded,
+                "server4": self.get_container_ipv4(Role.SERVER).exploded,
+                "server6": self.get_container_ipv6(Role.SERVER).exploded,
+                "server46": self.get_container_ipv4(Role.SERVER).exploded,
+                "server46 ": self.get_container_ipv6(Role.SERVER).exploded,
+                "client": self.get_container_ipv4(Role.CLIENT).exploded,
+                "client4": self.get_container_ipv4(Role.CLIENT).exploded,
+                "client6": self.get_container_ipv6(Role.CLIENT).exploded,
+                "client46": self.get_container_ipv4(Role.CLIENT).exploded,
+                "client46 ": self.get_container_ipv6(Role.CLIENT).exploded,
             },
-            hostname=name,
-            labels={
-                "de.sedrubal.interop.service": name,
-                "de.sedrubal.interop.project": self.project_name,
-                "de.sedrubal.interop.working_dir": str(Path().absolute()),
-                "de.sedrubal.interop.stage": "0",
-            },
-            name=container_name,
+            service_name="sim",
+            stage=0,
             # connect to dummy network to avoid connecting to host
             network=VOID_NETWORK,
-            stdin_open=True,
-            tty=True,
         )
-        # TODO - why and how?
-        #  expose:
-        #    - "57832"
 
         # connect to desired networks
         self.disconnect_container_from_void(container)
@@ -782,32 +839,33 @@ class Deployment:
 
         return container
 
-    def _create_iperf(
-        self,
-        role: Role,
-        iperf_congestion="cubic",
-        entrypoint: Optional[list[str]] = None,
-    ) -> Container:
-        env = {
-            "ROLE": role.value,
-            "IPERF_CONGESTION": iperf_congestion,
-        }
+    #  def _create_iperf(
+    #      self,
+    #      role: Role,
+    #      iperf_congestion="cubic",
+    #      entrypoint: Optional[list[str]] = None,
+    #  ) -> Container:
+    #      env = {
+    #          "ROLE": role.value,
+    #          "IPERF_CONGESTION": iperf_congestion,
+    #      }
+    #
+    #      if role == Role.SERVER:
+    #          env["CLIENT"] = "client4"
+    #
+    #      return self._create_sim_endpoint(
+    #          cli=self.docker_cli,
+    #          image=IPERF_ENDPOINT_IMG,
+    #          role=role,
+    #          name=f"iperf_{role.value}",
+    #          ipv4_address=self.get_iperf_ipv4(role),
+    #          ipv6_address=self.get_iperf_ipv6(role),
+    #          extra_hosts=self.get_extra_hosts(role, iperf=True),
+    #          env=env,
+    #          entrypoint=entrypoint,
+    #      )
 
-        if role == Role.SERVER:
-            env["CLIENT"] = "client4"
-
-        return self._create_endpoint(
-            image=IPERF_ENDPOINT_IMG,
-            role=role,
-            name=f"iperf_{role.value}",
-            ipv4_address=self.get_iperf_ipv4(role),
-            ipv6_address=self.get_iperf_ipv6(role),
-            extra_hosts=self.get_extra_hosts(role, iperf=True),
-            env=env,
-            entrypoint=entrypoint,
-        )
-
-    def _create_implementation(
+    def _create_implementation_sim(
         self,
         image: str,
         role: Role,
@@ -820,27 +878,29 @@ class Deployment:
         entrypoint: Optional[list[str]] = None,
     ) -> Container:
         volumes = {
-            local_certs_path: {"bind": "/certs", "mode": "ro"},
+            local_certs_path: {"bind": CERTS_PATH, "mode": "ro"},
         }
         env = {
             "ROLE": role.value,
             "TESTCASE": testcase,
             "VERSION": version,
-            "SSLKEYLOGFILE": "/logs/keys.log",
-            "QLOGDIR": "/logs/qlog/",
+            "SSLKEYLOGFILE": SSLKEYLOG_FILE,
+            "QLOGDIR": QLOG_DIR,
         }
 
         if role == Role.CLIENT:
             assert request_urls is not None
             env["REQUESTS"] = request_urls
+            assert local_www_path is None
             assert local_download_path
-            volumes[local_download_path] = {"bind": "/downloads", "mode": "delegated"}
+            volumes[local_download_path] = {"bind": DOWNLOADS_PATH, "mode": "delegated"}
         else:
             # server
+            assert local_download_path is None
             assert local_www_path
-            volumes[local_www_path] = {"bind": "/www", "mode": "ro"}
+            volumes[local_www_path] = {"bind": WWW_PATH, "mode": "ro"}
 
-        return self._create_endpoint(
+        return self._create_sim_endpoint(
             image=image,
             role=role,
             name=role.value,
@@ -852,16 +912,73 @@ class Deployment:
             volumes=volumes,
         )
 
-    def _remove_existing_container(self, role: Role, container_name: str):
+    def _create_implementation_real(
+        self,
+        cli: docker.DockerClient,
+        image: str,
+        role: Role,
+        local_certs_path: Path,
+        testcase: str,
+        version,
+        request_urls: Optional[str] = None,
+        local_www_path: Optional[Path] = None,
+        entrypoint: Optional[list[str]] = None,
+    ) -> Container:
+        volumes: Optional[dict] = None
+        env = {
+            "ROLE": role.value,
+            "TESTCASE": testcase,
+            "VERSION": version,
+            "SSLKEYLOGFILE": SSLKEYLOG_FILE,
+            "QLOGDIR": QLOG_DIR,
+        }
+
+        if role == Role.CLIENT:
+            assert request_urls is not None
+            env["REQUESTS"] = request_urls
+        else:
+            # server
+            assert local_www_path
+            volumes = {
+                local_certs_path: {"bind": CERTS_PATH, "mode": "ro"},
+                local_www_path: {"bind": WWW_PATH, "mode": "ro"},
+            }
+
+        container = self._create_container(
+            cli=cli,
+            entrypoint=entrypoint,
+            environment=env,
+            extra_hosts=self.get_extra_hosts(role),  # TODO
+            image=image,
+            service_name=role.value,
+            stage=1 if role == Role.SERVER else 2,
+            volumes=volumes,
+        )
+
+        # monkey patch setup.sh
+        copy_file_to_container(REAL_LINK_SETUP_SCRIPT, container, "/setup.sh")
+
+        if role == Role.CLIENT:
+            # to avoid volume
+            copy_tree_to_container(local_certs_path, container, CERTS_PATH)
+
+        return container
+
+    def _remove_existing_container(
+        self, container_name: str, cli: Optional[docker.DockerClient] = None
+    ):
+        if not cli:
+            cli = self.docker_cli
+            assert cli
         try:
-            container = self.docker_clis[role].containers.get(container_name)
+            container = cli.containers.get(container_name)
             LOGGER.debug("Removing existing container %s", container.name)
             container.stop()
             container.remove()
         except docker.errors.NotFound:
             pass
 
-    def _create_endpoint(
+    def _create_sim_endpoint(
         self,
         image: str,
         role: Role,
@@ -876,36 +993,21 @@ class Deployment:
         """Create an endpoint container."""
         assert role != Role.BOTH
 
-        network = self.get_network(role)
-
-        container_name = f"{self.project_name}_{name}"
-
-        self._remove_existing_container(role=role, container_name=container_name)
-
-        container = self.docker_clis[role].containers.create(
-            image=image,
-            cap_add="NET_ADMIN",
-            detach=True,
+        container = self._create_container(
+            cli=self.docker_cli,
             entrypoint=entrypoint,
             environment=env,
             extra_hosts=extra_hosts,
-            hostname=name,
-            labels={
-                "de.sedrubal.interop.service": name,
-                "de.sedrubal.interop.project": self.project_name,
-                "de.sedrubal.interop.working_dir": str(Path().absolute()),
-                "de.sedrubal.interop.stage": "1",
-            },
-            name=container_name,
+            image=image,
             # connect to dummy network to avoid connecting to host
             network=VOID_NETWORK,
-            stdin_open=True,
-            tty=True,
-            ulimits=[MEMLOCK_ULIMIT],
+            service_name=name,
+            stage=1 if role == Role.SERVER else 2,
             volumes=volumes,
         )
 
         self.disconnect_container_from_void(container)
+        network = self.get_network(role)
         network.connect(
             container,
             ipv4_address=ipv4_address.exploded,
@@ -913,6 +1015,52 @@ class Deployment:
         )
 
         return container
+
+    def _create_container(
+        self,
+        image: str,
+        service_name: str,
+        stage: int,
+        cli: docker.DockerClient,
+        entrypoint: Optional[list[str]] = None,
+        environment: Optional[dict] = None,
+        extra_hosts: Optional[dict[str, str]] = None,
+        network: Optional[str] = None,
+        volumes: Optional[dict] = None,
+    ):
+        container_name = f"{self.project_name}_{service_name}"
+
+        self._remove_existing_container(container_name=container_name, cli=cli)
+
+        return cli.containers.create(
+            image=image,
+            cap_add="NET_ADMIN",
+            detach=True,
+            entrypoint=entrypoint,
+            environment=environment,
+            extra_hosts=extra_hosts,
+            hostname=service_name,
+            labels={
+                "de.sedrubal.interop.service": service_name,
+                "de.sedrubal.interop.project": self.project_name,
+                "de.sedrubal.interop.working_dir": str(Path().absolute()),
+                "de.sedrubal.interop.stage": str(stage),
+            },
+            name=container_name,
+            # connect to dummy network to avoid connecting to host
+            network=network,
+            stdin_open=True,
+            tty=True,
+            ulimits=[MEMLOCK_ULIMIT],
+            volumes=(
+                {
+                    str(local): {"bind": str(cfg.pop("bind")), **cfg}
+                    for local, cfg in volumes.items()
+                }
+                if volumes
+                else None
+            ),
+        )
 
 
 def main():

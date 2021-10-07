@@ -158,8 +158,9 @@ class TestCase(abc.ABC):
         return {}
 
     @classmethod
+    @property
     def additional_containers(cls) -> list[str]:
-        return [""]
+        return []
 
     @property
     def www_dir(self) -> Path:
@@ -1966,8 +1967,9 @@ class MeasurementCrossTraffic(MeasurementGoodput):
     def additional_envs() -> dict[str, Union[str, int, float]]:
         return {"IPERF_CONGESTION": "cubic"}
 
-    @staticmethod
-    def additional_containers() -> list[str]:
+    @classmethod
+    @property
+    def additional_containers(cls) -> list[str]:
         return ["iperf_server", "iperf_client"]
 
 
@@ -2078,6 +2080,51 @@ class MeasurementSatelliteLoss(MeasurementSatellite):
         return super().timeout * 3
 
 
+class MeasurementRealLink(MeasurementGoodput):
+
+    @classmethod
+    @property
+    def name(cls):
+        return "realLink"
+
+    @classmethod
+    @property
+    def abbreviation(cls):
+        return "LNK"
+
+    @classmethod
+    @property
+    def desc(cls):
+        return (
+            "Measures connection goodput over a real network link. "
+            f"File: {int(cls.FILESIZE / FileSize.MiB)} MiB; "
+        )
+
+    # TODO
+    #  @classmethod
+    #  @property
+    #  def theoretical_max_value(cls):
+    #      return cls.forward_data_rate / DataRate.KBPS
+
+    @classmethod
+    @property
+    def remote_docker_host(cls) -> str:
+        """The Docker URL to the remote host, where the client should be deployed."""
+
+        return "ssh://basti@faui7s4.informatik.uni-erlangen.de"
+
+    @classmethod
+    @property
+    def timeout(cls) -> int:
+        """timeout in s"""
+
+        return 120
+
+
+class MeasurementAstra(MeasurementRealLink):
+    ...
+
+
 TESTCASES: list[Type[TestCase]] = [
     TestCaseHandshake,
     TestCaseTransfer,
@@ -2109,4 +2156,5 @@ MEASUREMENTS: list[Type[Measurement]] = [
     MeasurementCrossTraffic,
     MeasurementSatellite,
     MeasurementSatelliteLoss,
+    MeasurementRealLink,
 ]

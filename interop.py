@@ -137,8 +137,10 @@ class InteropRunner:
                 if not old_impl:
                     continue
 
-                old_img_id = old_impl.image_id
-                assert not old_img_id or old_img_id == implementation.image_id
+                assert (
+                    not old_impl.image_id
+                    or old_impl.image_id == implementation.image_id
+                )
                 implementation.compliant = old_impl.compliant
 
                 if not implementation.compliant:

@@ -33,6 +33,7 @@ class Role(Enum):
 class ImgMetadataJson(TypedDict):
     image: str
     id: str
+    repo_digests: list[str]
     versions: list[str]
     created: Optional[str]
     compliant: Optional[bool]
@@ -47,33 +48,25 @@ class Implementation:
     compliant: Optional[bool] = None
     _img_versions: Optional[frozenset[str]] = None
     _img_id: Optional[str] = None
+    _img_repo_digests: Optional[frozenset[str]] = None
     _img_created: Optional[datetime] = None
 
     def gather_infos_from_docker(self, deployment: "Deployment"):
         try:
-            client_img = deployment.docker_clis[Role.CLIENT].images.get(self.image)
+            img = deployment.docker_cli.images.get(self.image)
         except docker.errors.ImageNotFound:
             LOGGER.info("Pulling image %s on %s host", self.image, Role.CLIENT.value)
-            client_img = deployment.docker_clis[Role.CLIENT].images.pull(self.image)
-
-        try:
-            server_img = deployment.docker_clis[Role.SERVER].images.get(self.image)
-        except docker.errors.ImageNotFound:
-            LOGGER.info("Pulling image %s on %s host", self.image, Role.SERVER.value)
-            server_img = deployment.docker_clis[Role.SERVER].images.pull(self.image)
+            img = deployment.docker_cli.images.pull(self.image)
 
         image_base = self.image.split(":", 1)[0]
-        self._img_id = client_img.id
-        assert self._img_id == server_img.id
+        self._img_id = img.id
         self._img_versions = frozenset(
-            (
-                *(tag.replace(f"{image_base}:", "") for tag in client_img.tags),
-                *(tag.replace(f"{image_base}:", "") for tag in server_img.tags),
-            )
+            (tag.replace(f"{image_base}:", "") for tag in img.tags)
         )
-        created_raw: Optional[str] = client_img.attrs.get(
-            "Created", server_img.attrs.get("Created")
+        self._img_repo_digests = (
+            frozenset(img.attrs["RepoDigests"]) if "RepoDigests" in img.attrs else None
         )
+        created_raw: Optional[str] = img.attrs.get("Created")
         self._img_created = parse_date(created_raw) if created_raw else None
 
     @property
@@ -89,6 +82,12 @@ class Implementation:
         return self._img_id
 
     @property
+    def image_repo_digests(self) -> frozenset[str]:
+        assert self._img_repo_digests
+
+        return self._img_repo_digests
+
+    @property
     def image_created(self) -> Optional[datetime]:
         return self._img_created
 
@@ -96,6 +95,7 @@ class Implementation:
         return ImgMetadataJson(
             image=self.image,
             id=self.image_id,
+            repo_digests=list(self.image_repo_digests),
             versions=list(self.image_versions),
             created=(
                 self.image_created.strftime("%Y-%m-%d %H:%M")
@@ -118,7 +118,7 @@ class Implementation:
             "✔" if self.compliant else "?" if self.compliant is None else "⨯"
         )
 
-        return f"<{self.name} ({role_flags}{compliance_flag} {self.url}, {self.image}>"
+        return f"<{self.name} ({role_flags}{compliance_flag} {self.url} {self.image})>"
 
 
 IMPLEMENTATIONS = dict[str, Implementation]()
