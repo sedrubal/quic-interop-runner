@@ -1,9 +1,11 @@
+"""Load and provide implementations."""
+
 import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Optional, TypedDict, Union
 
 import docker
 from dateutil.parser import parse as parse_date
@@ -19,6 +21,22 @@ class Role(Enum):
     SERVER = "server"
     CLIENT = "client"
 
+    @property
+    def is_client(self) -> bool:
+        return self in (Role.CLIENT, Role.BOTH)
+
+    @property
+    def is_server(self) -> bool:
+        return self in (Role.SERVER, Role.BOTH)
+
+
+class ImgMetadataJson(TypedDict):
+    image: str
+    id: str
+    versions: list[str]
+    created: Optional[str]
+    compliant: Optional[bool]
+
 
 @dataclass
 class Implementation:
@@ -27,7 +45,7 @@ class Implementation:
     url: str
     role: Role
     compliant: Optional[bool] = None
-    _img_versions: Optional[list[str]] = None
+    _img_versions: Optional[frozenset[str]] = None
     _img_id: Optional[str] = None
     _img_created: Optional[datetime] = None
 
@@ -47,17 +65,19 @@ class Implementation:
         image_base = self.image.split(":", 1)[0]
         self._img_id = client_img.id
         assert self._img_id == server_img.id
-        self._img_versions = [
-            *(tag.replace(f"{image_base}:", "") for tag in client_img.tags),
-            *(tag.replace(f"{image_base}:", "") for tag in server_img.tags),
-        ]
+        self._img_versions = frozenset(
+            (
+                *(tag.replace(f"{image_base}:", "") for tag in client_img.tags),
+                *(tag.replace(f"{image_base}:", "") for tag in server_img.tags),
+            )
+        )
         created_raw: Optional[str] = client_img.attrs.get(
             "Created", server_img.attrs.get("Created")
         )
         self._img_created = parse_date(created_raw) if created_raw else None
 
     @property
-    def image_versions(self) -> list[str]:
+    def image_versions(self) -> frozenset[str]:
         assert self._img_versions
 
         return self._img_versions
@@ -72,19 +92,33 @@ class Implementation:
     def image_created(self) -> Optional[datetime]:
         return self._img_created
 
-    def img_metadata_json(self) -> dict[str, Union[str, list[str], None, bool]]:
-        return {
-            "image": self.image,
-            "id": self.image_id,
-            "versions": self.image_versions,
-            "created": (
+    def img_metadata_json(self) -> ImgMetadataJson:
+        return ImgMetadataJson(
+            image=self.image,
+            id=self.image_id,
+            versions=list(self.image_versions),
+            created=(
                 self.image_created.strftime("%Y-%m-%d %H:%M")
                 if self.image_created
                 else None
             ),
-            "compliant": self.compliant,
-            #  "revision": self.image_revision,
-        }
+            compliant=self.compliant,
+        )
+
+    def __str__(self):
+        role_flags = "&".join(
+            flag
+            for flag in (
+                "C" if self.role.is_client else None,
+                "S" if self.role.is_server else None,
+            )
+            if flag
+        )
+        compliance_flag = (
+            "✔" if self.compliant else "?" if self.compliant is None else "⨯"
+        )
+
+        return f"<{self.name} ({role_flags}{compliance_flag} {self.url}, {self.image}>"
 
 
 IMPLEMENTATIONS = dict[str, Implementation]()

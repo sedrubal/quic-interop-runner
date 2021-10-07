@@ -22,9 +22,9 @@ TEST_ABBR = MeasurementSatellite.abbreviation()
 AVAILABLE_COMBINATIONS = {
     f"{server_name}_{client_name}"
     for server_name, server in IMPLEMENTATIONS.items()
-    if server["role"] in (Role.BOTH, Role.SERVER)
+    if server["role"].is_server
     for client_name, client in IMPLEMENTATIONS.items()
-    if client["role"] in (Role.BOTH, Role.CLIENT)
+    if client["role"].is_client
 }
 
 

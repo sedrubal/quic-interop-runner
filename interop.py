@@ -132,9 +132,20 @@ class InteropRunner:
             ), f"QUIC draft differs: {testcases.QUIC_DRAFT} != {result.quic_draft}"
 
             for impl_name, implementation in self._implementations.items():
-                old_impl = result.get_image_metadata(impl_name)
-                old_img_id = old_impl.get("id")
+                old_impl = result.implementations.get(impl_name)
+
+                if not old_impl:
+                    continue
+
+                old_img_id = old_impl.image_id
                 assert not old_img_id or old_img_id == implementation.image_id
+                implementation.compliant = old_impl.compliant
+
+                if not implementation.compliant:
+                    LOGGER.warning(
+                        "Implementation %s seems not to be compliant.",
+                        implementation.name,
+                    )
 
             testcases_mapping = {
                 testcase.abbreviation: testcase for testcase in TESTCASES
@@ -142,6 +153,8 @@ class InteropRunner:
 
             for test in result.all_test_results:
                 if not test.result:
+                    # TODO don't retry failed ones? Check with is None
+
                     continue
                 test_cls = testcases_mapping[test.test.abbr]
 

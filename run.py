@@ -12,12 +12,12 @@ from testcases import MEASUREMENTS, TESTCASES
 client_implementations = [
     name
     for name, value in IMPLEMENTATIONS.items()
-    if value.role in (Role.BOTH, Role.CLIENT)
+    if value.role.is_client
 ]
 server_implementations = [
     name
     for name, value in IMPLEMENTATIONS.items()
-    if value.role in (Role.BOTH, Role.SERVER)
+    if value.role.is_server
 ]
 
 

@@ -483,7 +483,7 @@ class Deployment:
         )
         # wait
 
-        result = self.run_and_wait(containers, timeout=10)
+        result = self.run_and_wait(containers, timeout=30)
 
         for container in containers:
             container.remove()
