@@ -51,12 +51,12 @@ class Implementation:
     _img_repo_digests: Optional[frozenset[str]] = None
     _img_created: Optional[datetime] = None
 
-    def gather_infos_from_docker(self, deployment: "Deployment"):
+    def gather_infos_from_docker(self, docker_cli: docker.DockerClient):
         try:
-            img = deployment.docker_cli.images.get(self.image)
+            img = docker_cli.images.get(self.image)
         except docker.errors.ImageNotFound:
             LOGGER.info("Pulling image %s on %s host", self.image, Role.CLIENT.value)
-            img = deployment.docker_cli.images.pull(self.image)
+            img = docker_cli.images.pull(self.image)
 
         image_base = self.image.split(":", 1)[0]
         self._img_id = img.id

@@ -24,16 +24,26 @@ from docker_utils import (
     copy_tree_from_container,
     copy_tree_to_container,
     force_same_img_version,
+    negotiate_server_ip,
 )
 from evaluation_tools.utils import TerminalFormatter
 from implementations import IMPLEMENTATIONS, Implementation, Role
 from testcases import MeasurementRealLink, Perspective, TestCase
 from utils import random_string
 
-DEFAULT_DOCKER_SOCK = "unix:///var/run/docker.sock"
 MEMLOCK_ULIMIT = docker.types.Ulimit(name="memlock", hard=67108864, soft=67108864)
 IPERF_ENDPOINT_IMG = "martenseemann/quic-interop-iperf-endpoint"
 SIM_IMG = "therealsedrubal/quic-network-simulator"
+
+DOCKER_HOST_URLS = {
+    "default": "unix:///var/run/docker.sock",
+    #  "remote_server": "ssh://basti@faui7s4.informatik.uni-erlangen.de",
+    #  "remote_client": "ssh://basti@131.188.45.85:22005",
+    #  "starlink_client": "ssh://basti@131.188.45.85:22005",
+    "remote_server": "ssh://faui7s4.informatik.uni-erlangen.de",
+    "remote_client": "ssh://starlink:22005",
+    "starlink_client": "ssh://starlink",
+}
 
 VOID_NETWORK = "none"
 
@@ -229,12 +239,18 @@ class Deployment:
     project_name = "quic-interop-runner"
 
     def __init__(self):
-        self.docker_cli = docker.from_env()
         self._networks: dict[Role, Optional[Network]] = {
             Role.SERVER: None,
             Role.CLIENT: None,
         }
+        self._docker_clis = dict[str, docker.DockerClient]()
         self._stage_status_cv = threading.Condition()
+
+    def get_docker_cli(self, name="default"):
+        if name not in self._docker_clis.keys():
+            self._docker_clis[name] = docker.DockerClient(DOCKER_HOST_URLS[name])
+
+        return self._docker_clis[name]
 
     def run_and_wait(self, containers: list[Container], timeout: int) -> ExecResult:
         """Return logs and timed_out."""
@@ -618,17 +634,23 @@ class Deployment:
         request_urls: str,
         version: str,
     ) -> ExecResult:
-        remote_cli = docker.DockerClient(testcase.remote_docker_host)
+        client_cli = self.get_docker_cli(testcase.client_docker_host)
+        server_cli = self.get_docker_cli(testcase.server_docker_host)
         # TODO tcpdump containers!
         # TODO network <<<
 
         # ensure image version is the same
-        force_same_img_version(client, cli=remote_cli)
+        force_same_img_version(client, cli=client_cli)
+        force_same_img_version(server, cli=server_cli)
+
+        server_ip = negotiate_server_ip(server_cli, client_cli)
+        breakpoint()
 
         server_container = self._create_implementation_real(
-            cli=self.docker_cli,
+            cli=server_cli,
             image=server.image,
             role=Role.SERVER,
+            server_ip=server_ip,
             local_certs_path=local_certs_path,
             testcase=testcase.testname(Perspective.SERVER),
             version=version,
@@ -636,15 +658,17 @@ class Deployment:
             local_www_path=local_www_path,
         )
         client_container = self._create_implementation_real(
-            cli=remote_cli,
+            cli=client_cli,
             image=client.image,
             role=Role.CLIENT,
+            server_ip=server_ip,
             local_certs_path=local_certs_path,
             testcase=testcase.testname(Perspective.CLIENT),
             version=version,
             request_urls=request_urls,
             local_www_path=local_www_path,
         )
+        breakpoint()
         containers = [client_container, server_container]
         # wait
         result = self.run_and_wait(containers, timeout=timeout)
@@ -668,7 +692,9 @@ class Deployment:
             network_name = self.get_network_name(role)
 
             try:
-                network: Optional[Network] = self.docker_cli.networks.get(network_name)
+                network: Optional[Network] = self.get_docker_cli().networks.get(
+                    network_name
+                )
             except docker.errors.NotFound:
                 network = None
 
@@ -677,7 +703,7 @@ class Deployment:
 
                 continue
 
-            self._networks[role] = self.docker_cli.networks.create(
+            self._networks[role] = self.get_docker_cli().networks.create(
                 name=network_name,
                 driver="bridge",
                 options={
@@ -804,7 +830,7 @@ class Deployment:
             environment["WAITFORSERVER"] = "server:443"
 
         container = self._create_container(
-            cli=self.docker_cli,
+            cli=self.get_docker_cli(),
             image=SIM_IMG,
             entrypoint=entrypoint,
             environment=environment,
@@ -854,7 +880,7 @@ class Deployment:
     #          env["CLIENT"] = "client4"
     #
     #      return self._create_sim_endpoint(
-    #          cli=self.docker_cli,
+    #          cli=self.get_docker_cli(),
     #          image=IPERF_ENDPOINT_IMG,
     #          role=role,
     #          name=f"iperf_{role.value}",
@@ -920,11 +946,12 @@ class Deployment:
         local_certs_path: Path,
         testcase: str,
         version,
+        server_ip: str,
         request_urls: Optional[str] = None,
         local_www_path: Optional[Path] = None,
         entrypoint: Optional[list[str]] = None,
     ) -> Container:
-        volumes: Optional[dict] = None
+        ports: Optional[dict] = None
         env = {
             "ROLE": role.value,
             "TESTCASE": testcase,
@@ -938,10 +965,9 @@ class Deployment:
             env["REQUESTS"] = request_urls
         else:
             # server
-            assert local_www_path
-            volumes = {
-                local_certs_path: {"bind": CERTS_PATH, "mode": "ro"},
-                local_www_path: {"bind": WWW_PATH, "mode": "ro"},
+            ports = {
+                "443/tcp": (server_ip, 4433),
+                "443/udp": (server_ip, 4433),
             }
 
         container = self._create_container(
@@ -950,17 +976,24 @@ class Deployment:
             environment=env,
             extra_hosts=self.get_extra_hosts(role),  # TODO
             image=image,
+            ports=ports,
             service_name=role.value,
             stage=1 if role == Role.SERVER else 2,
-            volumes=volumes,
         )
 
         # monkey patch setup.sh
         copy_file_to_container(REAL_LINK_SETUP_SCRIPT, container, "/setup.sh")
 
+        # avoid volumes
+
         if role == Role.CLIENT:
-            # to avoid volume
             copy_tree_to_container(local_certs_path, container, CERTS_PATH)
+        elif role == Role.SERVER:
+            assert local_www_path
+            copy_tree_to_container(local_certs_path, container, CERTS_PATH)
+            copy_tree_to_container(local_www_path, container, WWW_PATH)
+        else:
+            assert False
 
         return container
 
@@ -968,7 +1001,7 @@ class Deployment:
         self, container_name: str, cli: Optional[docker.DockerClient] = None
     ):
         if not cli:
-            cli = self.docker_cli
+            cli = self.get_docker_cli()
             assert cli
         try:
             container = cli.containers.get(container_name)
@@ -994,7 +1027,7 @@ class Deployment:
         assert role != Role.BOTH
 
         container = self._create_container(
-            cli=self.docker_cli,
+            cli=self.get_docker_cli(),
             entrypoint=entrypoint,
             environment=env,
             extra_hosts=extra_hosts,
@@ -1026,6 +1059,7 @@ class Deployment:
         environment: Optional[dict] = None,
         extra_hosts: Optional[dict[str, str]] = None,
         network: Optional[str] = None,
+        ports: Optional[dict] = None,
         volumes: Optional[dict] = None,
     ):
         container_name = f"{self.project_name}_{service_name}"
@@ -1049,6 +1083,7 @@ class Deployment:
             name=container_name,
             # connect to dummy network to avoid connecting to host
             network=network,
+            ports=ports,
             stdin_open=True,
             tty=True,
             ulimits=[MEMLOCK_ULIMIT],

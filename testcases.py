@@ -2108,10 +2108,17 @@ class MeasurementRealLink(MeasurementGoodput):
 
     @classmethod
     @property
-    def remote_docker_host(cls) -> str:
+    def client_docker_host(cls) -> str:
         """The Docker URL to the remote host, where the client should be deployed."""
 
-        return "ssh://basti@faui7s4.informatik.uni-erlangen.de"
+        return "remote_client"
+
+    @classmethod
+    @property
+    def server_docker_host(cls) -> str:
+        """The Docker URL to the remote host, where the server should be deployed."""
+
+        return "remote_server"
 
     @classmethod
     @property

@@ -1,11 +1,13 @@
 """Utils for working with docker."""
 
 import logging
+import marshal
 import sys
 import tarfile
+import concurrent.futures
 from io import BytesIO
 from pathlib import Path
-from typing import Type, Union
+from typing import Optional, Type, Union
 
 import docker
 
@@ -162,3 +164,277 @@ def force_same_img_version(implementation: Implementation, cli: docker.DockerCli
         cli,
     )
     sys.exit(1)
+
+
+def get_all_public_ips():
+    """Get all relevant public ip adresses. ATTENTION: This uses heuristics."""
+    import ipaddress
+    import socket
+
+    import netifaces
+
+    found = {
+        socket.AF_INET.value: set[str](),
+        socket.AF_INET6.value: set[str](),
+    }
+
+    for iface in netifaces.interfaces():
+        # use only eno, enp, eth interfaces (not wlp, br-, lo, virt, docker, ...)
+
+        if not iface.startswith("e"):
+            continue
+
+        adresses = netifaces.ifaddresses(iface)
+
+        for family in found.keys():
+            connections = adresses.get(family, [])
+
+            for connection in connections:
+                ip_addr = ipaddress.ip_address(connection["addr"])
+
+                if ip_addr.is_global:
+                    found[family].add(ip_addr.exploded)
+
+    return found
+
+
+def probe_server() -> bool:
+    """Start a udp server on all addresses and listen for probes."""
+    import json
+    import socket
+    import time
+
+    TIMEOUT = 10
+    PORT = 4433
+    sock = socket.socket(family=socket.AF_INET6, type=socket.SOCK_DGRAM)
+    sock.bind(("::", PORT))
+    start = time.time()
+
+    while True:
+        sock.settimeout(TIMEOUT - (time.time() - start))
+        try:
+            data_raw, peer = sock.recvfrom(1024)
+        except socket.timeout:
+            print("Public IP Probe Server Timeout", file=sys.stderr)
+
+            return False
+        try:
+            data = json.loads(data_raw.decode("utf-8"))
+            nonce = data["nonce"]
+            addr = data["addr"]
+            port = data["port"]
+            family = data["family"]
+        except (json.JSONDecodeError, UnicodeDecodeError, KeyError) as err:
+            print(str(err), file=sys.stderr)
+
+            continue
+
+        ret_data = json.dumps(
+            {
+                "success": True,
+                "nonce": nonce,
+                "addr": addr,
+                "port": port,
+                "family": family,
+            }
+        )
+        sock.sendto(ret_data.encode("utf-8"), peer)
+
+        return True
+
+
+def probe_client(addresses) -> Optional[str]:
+    """Probe all addresses and return the successful ones."""
+    import json
+    import random
+    import socket
+    import string
+    import time
+
+    PORT = 4433
+    NONCE_LEN = 6
+    TIMEOUT = 10
+
+    def gen_nonce():
+        return "".join(random.choice(string.ascii_lowercase) for _ in range(NONCE_LEN))
+
+    track = {
+        int(family): {
+            gen_nonce(): {
+                "addr": str(addr),
+                "port": PORT,
+            }
+            for addr in addresses[family]
+        }
+        for family in addresses.keys()
+    }
+    socks = {
+        int(family): socket.socket(family=family, type=socket.SOCK_DGRAM)
+        for family in addresses.keys()
+    }
+
+    for family in track.keys():
+        sock = socks[family]
+
+        for nonce, data in track[family].items():
+            data["nonce"] = nonce
+            data["family"] = family
+            packet = json.dumps(data).encode("utf-8")
+            addr: str = data["addr"]
+            sock.sendto(packet, (addr, PORT))
+
+        sock.settimeout(TIMEOUT / 2)
+        start = time.time()
+
+        while True:
+            sock.settimeout(TIMEOUT - (time.time() - start))
+            try:
+                data_raw, _peer = sock.recvfrom(1024)
+            except socket.timeout:
+                print("Public IP Probe Client Timeout", file=sys.stderr)
+
+                return None
+            try:
+                data = json.loads(data_raw.decode("utf-8"))
+                nonce = data["nonce"]
+                addr = data["addr"]
+                port: int = int(data["port"])
+                success: bool = bool(data["success"])
+                family = data["family"]
+            except (
+                json.JSONDecodeError,
+                UnicodeDecodeError,
+                KeyError,
+                ValueError,
+            ) as err:
+                print(str(err), file=sys.stderr)
+
+                continue
+
+            if not success:
+                print("Not successfull")
+
+                continue
+
+            if not family in track.keys():
+                print("Unknown family")
+
+                continue
+
+            if not nonce in track[family].keys():
+                print(
+                    "Unknown nonce",
+                    nonce,
+                    "Known nonces",
+                    ", ".join(track[family].keys()),
+                )
+
+                continue
+
+            if not addr == track[family][nonce]["addr"]:
+                print(
+                    "Wrong address. Expected", track[family][nonce]["addr"], "got", addr
+                )
+
+                continue
+
+            if port != PORT:
+                print("Wrong port. Expected", PORT, "got", port)
+
+                continue
+
+            print(addr, file=sys.stderr)
+
+            return addr
+
+
+#  def exec_command_on_ssh(ssh_client, cmd: str) -> tuple[str, str]:
+#      """Execute a command a paramiko SSH client connection and return stdout as string."""
+#      cmd_stdin, cmd_stdout, cmd_stderr = ssh_client.exec_command(cmd)
+#      cmd_stdin.close()
+#      err = cmd_stderr.read()
+#      out = cmd_stdout.read()
+#      cmd_stderr.close()
+#      cmd_stdout.close()
+#
+#      return out, err
+
+
+def execute_func_on_ssh(ssh_client, function, *args, **kwargs):
+    LOGGER.debug("Executing %s on remote host.", function.__name__)
+    """Execute a python function on the remote host."""
+    script = """
+python3.9 -q -c '
+import sys, os, marshal, types;
+stdin = os.fdopen(0, "rb");
+stdout = os.fdopen(1, "wb");
+func_code, args, kwargs = marshal.loads(stdin.read());
+func = types.FunctionType(func_code, globals(), "func");
+ret = func(*args, **kwargs);
+marshal.dump(ret, stdout);
+'
+""".replace(
+        "\n", ""
+    ).strip()
+    stdin, stdout, stderr = ssh_client.exec_command(script)
+    try:
+        stdin.write(marshal.dumps((function.__code__, args, kwargs)))
+        stdin.close()
+    except OSError as exc:
+        LOGGER.error("Execution failed: %s", str(exc))
+        err = stderr.read().decode("utf-8")
+        LOGGER.error(err)
+        sys.exit(1)
+
+    err = stderr.read().decode("utf-8").strip()
+    if err:
+        LOGGER.error(err)
+    try:
+        ret = marshal.loads(stdout.read())
+    except EOFError:
+        LOGGER.error("Execution failed.")
+        sys.exit(1)
+    return ret
+
+
+def execute_python_on_docker_host(docker_cli, function, *args, **kwargs):
+    """Execute a python function on the docker host given by the docker client."""
+
+    return execute_func_on_ssh(
+        docker_cli.api._custom_adapter.ssh_client, function, *args, **kwargs
+    )
+
+
+def negotiate_server_ip(server_cli, client_cli) -> str:
+    LOGGER.debug("Try to get all public IPs on server host")
+    all_public_ips = execute_python_on_docker_host(server_cli, get_all_public_ips)
+    LOGGER.debug("Received public ips: %s", str(all_public_ips))
+
+    def server_thread_func():
+        LOGGER.debug("Starting probe server")
+        return execute_python_on_docker_host(server_cli, probe_server)
+
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        server_thread = executor.submit(server_thread_func)
+
+        LOGGER.debug("Starting probe client")
+        public_ip: str = execute_python_on_docker_host(
+            client_cli, probe_client, all_public_ips
+        )
+
+        LOGGER.debug("Waiting for server to end...")
+        server_ret: bool = server_thread.result()
+
+    if not public_ip:
+        LOGGER.error(
+            "Found no public ip on server host, that is reachable from the client."
+        )
+        assert server_ret is False
+        sys.exit(1)
+
+    else:
+        assert server_ret
+
+    LOGGER.debug("Found a public IP that is reachable: %s", public_ip)
+
+    return public_ip
