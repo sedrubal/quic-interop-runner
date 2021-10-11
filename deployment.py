@@ -271,13 +271,18 @@ class Deployment:
 
         return self._docker_clis[name]
 
-    def run_and_wait(self, containers: list[Container], timeout: int) -> ExecResult:
+    def run_and_wait(
+        self,
+        containers: list[Container],
+        timeout: int,
+        hooks: dict[Stage, list[Callable[[], None]]] = {},
+    ) -> ExecResult:
         """Return logs and timed_out."""
-        containers_by_stage = defaultdict[int, list[Container]](list[Container])
+        containers_by_stage = defaultdict[Stage, list[Container]](list[Container])
 
         for container in containers:
             containers_by_stage[
-                int(container.labels["de.sedrubal.interop.stage"])
+                Stage(int(container.labels["de.sedrubal.interop.stage"]))
             ].append(container)
 
         start = time.time()
@@ -359,50 +364,64 @@ class Deployment:
         timed_out = False
         failed = False
 
-        for stage in sorted(containers_by_stage.keys()):
-            LOGGER.debug("Starting containers in stage %i", stage)
+        for stage in Stage:
+            containers_in_stage = containers_by_stage[stage]
 
             with self._stage_status_cv:
-                for container in containers_by_stage[stage]:
-                    data_structure[container].status = get_container_status(container)
-                    assert data_structure[container].status == ContainerStatus.CREATED
-
-                for container in containers_by_stage[stage]:
-                    data_structure[container].monitor_thread.start()
-
-                timed_out = False
-
-                while any(
-                    data_structure[container].status == ContainerStatus.CREATED
-                    for container in containers_by_stage[stage]
-                ):
-                    timed_out = not self._stage_status_cv.wait(
-                        timeout=max(0, timeout - (time.time() - start))
+                if containers_in_stage:
+                    LOGGER.debug(
+                        "Starting containers in stage %s(%i)", stage.name, stage.value
                     )
 
-                    if timed_out:
+                    for container in containers_in_stage:
+                        data_structure[container].status = get_container_status(
+                            container
+                        )
+                        assert (
+                            data_structure[container].status == ContainerStatus.CREATED
+                        )
+
+                    for container in containers_in_stage:
+                        data_structure[container].monitor_thread.start()
+
+                    timed_out = False
+
+                    while any(
+                        data_structure[container].status == ContainerStatus.CREATED
+                        for container in containers_in_stage
+                    ):
+                        timed_out = not self._stage_status_cv.wait(
+                            timeout=max(0, timeout - (time.time() - start))
+                        )
+
+                        if timed_out:
+                            break
+
+                    containers_not_running = [
+                        container
+                        for container in containers_in_stage
+                        if data_structure[container].status != ContainerStatus.RUNNING
+                    ]
+
+                    if containers_not_running:
+                        different_status_str = ", ".join(
+                            f"{container.name}: {data_structure[container].status.value}"
+                            for container in containers_not_running
+                        )
+                        LOGGER.error(
+                            "Some containers did not start successfully. Exiting."
+                        )
+                        LOGGER.error(different_status_str)
+                        timeout = 0
+                        end_callback()
+                        failed = True
+
+                        # don't start next stage
+
                         break
 
-                containers_not_running = [
-                    container
-                    for container in containers_by_stage[stage]
-                    if data_structure[container].status != ContainerStatus.RUNNING
-                ]
-
-                if containers_not_running:
-                    different_status_str = ", ".join(
-                        f"{container.name}: {data_structure[container].status.value}"
-                        for container in containers_not_running
-                    )
-                    LOGGER.error("Some containers did not start successfully. Exiting.")
-                    LOGGER.error(different_status_str)
-                    timeout = 0
-                    end_callback()
-                    failed = True
-
-                    # don't start next stage
-
-                    break
+                for hook in hooks.get(stage, []):
+                    hook()
 
         # exit
 
@@ -733,8 +752,21 @@ class Deployment:
             left_tcpdump_container,
         ]
 
+        def after_left_trace_start_hook():
+            LOGGER.debug("Signal client to start...")
+            ret = client_container.exec_run("sh -c 'echo 1 > /tmp/wait_for_sim'")
+            assert ret.exit_code == 0
+            output = ret.output.decode("utf-8").strip()
+
+            if output:
+                LOGGER.debug("Exec command output: %s", output)
+
         # wait
-        result = self.run_and_wait(containers, timeout=timeout)
+        result = self.run_and_wait(
+            containers,
+            timeout=timeout,
+            hooks={Stage.CLIENT_POST: [after_left_trace_start_hook]},
+        )
 
         # copy downloads
         copy_tree_from_container(client_container, DOWNLOADS_PATH, local_downloads_path)
