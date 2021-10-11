@@ -22,36 +22,45 @@ Network = Type[docker.models.networks.Network]
 LOGGER = logging.getLogger(name="quic-interop-runner")
 
 
+#  def get_docker_bridge_interface(
+#      docker_cli: docker.DockerClient, network_name: str
+#  ) -> str:
+#      """Return the name of the bridge interface that docker uses for this network."""
+#      network: Network = docker_cli.networks.get(network_name)
+#
+#      return network.attrs["Options"]["com.docker.network.bridge.name"]
+
+
+def _pack_and_copy_to_container(
+    src: Union[Path, str],
+    container: Container,
+    dst: Union[Path, str],
+    recursive: bool,
+):
+    """Pack a path / tree to an archive and copy it to the container."""
+    archive_buf = BytesIO()
+    with tarfile.open(fileobj=archive_buf, mode="w") as archive:
+        archive.add(src, dst, recursive=recursive)
+
+    archive_buf.seek(0)
+    container.put_archive("/", archive_buf)
+
+
 def copy_file_to_container(
     src: Union[Path, str], container: Container, dst: Union[Path, str]
 ):
     """Copy a file from this device to the container."""
-    archive_buf = BytesIO()
-    with tarfile.open(fileobj=archive_buf, mode="w") as archive:
-        archive.add(src, dst, recursive=False)
-
-    archive_buf.seek(0)
-    container.put_archive("/", archive_buf)
+    _pack_and_copy_to_container(src, container, dst, recursive=False)
 
 
 def copy_tree_to_container(
     src: Union[Path, str], container: Container, dst: Union[Path, str]
 ):
     """Copy a file system tree from this device to the container."""
-    archive_buf = BytesIO()
-    with tarfile.open(fileobj=archive_buf, mode="w") as archive:
-        archive.add(src, dst, recursive=True)
-
-    archive_buf.seek(0)
-    container.put_archive("/", archive_buf)
-    archive_buf.seek(0)
-
-    with Path("/tmp/tmp.tar").open("wb") as dbg:
-        dbg.write(archive_buf.read())
+    _pack_and_copy_to_container(src, container, dst, recursive=True)
 
 
-def copy_tree_from_container(container: Container, src: Path, dst: Path):
-    """Copy a file system tree from container to this device."""
+def _fetch_archive_from_container(container: Container, src: Union[str, Path]):
     archive_buf = BytesIO()
     bits, _stat = container.get_archive(src)
     # TODO progress bar with stat["size"]
@@ -60,6 +69,55 @@ def copy_tree_from_container(container: Container, src: Path, dst: Path):
         archive_buf.write(tar_chunk)
 
     archive_buf.seek(0)
+
+    return archive_buf
+
+
+def _extract_member(
+    archive: tarfile.TarFile, member: Union[str, tarfile.TarInfo], dst: Path
+):
+    dst.parent.mkdir(exist_ok=True, parents=True)
+    with dst.open("wb") as target_file:
+        extracted = archive.extractfile(member)
+        assert extracted
+
+        while True:
+            chunk = extracted.read(10240)
+
+            if not chunk:
+                break
+
+            target_file.write(chunk)
+
+
+def copy_file_from_container(
+    container: Container, src: Union[Path, str], dst: Union[Path, str]
+):
+    """Copy a file from the container to this device."""
+    dst = Path(dst)
+    src = str(src)
+
+    archive_buf = _fetch_archive_from_container(container, src)
+
+    with tarfile.open(fileobj=archive_buf) as archive:
+        try:
+            member = archive.getmember(src)
+        except KeyError:
+            member = archive.getmember(src.lstrip("/"))
+
+        LOGGER.debug(
+            "Extracting %s:%s to %s",
+            container.name,
+            src,
+            dst,
+        )
+        _extract_member(archive, member, dst)
+
+
+def copy_tree_from_container(container: Container, src: Path, dst: Path):
+    """Copy a file system tree from container to this device."""
+    archive_buf = _fetch_archive_from_container(container, src)
+
     with tarfile.open(fileobj=archive_buf) as archive:
         # don't use archive.extractall() because we can't control the target file to extract to.
 
@@ -77,18 +135,7 @@ def copy_tree_from_container(container: Container, src: Path, dst: Path):
                     member.path,
                     target_path,
                 )
-                target_path.parent.mkdir(exist_ok=True, parents=True)
-                with target_path.open("wb") as target_file:
-                    extracted = archive.extractfile(member)
-                    assert extracted
-
-                    while True:
-                        chunk = extracted.read(10240)
-
-                        if not chunk:
-                            break
-
-                        target_file.write(chunk)
+                _extract_member(archive, member, target_path)
 
 
 def force_same_img_version(implementation: Implementation, cli: docker.DockerClient):
@@ -376,12 +423,12 @@ def probe_client(addresses, port=443, timeout=10) -> Optional[str]:
             return rec_addr
 
 
-#  def exec_command_on_ssh(ssh_client, cmd: str) -> tuple[str, str]:
+#  def exec_cmd_on_ssh(ssh_client, cmd: str) -> tuple[str, str]:
 #      """Execute a command a paramiko SSH client connection and return stdout as string."""
 #      cmd_stdin, cmd_stdout, cmd_stderr = ssh_client.exec_command(cmd)
 #      cmd_stdin.close()
-#      err = cmd_stderr.read()
-#      out = cmd_stdout.read()
+#      err = cmd_stderr.read().decode('utf-8')
+#      out = cmd_stdout.read().decode('utf-8')
 #      cmd_stderr.close()
 #      cmd_stdout.close()
 #
@@ -433,16 +480,34 @@ marshal.dump(ret, stdout);
     return ret
 
 
+def _get_ssh_client_from_docker_cli(docker_cli: docker.DockerClient):
+    return docker_cli.api._custom_adapter.ssh_client
+
+
 def execute_python_on_docker_host(docker_cli, function, elevate=False, *args, **kwargs):
     """Execute a python function on the docker host given by the docker client."""
 
     return exec_func_on_ssh(
-        docker_cli.api._custom_adapter.ssh_client,
+        _get_ssh_client_from_docker_cli(docker_cli),
         function,
         elevate=elevate,
         *args,
         **kwargs,
     )
+
+
+#  def start_cmd_on_docker_host(docker_cli, cmd) -> int:
+#      """Start a command on remote host and return it's pid."""
+#
+#      out, err = exec_cmd_on_ssh(
+#          _get_ssh_client_from_docker_cli(docker_cli),
+#          f"echo $$; exec {cmd}",
+#      )
+#
+#      for line in err.splitlines():
+#          LOGGER.error(line)
+#
+#      return int(out.splitlines()[0].strip())
 
 
 def negotiate_server_ip(

@@ -4,22 +4,22 @@
 import ipaddress
 import logging
 import sys
-import tarfile
 import threading
 import time
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
-from io import BytesIO
 from pathlib import Path
-from typing import Any, Callable, Optional, Type, Union
+from typing import Callable, Optional, Union
 
 import docker
+import paramiko
 from termcolor import colored
 
 from docker_utils import (
     Container,
     Network,
+    copy_file_from_container,
     copy_file_to_container,
     copy_tree_from_container,
     copy_tree_to_container,
@@ -34,6 +34,7 @@ from utils import random_string
 MEMLOCK_ULIMIT = docker.types.Ulimit(name="memlock", hard=67108864, soft=67108864)
 IPERF_ENDPOINT_IMG = "martenseemann/quic-interop-iperf-endpoint"
 SIM_IMG = "therealsedrubal/quic-network-simulator"
+TCPDUMP_IMG = "therealsedrubal/tcpdump:main"
 
 DOCKER_HOST_URLS = {
     "default": "unix:///var/run/docker.sock",
@@ -54,6 +55,7 @@ WWW_PATH = Path("/www")
 LOGS_PATH = Path("/logs")
 SSLKEYLOG_FILE = LOGS_PATH / "keys.log"
 QLOG_DIR = LOGS_PATH / "qlog/"
+TRACE_PATH = Path("/trace.pcap")
 
 
 REAL_LINK_SETUP_SCRIPT = Path(__file__).parent / "real_link_setup.sh"
@@ -70,6 +72,17 @@ class ContainerStatus(Enum):
 class IPVersion(Enum):
     V4 = 4
     V6 = 6
+
+
+class Stage(Enum):
+    PRE = 0
+    SERVER_PRE = 10
+    SERVER = 20
+    SERVER_POST = 30
+    CLIENT_PRE = 40
+    CLIENT = 50
+    CLIENT_POST = 60
+    POST = 70
 
 
 @dataclass
@@ -211,7 +224,13 @@ def container_monitor_thread(
         status = new_status
         log_callback(container, status.value, False)
 
-    result = container.wait()
+    try:
+        result = container.wait()
+    except paramiko.ssh_exception.ChannelException as exc:
+        LOGGER.error(str(exc))
+
+        return
+
     error = result.pop("Error", None)
     exit_code = result.pop("StatusCode", None)
 
@@ -573,6 +592,8 @@ class Deployment:
                 version=version,
             )
 
+        self.cleanup()
+
     def _run_testcase_with_sim(
         self,
         log_path: Path,
@@ -636,8 +657,6 @@ class Deployment:
     ) -> ExecResult:
         client_cli = self.get_docker_cli(testcase.client_docker_host)
         server_cli = self.get_docker_cli(testcase.server_docker_host)
-        # TODO tcpdump containers!
-        # TODO network <<<
 
         # ensure image version is the same
         force_same_img_version(client, cli=client_cli)
@@ -645,7 +664,7 @@ class Deployment:
 
         server_port = 443
         server_ip = negotiate_server_ip(server_cli, client_cli, port=server_port)
-        LOGGER.debug(f"Server is %s:%i", server_ip, server_port)
+        LOGGER.debug("Server is %s:%i", server_ip, server_port)
 
         server_container = self._create_implementation_real(
             cli=server_cli,
@@ -659,6 +678,24 @@ class Deployment:
             request_urls=request_urls,
             local_www_path=local_www_path,
         )
+        right_tcpdump_container = self._create_container(
+            cli=server_cli,
+            image=TCPDUMP_IMG,
+            service_name="right_tcpdump",
+            stage=Stage.SERVER_POST,
+            entrypoint=[
+                "tcpdump",
+                "-q",
+                "-w",
+                str(TRACE_PATH),
+                "udp",
+                "port",
+                str(server_port),
+            ],
+            #  extra_hosts: Optional[dict[str, str]] = None,
+            network=f"container:{server_container.name}",
+            #  volumes: Optional[dict] = None,
+        )
         client_container = self._create_implementation_real(
             cli=client_cli,
             image=client.image,
@@ -671,7 +708,31 @@ class Deployment:
             request_urls=request_urls,
             local_www_path=local_www_path,
         )
-        containers = [client_container, server_container]
+        left_tcpdump_container = self._create_container(
+            cli=client_cli,
+            image=TCPDUMP_IMG,
+            service_name="left_tcpdump",
+            stage=Stage.CLIENT_POST,
+            entrypoint=[
+                "tcpdump",
+                "-q",
+                "-w",
+                str(TRACE_PATH),
+                "udp",
+                "port",
+                str(server_port),
+            ],
+            #  extra_hosts: Optional[dict[str, str]] = None,
+            network=f"container:{client_container.name}",
+            #  volumes: Optional[dict] = None,
+        )
+        containers = [
+            server_container,
+            right_tcpdump_container,
+            client_container,
+            left_tcpdump_container,
+        ]
+
         # wait
         result = self.run_and_wait(containers, timeout=timeout)
 
@@ -681,6 +742,18 @@ class Deployment:
         # copy logs
         copy_tree_from_container(server_container, LOGS_PATH, log_path / "server")
         copy_tree_from_container(client_container, LOGS_PATH, log_path / "client")
+
+        # copy traces
+        copy_file_from_container(
+            right_tcpdump_container,
+            TRACE_PATH,
+            log_path / "sim" / "trace_node_right.pcap",
+        )
+        copy_file_from_container(
+            left_tcpdump_container,
+            TRACE_PATH,
+            log_path / "sim" / "trace_node_left.pcap",
+        )
 
         for container in containers:
             container.remove()
@@ -849,7 +922,7 @@ class Deployment:
                 "client46 ": self.get_container_ipv6(Role.CLIENT).exploded,
             },
             service_name="sim",
-            stage=0,
+            stage=Stage.PRE,
             # connect to dummy network to avoid connecting to host
             network=VOID_NETWORK,
         )
@@ -986,10 +1059,6 @@ class Deployment:
                     "server6": server_ip.exploded,
                     #  "server46": other_ipv4.exploded,
                 }
-            #  "sim4": self.get_sim_ipv4(role).exploded,
-            #  "sim6": self.get_sim_ipv6(role).exploded,
-            #  "sim46": self.get_sim_ipv4(role).exploded,
-            #  "sim46 ": self.get_sim_ipv6(role).exploded,
 
         container = self._create_container(
             cli=cli,
@@ -999,7 +1068,7 @@ class Deployment:
             image=image,
             ports=ports,
             service_name=role.value,
-            stage=1 if role == Role.SERVER else 2,
+            stage=Stage.SERVER if role == Role.SERVER else Stage.CLIENT,
         )
 
         # monkey patch setup.sh
@@ -1056,7 +1125,7 @@ class Deployment:
             # connect to dummy network to avoid connecting to host
             network=VOID_NETWORK,
             service_name=name,
-            stage=1 if role == Role.SERVER else 2,
+            stage=Stage.SERVER if role == Role.SERVER else Stage.CLIENT,
             volumes=volumes,
         )
 
@@ -1074,7 +1143,7 @@ class Deployment:
         self,
         image: str,
         service_name: str,
-        stage: int,
+        stage: Stage,
         cli: docker.DockerClient,
         entrypoint: Optional[list[str]] = None,
         environment: Optional[dict] = None,
@@ -1087,19 +1156,29 @@ class Deployment:
 
         self._remove_existing_container(container_name=container_name, cli=cli)
 
+        hostname = (
+            None if network and network.startswith("container:") else service_name
+        )
+
+        try:
+            # ensure the image is pulled
+            image_instance = cli.images.get(image)
+        except docker.errors.NotFound:
+            image_instance = cli.images.pull(image)
+
         return cli.containers.create(
-            image=image,
+            image=image_instance,
             cap_add="NET_ADMIN",
             detach=True,
             entrypoint=entrypoint,
             environment=environment,
             extra_hosts=extra_hosts,
-            hostname=service_name,
+            hostname=hostname,
             labels={
                 "de.sedrubal.interop.service": service_name,
                 "de.sedrubal.interop.project": self.project_name,
                 "de.sedrubal.interop.working_dir": str(Path().absolute()),
-                "de.sedrubal.interop.stage": str(stage),
+                "de.sedrubal.interop.stage": str(stage.value),
             },
             name=container_name,
             # connect to dummy network to avoid connecting to host
@@ -1117,6 +1196,12 @@ class Deployment:
                 else None
             ),
         )
+
+    def cleanup(self):
+        """Cleanup things. Can be called between testcases."""
+
+        for docker_cli in self._docker_clis.values():
+            docker_cli.close()
 
 
 def main():
