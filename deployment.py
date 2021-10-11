@@ -645,7 +645,7 @@ class Deployment:
 
         server_port = 443
         server_ip = negotiate_server_ip(server_cli, client_cli, port=server_port)
-        breakpoint()
+        LOGGER.debug(f"Server is %s:%i", server_ip, server_port)
 
         server_container = self._create_implementation_real(
             cli=server_cli,
@@ -671,7 +671,6 @@ class Deployment:
             request_urls=request_urls,
             local_www_path=local_www_path,
         )
-        breakpoint()
         containers = [client_container, server_container]
         # wait
         result = self.run_and_wait(containers, timeout=timeout)
@@ -949,7 +948,7 @@ class Deployment:
         local_certs_path: Path,
         testcase: str,
         version,
-        server_ip: str,
+        server_ip: Union[ipaddress.IPv4Address, ipaddress.IPv6Address],
         server_port: int,
         request_urls: Optional[str] = None,
         local_www_path: Optional[Path] = None,
@@ -970,15 +969,33 @@ class Deployment:
         else:
             # server
             ports = {
-                #  f"{port}/tcp": (server_ip, port),
-                f"{port}/udp": (server_ip, port),
+                #  "443/tcp": (server_ip.exploded, server_port),
+                "443/udp": (server_ip.exploded, server_port),
             }
+
+        if role == Role.SERVER:
+            extra_hosts: Optional[dict[str, str]] = None
+        else:
+            if server_ip.version == 4:
+                extra_hosts = {
+                    "server4": server_ip.exploded,
+                    #  "server46": other_ipv4.exploded,
+                }
+            else:
+                extra_hosts = {
+                    "server6": server_ip.exploded,
+                    #  "server46": other_ipv4.exploded,
+                }
+            #  "sim4": self.get_sim_ipv4(role).exploded,
+            #  "sim6": self.get_sim_ipv6(role).exploded,
+            #  "sim46": self.get_sim_ipv4(role).exploded,
+            #  "sim46 ": self.get_sim_ipv6(role).exploded,
 
         container = self._create_container(
             cli=cli,
             entrypoint=entrypoint,
             environment=env,
-            extra_hosts=self.get_extra_hosts(role),  # TODO
+            extra_hosts=extra_hosts,
             image=image,
             ports=ports,
             service_name=role.value,

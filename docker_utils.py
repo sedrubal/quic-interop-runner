@@ -1,10 +1,12 @@
 """Utils for working with docker."""
 
 import concurrent.futures
+import ipaddress
 import logging
 import marshal
 import sys
 import tarfile
+import time
 from io import BytesIO
 from pathlib import Path
 from typing import Optional, Type, Union
@@ -205,6 +207,7 @@ def probe_server(port=443, timeout=10) -> bool:
     import time
 
     sock = socket.socket(family=socket.AF_INET6, type=socket.SOCK_DGRAM)
+    #  print(f"Listening on [::]:{port}", file=sys.stderr)
     sock.bind(("::", port))
     start = time.time()
 
@@ -229,6 +232,11 @@ def probe_server(port=443, timeout=10) -> bool:
 
             continue
 
+        #  print(
+        #      f"Received valid probe packet from {peer}. Sending response...",
+        #      file=sys.stderr,
+        #  )
+
         ret_data = json.dumps(
             {
                 "success": True,
@@ -239,6 +247,8 @@ def probe_server(port=443, timeout=10) -> bool:
             }
         )
         sock.sendto(ret_data.encode("utf-8"), peer)
+
+        #  print("Done.", file=sys.stderr)
 
         return True
 
@@ -279,13 +289,16 @@ def probe_client(addresses, port=443, timeout=10) -> Optional[str]:
             data["family"] = family
             packet = json.dumps(data).encode("utf-8")
             addr: str = data["addr"]
+            #  print(f"Sending probe to {addr}:{port}", file=sys.stderr)
             sock.sendto(packet, (addr, port))
+            #  print("Probe sent", file=sys.stderr)
 
         sock.settimeout(timeout / 2)
         start = time.time()
 
         while True:
             sock.settimeout(timeout - (time.time() - start))
+            #  print("Waiting for probe response...", file=sys.stderr)
             try:
                 data_raw, _peer = sock.recvfrom(1024)
             except socket.timeout:
@@ -304,6 +317,8 @@ def probe_client(addresses, port=443, timeout=10) -> Optional[str]:
                 )
 
                 return None
+
+            #  print("Received response...", file=sys.stderr)
             try:
                 rec_data = json.loads(data_raw.decode("utf-8"))
                 rec_nonce = rec_data["nonce"]
@@ -322,12 +337,12 @@ def probe_client(addresses, port=443, timeout=10) -> Optional[str]:
                 continue
 
             if not rec_success:
-                print("Not successfull")
+                print("Not successfull", file=sys.stderr)
 
                 continue
 
             if not rec_family in track.keys():
-                print(f"Unknown family {rec_family}")
+                print(f"Unknown family {rec_family}", file=sys.stderr)
 
                 continue
 
@@ -335,6 +350,7 @@ def probe_client(addresses, port=443, timeout=10) -> Optional[str]:
                 print(
                     f"Unknown nonce {rec_nonce}. Known nonces",
                     ", ".join(track[family].keys()),
+                    file=sys.stderr,
                 )
 
                 continue
@@ -345,14 +361,17 @@ def probe_client(addresses, port=443, timeout=10) -> Optional[str]:
                     track[rec_family][rec_nonce]["addr"],
                     "got",
                     rec_addr,
+                    file=sys.stderr,
                 )
 
                 continue
 
             if rec_port != port:
-                print(f"Wrong port. Expected {port} got {rec_port}.")
+                print(f"Wrong port. Expected {port} got {rec_port}.", file=sys.stderr)
 
                 continue
+
+            #  print("Probe is valid", file=sys.stderr)
 
             return rec_addr
 
@@ -426,7 +445,9 @@ def execute_python_on_docker_host(docker_cli, function, elevate=False, *args, **
     )
 
 
-def negotiate_server_ip(server_cli, client_cli, port=443, timeout=10) -> str:
+def negotiate_server_ip(
+    server_cli, client_cli, port=443, timeout=10
+) -> Union[ipaddress.IPv4Address, ipaddress.IPv6Address]:
 
     LOGGER.debug("Try to get all public IPs on server host")
     all_public_ips = execute_python_on_docker_host(server_cli, get_all_public_ips)
@@ -447,6 +468,8 @@ def negotiate_server_ip(server_cli, client_cli, port=443, timeout=10) -> str:
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
         server_thread = executor.submit(server_thread_func)
+
+        time.sleep(1)  # wait for server to come up
 
         LOGGER.debug("Starting probe client")
         public_ip: str = execute_python_on_docker_host(
@@ -479,4 +502,4 @@ def negotiate_server_ip(server_cli, client_cli, port=443, timeout=10) -> str:
 
     LOGGER.debug("Found a public IP that is reachable: %s", public_ip)
 
-    return public_ip
+    return ipaddress.ip_address(public_ip)
