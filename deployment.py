@@ -643,13 +643,15 @@ class Deployment:
         force_same_img_version(client, cli=client_cli)
         force_same_img_version(server, cli=server_cli)
 
-        server_ip = negotiate_server_ip(server_cli, client_cli)
+        server_port = 443
+        server_ip = negotiate_server_ip(server_cli, client_cli, port=server_port)
         breakpoint()
 
         server_container = self._create_implementation_real(
             cli=server_cli,
             image=server.image,
             role=Role.SERVER,
+            server_port=server_port,
             server_ip=server_ip,
             local_certs_path=local_certs_path,
             testcase=testcase.testname(Perspective.SERVER),
@@ -661,6 +663,7 @@ class Deployment:
             cli=client_cli,
             image=client.image,
             role=Role.CLIENT,
+            server_port=server_port,
             server_ip=server_ip,
             local_certs_path=local_certs_path,
             testcase=testcase.testname(Perspective.CLIENT),
@@ -947,6 +950,7 @@ class Deployment:
         testcase: str,
         version,
         server_ip: str,
+        server_port: int,
         request_urls: Optional[str] = None,
         local_www_path: Optional[Path] = None,
         entrypoint: Optional[list[str]] = None,
@@ -966,8 +970,8 @@ class Deployment:
         else:
             # server
             ports = {
-                "443/tcp": (server_ip, 4433),
-                "443/udp": (server_ip, 4433),
+                #  f"{port}/tcp": (server_ip, port),
+                f"{port}/udp": (server_ip, port),
             }
 
         container = self._create_container(

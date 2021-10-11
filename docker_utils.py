@@ -1,10 +1,10 @@
 """Utils for working with docker."""
 
+import concurrent.futures
 import logging
 import marshal
 import sys
 import tarfile
-import concurrent.futures
 from io import BytesIO
 from pathlib import Path
 from typing import Optional, Type, Union
@@ -198,24 +198,24 @@ def get_all_public_ips():
     return found
 
 
-def probe_server() -> bool:
+def probe_server(port=443, timeout=10) -> bool:
     """Start a udp server on all addresses and listen for probes."""
     import json
     import socket
     import time
 
-    TIMEOUT = 10
-    PORT = 4433
     sock = socket.socket(family=socket.AF_INET6, type=socket.SOCK_DGRAM)
-    sock.bind(("::", PORT))
+    sock.bind(("::", port))
     start = time.time()
 
     while True:
-        sock.settimeout(TIMEOUT - (time.time() - start))
+        sock.settimeout(timeout - (time.time() - start))
         try:
             data_raw, peer = sock.recvfrom(1024)
         except socket.timeout:
-            print("Public IP Probe Server Timeout", file=sys.stderr)
+            print(
+                f"Public IP Probe Server Timeout after {timeout} sec", file=sys.stderr
+            )
 
             return False
         try:
@@ -243,7 +243,7 @@ def probe_server() -> bool:
         return True
 
 
-def probe_client(addresses) -> Optional[str]:
+def probe_client(addresses, port=443, timeout=10) -> Optional[str]:
     """Probe all addresses and return the successful ones."""
     import json
     import random
@@ -251,9 +251,7 @@ def probe_client(addresses) -> Optional[str]:
     import string
     import time
 
-    PORT = 4433
     NONCE_LEN = 6
-    TIMEOUT = 10
 
     def gen_nonce():
         return "".join(random.choice(string.ascii_lowercase) for _ in range(NONCE_LEN))
@@ -262,7 +260,7 @@ def probe_client(addresses) -> Optional[str]:
         int(family): {
             gen_nonce(): {
                 "addr": str(addr),
-                "port": PORT,
+                "port": port,
             }
             for addr in addresses[family]
         }
@@ -281,26 +279,38 @@ def probe_client(addresses) -> Optional[str]:
             data["family"] = family
             packet = json.dumps(data).encode("utf-8")
             addr: str = data["addr"]
-            sock.sendto(packet, (addr, PORT))
+            sock.sendto(packet, (addr, port))
 
-        sock.settimeout(TIMEOUT / 2)
+        sock.settimeout(timeout / 2)
         start = time.time()
 
         while True:
-            sock.settimeout(TIMEOUT - (time.time() - start))
+            sock.settimeout(timeout - (time.time() - start))
             try:
                 data_raw, _peer = sock.recvfrom(1024)
             except socket.timeout:
-                print("Public IP Probe Client Timeout", file=sys.stderr)
+                print(
+                    f"Public IP Probe Client Timeout after {timeout} sec",
+                    file=sys.stderr,
+                )
+                print(
+                    "Tried to reach this addresses:",
+                    ", ".join(
+                        f"{addr}:{port}"
+                        for addr_list in addresses.values()
+                        for addr in addr_list
+                    ),
+                    file=sys.stderr,
+                )
 
                 return None
             try:
-                data = json.loads(data_raw.decode("utf-8"))
-                nonce = data["nonce"]
-                addr = data["addr"]
-                port: int = int(data["port"])
-                success: bool = bool(data["success"])
-                family = data["family"]
+                rec_data = json.loads(data_raw.decode("utf-8"))
+                rec_nonce = rec_data["nonce"]
+                rec_addr = rec_data["addr"]
+                rec_port: int = int(rec_data["port"])
+                rec_success: bool = bool(rec_data["success"])
+                rec_family = rec_data["family"]
             except (
                 json.JSONDecodeError,
                 UnicodeDecodeError,
@@ -311,41 +321,40 @@ def probe_client(addresses) -> Optional[str]:
 
                 continue
 
-            if not success:
+            if not rec_success:
                 print("Not successfull")
 
                 continue
 
-            if not family in track.keys():
-                print("Unknown family")
+            if not rec_family in track.keys():
+                print(f"Unknown family {rec_family}")
 
                 continue
 
-            if not nonce in track[family].keys():
+            if not rec_nonce in track[family].keys():
                 print(
-                    "Unknown nonce",
-                    nonce,
-                    "Known nonces",
+                    f"Unknown nonce {rec_nonce}. Known nonces",
                     ", ".join(track[family].keys()),
                 )
 
                 continue
 
-            if not addr == track[family][nonce]["addr"]:
+            if not rec_addr == track[rec_family][rec_nonce]["addr"]:
                 print(
-                    "Wrong address. Expected", track[family][nonce]["addr"], "got", addr
+                    "Wrong address. Expected",
+                    track[rec_family][rec_nonce]["addr"],
+                    "got",
+                    rec_addr,
                 )
 
                 continue
 
-            if port != PORT:
-                print("Wrong port. Expected", PORT, "got", port)
+            if rec_port != port:
+                print(f"Wrong port. Expected {port} got {rec_port}.")
 
                 continue
 
-            print(addr, file=sys.stderr)
-
-            return addr
+            return rec_addr
 
 
 #  def exec_command_on_ssh(ssh_client, cmd: str) -> tuple[str, str]:
@@ -360,16 +369,22 @@ def probe_client(addresses) -> Optional[str]:
 #      return out, err
 
 
-def execute_func_on_ssh(ssh_client, function, *args, **kwargs):
-    LOGGER.debug("Executing %s on remote host.", function.__name__)
+def exec_func_on_ssh(ssh_client, function, elevate=False, *args, **kwargs):
     """Execute a python function on the remote host."""
-    script = """
-python3.9 -q -c '
+
+    LOGGER.debug("Executing %s on remote host.", function.__name__)
+    python_cmd = f"python{sys.version_info.major}.{sys.version_info.minor}"
+
+    if elevate:
+        python_cmd = f"sudo {python_cmd}"
+    script = f"""
+{python_cmd} -q -c '
 import sys, os, marshal, types;
 stdin = os.fdopen(0, "rb");
 stdout = os.fdopen(1, "wb");
 func_code, args, kwargs = marshal.loads(stdin.read());
 func = types.FunctionType(func_code, globals(), "func");
+sys.stdout = sys.stderr;
 ret = func(*args, **kwargs);
 marshal.dump(ret, stdout);
 '
@@ -377,18 +392,20 @@ marshal.dump(ret, stdout);
         "\n", ""
     ).strip()
     stdin, stdout, stderr = ssh_client.exec_command(script)
+
+    def log_stderr():
+        for line in stderr:
+            LOGGER.error(line.strip())
+
     try:
         stdin.write(marshal.dumps((function.__code__, args, kwargs)))
         stdin.close()
     except OSError as exc:
         LOGGER.error("Execution failed: %s", str(exc))
-        err = stderr.read().decode("utf-8")
-        LOGGER.error(err)
+        log_stderr()
         sys.exit(1)
 
-    err = stderr.read().decode("utf-8").strip()
-    if err:
-        LOGGER.error(err)
+    log_stderr()
     try:
         ret = marshal.loads(stdout.read())
     except EOFError:
@@ -397,29 +414,48 @@ marshal.dump(ret, stdout);
     return ret
 
 
-def execute_python_on_docker_host(docker_cli, function, *args, **kwargs):
+def execute_python_on_docker_host(docker_cli, function, elevate=False, *args, **kwargs):
     """Execute a python function on the docker host given by the docker client."""
 
-    return execute_func_on_ssh(
-        docker_cli.api._custom_adapter.ssh_client, function, *args, **kwargs
+    return exec_func_on_ssh(
+        docker_cli.api._custom_adapter.ssh_client,
+        function,
+        elevate=elevate,
+        *args,
+        **kwargs,
     )
 
 
-def negotiate_server_ip(server_cli, client_cli) -> str:
+def negotiate_server_ip(server_cli, client_cli, port=443, timeout=10) -> str:
+
     LOGGER.debug("Try to get all public IPs on server host")
     all_public_ips = execute_python_on_docker_host(server_cli, get_all_public_ips)
     LOGGER.debug("Received public ips: %s", str(all_public_ips))
 
+    elevate = port <= 1024
+
     def server_thread_func():
         LOGGER.debug("Starting probe server")
-        return execute_python_on_docker_host(server_cli, probe_server)
+
+        return execute_python_on_docker_host(
+            docker_cli=server_cli,
+            function=probe_server,
+            elevate=elevate,
+            port=port,
+            timeout=timeout,
+        )
 
     with concurrent.futures.ThreadPoolExecutor() as executor:
         server_thread = executor.submit(server_thread_func)
 
         LOGGER.debug("Starting probe client")
         public_ip: str = execute_python_on_docker_host(
-            client_cli, probe_client, all_public_ips
+            docker_cli=client_cli,
+            function=probe_client,
+            elevate=elevate,
+            addresses=all_public_ips,
+            port=port,
+            timeout=timeout,
         )
 
         LOGGER.debug("Waiting for server to end...")
@@ -429,11 +465,17 @@ def negotiate_server_ip(server_cli, client_cli) -> str:
         LOGGER.error(
             "Found no public ip on server host, that is reachable from the client."
         )
-        assert server_ret is False
+        assert server_ret is False, (
+            f"Server should return False, when we receive no public IP from the client,"
+            f" but it returned {server_ret}."
+        )
         sys.exit(1)
 
     else:
-        assert server_ret
+        assert server_ret is True, (
+            f"Server should return True, when we receive a public IP ({public_ip}) from the client,"
+            f" but it returned {server_ret}."
+        )
 
     LOGGER.debug("Found a public IP that is reachable: %s", public_ip)
 
