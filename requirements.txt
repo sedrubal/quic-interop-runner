@@ -1,4 +1,0 @@
-pycryptodome
-termcolor
-prettytable
-pyshark

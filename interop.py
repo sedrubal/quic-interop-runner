@@ -16,11 +16,11 @@ from termcolor import colored
 
 import testcases
 from deployment import Deployment
-from evaluation_tools.result_parser import Result
-from evaluation_tools.utils import TerminalFormatter
 from implementations import Implementation, Role
 from result import TestResult
+from result_parser import Result
 from testcases import MEASUREMENTS, TESTCASES
+from utils import TerminalFormatter
 
 CONSOLE_LOG_HANDLER = logging.StreamHandler(stream=sys.stderr)
 

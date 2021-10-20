@@ -26,10 +26,9 @@ from docker_utils import (
     force_same_img_version,
     negotiate_server_ip,
 )
-from evaluation_tools.utils import TerminalFormatter
 from implementations import IMPLEMENTATIONS, Implementation, Role
 from testcases import MeasurementRealLink, Perspective, TestCase
-from utils import random_string
+from utils import TerminalFormatter, random_string
 
 MEMLOCK_ULIMIT = docker.types.Ulimit(name="memlock", hard=67108864, soft=67108864)
 IPERF_ENDPOINT_IMG = "martenseemann/quic-interop-iperf-endpoint"

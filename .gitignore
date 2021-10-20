@@ -9,3 +9,6 @@ web/latest
 __pycache__
 build/
 dist/
+
+.ipynb_checkpoints
+.vscode

@@ -12,7 +12,7 @@ from typing import Union
 
 from termcolor import colored, cprint
 
-from evaluation_tools.result_parser import Result
+from result_parser import Result
 from implementations import IMPLEMENTATIONS, Role
 from interop import InteropRunner
 from run import implementations

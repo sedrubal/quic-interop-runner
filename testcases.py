@@ -12,7 +12,7 @@ from datetime import timedelta
 from enum import Enum, IntEnum
 from functools import cached_property
 from pathlib import Path
-from trace import Direction, PacketType, TraceAnalyzer, get_direction, get_packet_type
+from trace_analyzer import Direction, PacketType, TraceAnalyzer, get_direction, get_packet_type
 from typing import ClassVar, Optional, Type, Union
 
 from Crypto.Cipher import AES

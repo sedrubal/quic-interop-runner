@@ -1,0 +1,20 @@
+[MASTER]
+
+ignore-paths=tango_colors.py
+
+[MESSAGES CONTROL]
+
+disable=old-octal-literal,unichr-builtin,standarderror-builtin,round-builtin,setslice-method,hex-method,file-builtin,dict-iter-method,raising-string,range-builtin-not-iterating,next-method-called,print-statement,coerce-method,reload-builtin,raw_input-builtin,xrange-builtin,intern-builtin,using-cmp-argument,cmp-builtin,unicode-builtin,long-suffix,zip-builtin-not-iterating,getslice-method,reduce-builtin,filter-builtin-not-iterating,input-builtin,apply-builtin,long-builtin,indexing-exception,cmp-method,buffer-builtin,coerce-builtin,old-division,parameter-unpacking,import-star-module-level,suppressed-message,unpacking-in-except,old-ne-operator,oct-method,backtick,old-raise-syntax,useless-suppression,metaclass-assignment,dict-view-method,delslice-method,basestring-builtin,map-builtin-not-iterating,execfile-builtin,nonzero-method,no-absolute-import,no-else-return,no-else-raise,arguments-differ,too-many-arguments
+
+[BASIC]
+
+good-names=i,
+           j,
+           k,
+           ex,
+           Run,
+           _,
+           x,
+           y,
+           T,
+           ax

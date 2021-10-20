@@ -7,14 +7,14 @@ The Interop Test Runner aims to automatically generate an interop matrix by runn
 The Interop Runner is written in Python 3. You'll need to install a few Python modules to run it:
 
 ```bash
-pip3 install -r requirements.txt
+poetry install
 ```
 
 Furthermore, you need to install development version of Wireshark (version 3.4.2 or newer).
 
 Run the interop tests:
 ```bash
-python3 run.py
+./run.py
 ```
 
 ## IPv6 support
