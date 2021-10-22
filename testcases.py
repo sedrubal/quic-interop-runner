@@ -2195,6 +2195,32 @@ class MeasurementRealLink(MeasurementGoodput):
         return 120
 
 
+class MeasurementStarlink(MeasurementRealLink):
+    """Measurement over a starlink connection."""
+    @classmethod
+    @property
+    def name(cls):
+        return "starlink"
+
+    @classmethod
+    @property
+    def abbreviation(cls):
+        return "SL"
+
+    @classmethod
+    @property
+    def desc(cls):
+        return (
+            "Measures connection goodput over a starlink network link. "
+            f"File: {int(cls.FILESIZE / FileSize.MiB)} MiB; "
+        )
+
+    @classmethod
+    @property
+    def client_docker_host(cls) -> str:
+        return "starlink_client"
+
+
 class MeasurementAstra(MeasurementRealLink):
     ...
 
@@ -2231,4 +2257,5 @@ MEASUREMENTS: list[Type[Measurement]] = [
     MeasurementSatellite,
     MeasurementSatelliteLoss,
     MeasurementRealLink,
+    MeasurementStarlink,
 ]
