@@ -524,7 +524,6 @@ class InteropRunner:
                 return res
             values.append(value)
 
-        LOGGER.debug(values)
         res = MeasurementResult(
             result=TestResult.SUCCEEDED,
             details="{:.0f} (± {:.0f}) {}".format(

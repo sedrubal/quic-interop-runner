@@ -4,6 +4,7 @@ import concurrent.futures
 import ipaddress
 import logging
 import marshal
+import socket
 import sys
 import tarfile
 import time
@@ -13,6 +14,7 @@ from typing import Optional, Type, Union
 
 import docker
 
+from custom_types import IPAddress
 from implementations import Implementation
 
 Container = Type[docker.models.containers.Container]
@@ -213,6 +215,31 @@ def force_same_img_version(implementation: Implementation, cli: docker.DockerCli
         cli,
     )
     sys.exit(1)
+
+
+def get_default_ips() -> dict[int, str]:
+    """Get the client IP address for the default route."""
+    import socket
+
+    import netifaces
+
+    found = dict[int, str]()
+
+    for family in (int(socket.AF_INET), int(socket.AF_INET6)):
+        _gw_addr, gw_interface = netifaces.gateways()["default"].get(
+            family, (None, None)
+        )
+
+        if not gw_interface:
+            continue
+        addr_sets = netifaces.ifaddresses(gw_interface).get(family)
+
+        if not addr_sets:
+            continue
+        client_addr = addr_sets.pop()["addr"]
+        found[family] = client_addr
+
+    return found
 
 
 def get_all_public_ips():
@@ -510,9 +537,21 @@ def execute_python_on_docker_host(docker_cli, function, elevate=False, *args, **
 #      return int(out.splitlines()[0].strip())
 
 
-def negotiate_server_ip(
-    server_cli, client_cli, port=443, timeout=10
-) -> Union[ipaddress.IPv4Address, ipaddress.IPv6Address]:
+def get_client_ips(
+    client_cli,
+) -> tuple[Optional[ipaddress.IPv4Address], Optional[ipaddress.IPv6Address]]:
+    client_ips = execute_python_on_docker_host(client_cli, get_default_ips)
+
+    client_ip4_str = client_ips.get(int(socket.AF_INET))
+    client_ip6_str = client_ips.get(int(socket.AF_INET6))
+
+    return (
+        ipaddress.IPv4Address(client_ip4_str) if client_ip4_str else None,
+        ipaddress.IPv6Address(client_ip6_str) if client_ip6_str else None,
+    )
+
+
+def negotiate_server_ip(server_cli, client_cli, port=443, timeout=10) -> IPAddress:
 
     LOGGER.debug("Try to get all public IPs on server host")
     all_public_ips = execute_python_on_docker_host(server_cli, get_all_public_ips)

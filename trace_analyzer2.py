@@ -89,7 +89,8 @@ class Trace:
         keylog_file: Optional[Path] = None,
         cache=CacheMode.LOAD,
         debug=False,
-        display_filter="quic",
+        display_filter="(quic && !icmp)",
+        port=443,
     ):
         self.side = side
         self.debug = debug
@@ -121,7 +122,7 @@ class Trace:
             override_prefs=override_prefs,
             # see https://github.com/marten-seemann/quic-interop-runner/pull/179/
             disable_protocol="http3",
-            decode_as={"udp.port==443": "quic"},
+            decode_as={f"udp.port=={port}": "quic"},
         )
         self._facts = dict[str, Any]()
         self._response_stream_packets_first_tx = list[QuicStreamPacket]()

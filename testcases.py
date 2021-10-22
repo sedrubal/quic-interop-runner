@@ -12,12 +12,13 @@ from datetime import timedelta
 from enum import Enum, IntEnum
 from functools import cached_property
 from pathlib import Path
-from trace_analyzer import Direction, PacketType, TraceAnalyzer, get_direction, get_packet_type
 from typing import ClassVar, Optional, Type, Union
 
 from Crypto.Cipher import AES
 
+from custom_types import IPAddress
 from result import TestResult
+from trace_analyzer import Direction, PacketType, TraceAnalyzer, get_packet_type
 
 LOGGER = logging.getLogger(name="quic-interop-runner")
 
@@ -95,6 +96,25 @@ class TestCase(abc.ABC):
         self._www_dir: Optional[tempfile.TemporaryDirectory] = None
         self._download_dir: Optional[tempfile.TemporaryDirectory] = None
         self._cert_dir: Optional[tempfile.TemporaryDirectory] = None
+        self._client_client_addrs = set[IPAddress]()
+        self._client_server_addrs = set[IPAddress]()
+        self._server_client_addrs = set[IPAddress]()
+        self._server_server_addrs = set[IPAddress]()
+
+    def set_ip_addrs(
+        self,
+        client_client_addrs: set[IPAddress],
+        client_server_addrs: set[IPAddress],
+        server_client_addrs: set[IPAddress],
+        server_server_addrs: set[IPAddress],
+    ):
+        """
+        Set the IP addresses as set of the current deployment for the current execution of the testcase.
+        """
+        self._client_client_addrs = client_client_addrs
+        self._client_server_addrs = client_server_addrs
+        self._server_client_addrs = server_client_addrs
+        self._server_server_addrs = server_server_addrs
 
     @classmethod
     @property
@@ -216,14 +236,62 @@ class TestCase(abc.ABC):
 
     @cached_property
     def _client_trace(self):
+        ipv4_client: Optional[str] = None
+        ipv6_client: Optional[str] = None
+        ipv4_server: Optional[str] = None
+        ipv6_server: Optional[str] = None
+
+        for ip_addr in self._client_client_addrs:
+            if ip_addr.version == 4:
+                ipv4_client = ip_addr.exploded
+            elif ip_addr.version == 6:
+                ipv4_client = ip_addr.exploded
+
+        for ip_addr in self._client_server_addrs:
+            if ip_addr.version == 4:
+                ipv4_server = ip_addr.exploded
+            elif ip_addr.version == 6:
+                ipv4_server = ip_addr.exploded
+
+        assert (ipv4_client or ipv6_client) and (ipv4_server or ipv6_server)
+
         return TraceAnalyzer(
-            self._sim_log_dir / "trace_node_left.pcap", self._keylog_file
+            pcap_path=self._sim_log_dir / "trace_node_left.pcap",
+            keylog_file=self._keylog_file,
+            ip4_client=ipv4_client,
+            ip6_client=ipv6_client,
+            ip4_server=ipv4_server,
+            ip6_server=ipv6_server,
         )
 
     @cached_property
     def _server_trace(self):
+        ipv4_client: Optional[str] = None
+        ipv6_client: Optional[str] = None
+        ipv4_server: Optional[str] = None
+        ipv6_server: Optional[str] = None
+
+        for ip_addr in self._server_client_addrs:
+            if ip_addr.version == 4:
+                ipv4_client = ip_addr.exploded
+            elif ip_addr.version == 6:
+                ipv4_client = ip_addr.exploded
+
+        for ip_addr in self._server_server_addrs:
+            if ip_addr.version == 4:
+                ipv4_server = ip_addr.exploded
+            elif ip_addr.version == 6:
+                ipv4_server = ip_addr.exploded
+
+        assert (ipv4_client or ipv6_client) and (ipv4_server or ipv6_server)
+
         return TraceAnalyzer(
-            self._sim_log_dir / "trace_node_right.pcap", self._keylog_file
+            pcap_path=self._sim_log_dir / "trace_node_right.pcap",
+            keylog_file=self._keylog_file,
+            ip4_client=ipv4_client,
+            ip6_client=ipv6_client,
+            ip4_server=ipv4_server,
+            ip6_server=ipv6_server,
         )
 
     def _generate_random_file(self, size: int, filename_len=10) -> str:
@@ -1048,7 +1116,7 @@ class TestCaseAmplificationLimit(TestCase):
         log_output = []
 
         for packet in self._server_trace.get_raw_packets():
-            direction = get_direction(packet)
+            direction = self._server_trace.get_direction(packet)
             packet_type = get_packet_type(packet)
 
             if packet_type == PacketType.VERSIONNEGOTIATION:
@@ -2081,7 +2149,6 @@ class MeasurementSatelliteLoss(MeasurementSatellite):
 
 
 class MeasurementRealLink(MeasurementGoodput):
-
     @classmethod
     @property
     def name(cls):

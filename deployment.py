@@ -16,6 +16,7 @@ import docker
 import paramiko
 from termcolor import colored
 
+from custom_types import IPAddress
 from docker_utils import (
     Container,
     Network,
@@ -24,6 +25,7 @@ from docker_utils import (
     copy_tree_from_container,
     copy_tree_to_container,
     force_same_img_version,
+    get_client_ips,
     negotiate_server_ip,
 )
 from implementations import IMPLEMENTATIONS, Implementation, Role
@@ -165,6 +167,7 @@ class ExecResult:
     log: Log
     timed_out: bool
     exit_codes: dict[str, int]
+    ip_addrs: dict[str, set[IPAddress]]
 
     def __str__(self):
         log_str = f"log: {len(self.log)} lines"
@@ -321,6 +324,15 @@ class Deployment:
                 data_structure[container].status = status
                 self._stage_status_cv.notify()
 
+                if status == ContainerStatus.RUNNING:
+                    # save IP address of container
+                    data_structure[container].ip_addrs = {
+                        ipaddress.ip_address(network["IPAddress"])
+                        for network in container.attrs["NetworkSettings"][
+                            "Networks"
+                        ].values()
+                    }
+
         def end_callback(force=False):
             for container in reversed(containers):
 
@@ -341,6 +353,7 @@ class Deployment:
             monitor_thread: threading.Thread
             status: ContainerStatus
             log_buf: str = ""
+            ip_addrs = set[IPAddress]()
 
         data_structure: dict[Container, DataStructureEntry] = {
             container: DataStructureEntry(
@@ -469,6 +482,10 @@ class Deployment:
             timed_out=timed_out,
             exit_codes={
                 get_container_name(container): container.wait().pop("StatusCode")
+                for container in containers
+            },
+            ip_addrs={
+                get_container_name(container): data_structure[container].ip_addrs
                 for container in containers
             },
         )
@@ -650,6 +667,25 @@ class Deployment:
         containers = [sim_container, client_container, server_container]
         # wait
         result = self.run_and_wait(containers, timeout=timeout)
+        # set IP addresses
+        testcase.set_ip_addrs(
+            client_client_addrs={
+                self.get_container_ipv4(Role.CLIENT),
+                self.get_container_ipv6(Role.CLIENT),
+            },
+            client_server_addrs={
+                self.get_container_ipv4(Role.SERVER),
+                self.get_container_ipv6(Role.SERVER),
+            },
+            server_client_addrs={
+                self.get_container_ipv4(Role.CLIENT),
+                self.get_container_ipv6(Role.CLIENT),
+            },
+            server_server_addrs={
+                self.get_container_ipv4(Role.SERVER),
+                self.get_container_ipv6(Role.SERVER),
+            },
+        )
         # copy logs
         copy_tree_from_container(server_container, LOGS_PATH, log_path / "server")
         copy_tree_from_container(client_container, LOGS_PATH, log_path / "client")
@@ -682,7 +718,16 @@ class Deployment:
 
         server_port = 443
         server_ip = negotiate_server_ip(server_cli, client_cli, port=server_port)
-        LOGGER.debug("Server is %s:%i", server_ip, server_port)
+        server_ip4 = server_ip if server_ip.version == 4 else None
+        server_ip6 = server_ip if server_ip.version == 6 else None
+        LOGGER.debug(
+            "Server IPs: IPv4: %s IPv6: %s (Port: %i)",
+            server_ip4,
+            server_ip6,
+            server_port,
+        )
+        client_ip4, client_ip6 = get_client_ips(client_cli)
+        LOGGER.debug("Client IPs: IPv4: %s IPv6: %s", client_ip4, client_ip6)
 
         server_container = self._create_implementation_real(
             cli=server_cli,
@@ -765,6 +810,13 @@ class Deployment:
             containers,
             timeout=timeout,
             hooks={Stage.CLIENT_POST: [after_left_trace_start_hook]},
+        )
+
+        testcase.set_ip_addrs(
+            client_client_addrs=result.ip_addrs["client"],
+            client_server_addrs={ip for ip in (server_ip4, server_ip6) if ip},
+            server_client_addrs={ip for ip in (client_ip4, client_ip6) if ip},
+            server_server_addrs=result.ip_addrs["server"],
         )
 
         # copy downloads
@@ -1052,7 +1104,7 @@ class Deployment:
         local_certs_path: Path,
         testcase: str,
         version,
-        server_ip: Union[ipaddress.IPv4Address, ipaddress.IPv6Address],
+        server_ip: IPAddress,
         server_port: int,
         request_urls: Optional[str] = None,
         local_www_path: Optional[Path] = None,

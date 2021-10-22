@@ -7,10 +7,10 @@ import pyshark
 
 LOGGER = logging.getLogger(name="quic-interop-runner")
 
-IP4_CLIENT = "193.167.0.100"
-IP4_SERVER = "193.167.100.100"
-IP6_CLIENT = "fd00:cafe:cafe:0::100"
-IP6_SERVER = "fd00:cafe:cafe:100::100"
+#  IP4_CLIENT = "193.167.0.100"
+#  IP4_SERVER = "193.167.100.100"
+#  IP6_CLIENT = "fd00:cafe:cafe:0::100"
+#  IP6_SERVER = "fd00:cafe:cafe:100::100"
 
 
 class Direction(Enum):
@@ -38,20 +38,6 @@ WIRESHARK_PACKET_TYPES = {
 }
 
 
-def get_direction(p) -> Direction:
-    if (hasattr(p, "ip") and p.ip.src == IP4_CLIENT) or (
-        hasattr(p, "ipv6") and p.ipv6.src == IP6_CLIENT
-    ):
-        return Direction.FROM_CLIENT
-
-    if (hasattr(p, "ip") and p.ip.src == IP4_SERVER) or (
-        hasattr(p, "ipv6") and p.ipv6.src == IP6_SERVER
-    ):
-        return Direction.FROM_SERVER
-
-    return Direction.INVALID
-
-
 def get_packet_type(p) -> PacketType:
     if p.quic.header_form == "0":
         return PacketType.ONERTT
@@ -67,19 +53,71 @@ def get_packet_type(p) -> PacketType:
 
 
 class TraceAnalyzer:
-    def __init__(self, pcap_path: Path, keylog_file: Optional[Path] = None):
+    def __init__(
+        self,
+        pcap_path: Path,
+        ip4_client: Optional[str],
+        ip6_client: Optional[str],
+        ip4_server: Optional[str],
+        ip6_server: Optional[str],
+        keylog_file: Optional[Path] = None,
+    ):
         self._pcap_path = pcap_path
         self._keylog_file = keylog_file
+        self._ip4_client = ip4_client
+        self._ip6_client = ip6_client
+        self._ip4_server = ip4_server
+        self._ip6_server = ip6_server
+
+    def get_direction(self, packet) -> Direction:
+        """Return the direction of a packet."""
+
+        if (
+            hasattr(packet, "ip")
+            and self._ip4_client
+            and packet.ip.src == self._ip4_client
+        ) or (
+            hasattr(packet, "ipv6")
+            and self._ip6_client
+            and packet.ipv6.src == self._ip6_client
+        ):
+            return Direction.FROM_CLIENT
+
+        if (
+            hasattr(packet, "ip")
+            and self._ip4_server
+            and packet.ip.src == self._ip4_server
+        ) or (
+            hasattr(packet, "ipv6")
+            and self._ip6_server
+            and packet.ipv6.src == self._ip6_server
+        ):
+            return Direction.FROM_SERVER
+
+        return Direction.INVALID
 
     def _get_direction_filter(self, direction: Direction) -> str:
         display_filter = "(quic && !icmp) && "
 
+        def create_ip_filter(
+            ip4_addr,
+            ip6_addr,
+        ) -> str:
+            ip4_filter = f"ip.src=={ip4_addr}" if ip4_addr else None
+            ip6_filter = f"ip.src=={ip6_addr}" if ip6_addr else None
+            assert ip4_filter or ip6_filter
+
+            if ip4_filter and ip6_filter:
+                return f"{display_filter} ({ip4_filter} || {ip6_filter}) && "
+            else:
+                ip_filter = ip4_filter or ip6_filter
+
+                return f"{display_filter} {ip_filter} && "
+
         if direction == Direction.FROM_CLIENT:
-            return (
-                f"{display_filter} (ip.src=={IP4_CLIENT} || ipv6.src=={IP6_CLIENT}) && "
-            )
+            return create_ip_filter(self._ip4_client, self._ip6_client)
         elif direction == Direction.FROM_SERVER:
-            return f"{display_filter} (ip.src=={IP4_SERVER} || ipv6.src=={IP6_SERVER }) && "
+            return create_ip_filter(self._ip4_server, self._ip6_server)
         else:
             return display_filter
 
