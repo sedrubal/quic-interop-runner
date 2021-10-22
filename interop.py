@@ -141,13 +141,15 @@ class InteropRunner:
                     not old_impl.image_id
                     or old_impl.image_id == implementation.image_id
                 )
-                implementation.compliant = old_impl.compliant
 
-                if not implementation.compliant:
-                    LOGGER.warning(
-                        "Implementation %s seems not to be compliant.",
-                        implementation.name,
-                    )
+                if old_impl.compliant is not None:
+                    implementation.compliant = old_impl.compliant
+
+                    if not implementation.compliant:
+                        LOGGER.warning(
+                            "Implementation %s seems not to be compliant.",
+                            implementation.name,
+                        )
 
             testcases_mapping = {
                 testcase.abbreviation: testcase for testcase in TESTCASES
@@ -237,7 +239,7 @@ class InteropRunner:
 
             if exec_result.timed_out:
                 LOGGER.error(
-                    "Compliance check for %s %s timed out.",
+                    "Compliance check for %s %s timed out ⏲️",
                     implementation.name,
                     role.value,
                 )
@@ -246,12 +248,12 @@ class InteropRunner:
                 return False
 
             if exec_result.exit_codes[role.value] != UNSUPPORTED_EXIT_CODE:
-                LOGGER.error("%s %s is not compliant.", implementation.name, role.value)
+                LOGGER.error("%s %s is not compliant ❌", implementation.name, role.value)
                 implementation.compliant = False
 
                 return False
 
-            LOGGER.debug("%s %s is compliant.", implementation.name, role.value)
+            LOGGER.debug("%s %s is compliant ✅", implementation.name, role.value)
 
         # remember compliance test result
         implementation.compliant = True
@@ -559,11 +561,22 @@ class InteropRunner:
                     LOGGER.info(
                         "Skipping compliance check for %s and %s", server, client
                     )
-                elif not (
-                    self._check_impl_is_compliant(server_implementation)
-                    and self._check_impl_is_compliant(client_implementation)
-                ):
-                    LOGGER.info("Not compliant, skipping")
+                elif not self._check_impl_is_compliant(server_implementation):
+                    LOGGER.info(
+                        "%s is not compliant, skipping %s-%s",
+                        server_implementation.name,
+                        server_implementation.name,
+                        client_implementation.name,
+                    )
+
+                    continue
+                elif not self._check_impl_is_compliant(client_implementation):
+                    LOGGER.info(
+                        "%s is not compliant, skipping %s-%s",
+                        client_implementation.name,
+                        server_implementation.name,
+                        client_implementation.name,
+                    )
 
                     continue
 

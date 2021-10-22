@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Deployment using Docker and SSH (for remote hosts)."""
 
+import concurrent.futures
 import ipaddress
 import logging
 import sys
@@ -14,6 +15,7 @@ from typing import Callable, Optional, Union
 
 import docker
 import paramiko
+import yaml
 from termcolor import colored
 
 from custom_types import IPAddress
@@ -27,6 +29,7 @@ from docker_utils import (
     force_same_img_version,
     get_client_ips,
     negotiate_server_ip,
+    remove_containers,
 )
 from implementations import IMPLEMENTATIONS, Implementation, Role
 from testcases import MeasurementRealLink, Perspective, TestCase
@@ -36,16 +39,6 @@ MEMLOCK_ULIMIT = docker.types.Ulimit(name="memlock", hard=67108864, soft=6710886
 IPERF_ENDPOINT_IMG = "martenseemann/quic-interop-iperf-endpoint"
 SIM_IMG = "therealsedrubal/quic-network-simulator"
 TCPDUMP_IMG = "therealsedrubal/tcpdump:main"
-
-DOCKER_HOST_URLS = {
-    "default": "unix:///var/run/docker.sock",
-    #  "remote_server": "ssh://basti@faui7s4.informatik.uni-erlangen.de",
-    #  "remote_client": "ssh://basti@131.188.45.85:22005",
-    #  "starlink_client": "ssh://basti@131.188.45.85:22005",
-    "remote_server": "ssh://faui7s4.informatik.uni-erlangen.de",
-    "remote_client": "ssh://starlink:22005",
-    "starlink_client": "ssh://starlink",
-}
 
 VOID_NETWORK = "none"
 
@@ -166,6 +159,7 @@ Log = list[LogLine]
 class ExecResult:
     log: Log
     timed_out: bool
+    failed: bool
     exit_codes: dict[str, int]
     ip_addrs: dict[str, set[IPAddress]]
 
@@ -266,10 +260,12 @@ class Deployment:
         }
         self._docker_clis = dict[str, docker.DockerClient]()
         self._stage_status_cv = threading.Condition()
+        with (Path(__file__).parent / "docker_hosts.yml").open("r") as file:
+            self.docker_host_urls = yaml.safe_load(file)
 
     def get_docker_cli(self, name="default"):
         if name not in self._docker_clis.keys():
-            self._docker_clis[name] = docker.DockerClient(DOCKER_HOST_URLS[name])
+            self._docker_clis[name] = docker.DockerClient(self.docker_host_urls[name])
 
         return self._docker_clis[name]
 
@@ -461,7 +457,7 @@ class Deployment:
             status = get_container_status(container)
 
             if status != ContainerStatus.EXITED:
-                logging.error(
+                LOGGER.error(
                     "Container %s did not exit, but is in %s state.",
                     container.name,
                     status.value,
@@ -475,11 +471,11 @@ class Deployment:
 
         if failed:
             LOGGER.error("Starting containers failed.")
-            sys.exit(1)
 
         return ExecResult(
             log=logs,
             timed_out=timed_out,
+            failed=failed,
             exit_codes={
                 get_container_name(container): container.wait().pop("StatusCode")
                 for container in containers
@@ -518,16 +514,17 @@ class Deployment:
                 testcase=testcase_name,
                 version=version,
                 request_urls="https://server4:443/",
-                local_www_path=local_www_path,
-                local_download_path=local_downloads_path,
+                local_www_path=local_www_path if role == Role.SERVER else None,
+                local_download_path=local_downloads_path
+                if role == Role.CLIENT
+                else None,
             )
         )
         # wait
 
         result = self.run_and_wait(containers, timeout=30)
 
-        for container in containers:
-            container.remove()
+        remove_containers(containers)
 
         return result
 
@@ -572,8 +569,7 @@ class Deployment:
         LOGGER.debug("Starting containers")
         result = self.run_and_wait(containers, timeout=timeout)
 
-        for container in containers:
-            container.remove()
+        remove_containers(containers)
 
         return result
 
@@ -642,28 +638,39 @@ class Deployment:
         request_urls: str,
         version: str,
     ) -> ExecResult:
-        sim_container = self._create_sim(
-            waitforserver=True,
-            scenario=testcase.scenario,
-        )
-        server_container = self._create_implementation_sim(
-            image=server.image,
-            role=Role.SERVER,
-            local_certs_path=local_certs_path,
-            testcase=testcase.testname(Perspective.SERVER),
-            version=version,
-            request_urls=request_urls,
-            local_www_path=local_www_path,
-        )
-        client_container = self._create_implementation_sim(
-            image=client.image,
-            role=Role.CLIENT,
-            local_certs_path=local_certs_path,
-            testcase=testcase.testname(Perspective.CLIENT),
-            version=version,
-            request_urls=request_urls,
-            local_download_path=local_downloads_path,
-        )
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            thread0 = executor.submit(
+                lambda: self._create_sim(
+                    waitforserver=True,
+                    scenario=testcase.scenario,
+                )
+            )
+            thread1 = executor.submit(
+                lambda: self._create_implementation_sim(
+                    image=server.image,
+                    role=Role.SERVER,
+                    local_certs_path=local_certs_path,
+                    testcase=testcase.testname(Perspective.SERVER),
+                    version=version,
+                    request_urls=request_urls,
+                    local_www_path=local_www_path,
+                )
+            )
+            thread2 = executor.submit(
+                lambda: self._create_implementation_sim(
+                    image=client.image,
+                    role=Role.CLIENT,
+                    local_certs_path=local_certs_path,
+                    testcase=testcase.testname(Perspective.CLIENT),
+                    version=version,
+                    request_urls=request_urls,
+                    local_download_path=local_downloads_path,
+                )
+            )
+            sim_container = thread0.result()
+            server_container = thread1.result()
+            client_container = thread2.result()
+
         containers = [sim_container, client_container, server_container]
         # wait
         result = self.run_and_wait(containers, timeout=timeout)
@@ -687,12 +694,17 @@ class Deployment:
             },
         )
         # copy logs
-        copy_tree_from_container(server_container, LOGS_PATH, log_path / "server")
-        copy_tree_from_container(client_container, LOGS_PATH, log_path / "client")
-        copy_tree_from_container(sim_container, LOGS_PATH, log_path / "sim")
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            executor.map(
+                copy_tree_from_container,
+                (
+                    (server_container, LOGS_PATH, log_path / "server"),
+                    (client_container, LOGS_PATH, log_path / "client"),
+                    (sim_container, LOGS_PATH, log_path / "sim"),
+                ),
+            )
 
-        for container in containers:
-            container.remove()
+        remove_containers(containers)
 
         return result
 
@@ -713,8 +725,14 @@ class Deployment:
         server_cli = self.get_docker_cli(testcase.server_docker_host)
 
         # ensure image version is the same
-        force_same_img_version(client, cli=client_cli)
-        force_same_img_version(server, cli=server_cli)
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            executor.map(
+                force_same_img_version,
+                (
+                    (client, client_cli),
+                    (server, server_cli),
+                ),
+            )
 
         server_port = 443
         server_ip = negotiate_server_ip(server_cli, client_cli, port=server_port)
@@ -729,66 +747,79 @@ class Deployment:
         client_ip4, client_ip6 = get_client_ips(client_cli)
         LOGGER.debug("Client IPs: IPv4: %s IPv6: %s", client_ip4, client_ip6)
 
-        server_container = self._create_implementation_real(
-            cli=server_cli,
-            image=server.image,
-            role=Role.SERVER,
-            server_port=server_port,
-            server_ip=server_ip,
-            local_certs_path=local_certs_path,
-            testcase=testcase.testname(Perspective.SERVER),
-            version=version,
-            request_urls=request_urls,
-            local_www_path=local_www_path,
-        )
-        right_tcpdump_container = self._create_container(
-            cli=server_cli,
-            image=TCPDUMP_IMG,
-            service_name="right_tcpdump",
-            stage=Stage.SERVER_POST,
-            entrypoint=[
-                "tcpdump",
-                "-q",
-                "-w",
-                str(TRACE_PATH),
-                "udp",
-                "port",
-                str(server_port),
-            ],
-            #  extra_hosts: Optional[dict[str, str]] = None,
-            network=f"container:{server_container.name}",
-            #  volumes: Optional[dict] = None,
-        )
-        client_container = self._create_implementation_real(
-            cli=client_cli,
-            image=client.image,
-            role=Role.CLIENT,
-            server_port=server_port,
-            server_ip=server_ip,
-            local_certs_path=local_certs_path,
-            testcase=testcase.testname(Perspective.CLIENT),
-            version=version,
-            request_urls=request_urls,
-            local_www_path=local_www_path,
-        )
-        left_tcpdump_container = self._create_container(
-            cli=client_cli,
-            image=TCPDUMP_IMG,
-            service_name="left_tcpdump",
-            stage=Stage.CLIENT_POST,
-            entrypoint=[
-                "tcpdump",
-                "-q",
-                "-w",
-                str(TRACE_PATH),
-                "udp",
-                "port",
-                str(server_port),
-            ],
-            #  extra_hosts: Optional[dict[str, str]] = None,
-            network=f"container:{client_container.name}",
-            #  volumes: Optional[dict] = None,
-        )
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            create_server_t = executor.submit(
+                self._create_implementation_real,
+                cli=server_cli,
+                image=server.image,
+                role=Role.SERVER,
+                server_port=server_port,
+                server_ip=server_ip,
+                local_certs_path=local_certs_path,
+                testcase=testcase.testname(Perspective.SERVER),
+                version=version,
+                request_urls=request_urls,
+                local_www_path=local_www_path,
+            )
+            create_client_t = executor.submit(
+                self._create_implementation_real,
+                cli=client_cli,
+                image=client.image,
+                role=Role.CLIENT,
+                server_port=server_port,
+                server_ip=server_ip,
+                local_certs_path=local_certs_path,
+                testcase=testcase.testname(Perspective.CLIENT),
+                version=version,
+                request_urls=request_urls,
+                local_www_path=local_www_path,
+            )
+
+            server_container = create_server_t.result()
+            client_container = create_client_t.result()
+
+            create_right_tcpdump_t = executor.submit(
+                self._create_container,
+                cli=server_cli,
+                image=TCPDUMP_IMG,
+                service_name="right_tcpdump",
+                stage=Stage.SERVER_POST,
+                entrypoint=[
+                    "tcpdump",
+                    "-q",
+                    "-w",
+                    str(TRACE_PATH),
+                    "udp",
+                    "port",
+                    str(server_port),
+                ],
+                #  extra_hosts: Optional[dict[str, str]] = None,
+                network=f"container:{server_container.name}",
+                #  volumes: Optional[dict] = None,
+            )
+            create_left_tcpdump_t = executor.submit(
+                self._create_container,
+                cli=client_cli,
+                image=TCPDUMP_IMG,
+                service_name="left_tcpdump",
+                stage=Stage.CLIENT_POST,
+                entrypoint=[
+                    "tcpdump",
+                    "-q",
+                    "-w",
+                    str(TRACE_PATH),
+                    "udp",
+                    "port",
+                    str(server_port),
+                ],
+                #  extra_hosts: Optional[dict[str, str]] = None,
+                network=f"container:{client_container.name}",
+                #  volumes: Optional[dict] = None,
+            )
+
+            left_tcpdump_container = create_left_tcpdump_t.result()
+            right_tcpdump_container = create_right_tcpdump_t.result()
+
         containers = [
             server_container,
             right_tcpdump_container,
@@ -819,27 +850,42 @@ class Deployment:
             server_server_addrs=result.ip_addrs["server"],
         )
 
-        # copy downloads
-        copy_tree_from_container(client_container, DOWNLOADS_PATH, local_downloads_path)
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            # copy downloads
+            executor.submit(
+                lambda: copy_tree_from_container(
+                    client_container, DOWNLOADS_PATH, local_downloads_path
+                )
+            )
+            # copy logs
+            executor.submit(
+                lambda: copy_tree_from_container(
+                    server_container, LOGS_PATH, log_path / "server"
+                )
+            )
+            executor.submit(
+                lambda: copy_tree_from_container(
+                    client_container, LOGS_PATH, log_path / "client"
+                )
+            )
 
-        # copy logs
-        copy_tree_from_container(server_container, LOGS_PATH, log_path / "server")
-        copy_tree_from_container(client_container, LOGS_PATH, log_path / "client")
+            # copy traces
+            executor.submit(
+                lambda: copy_file_from_container(
+                    right_tcpdump_container,
+                    TRACE_PATH,
+                    log_path / "sim" / "trace_node_right.pcap",
+                )
+            )
+            executor.submit(
+                lambda: copy_file_from_container(
+                    left_tcpdump_container,
+                    TRACE_PATH,
+                    log_path / "sim" / "trace_node_left.pcap",
+                )
+            )
 
-        # copy traces
-        copy_file_from_container(
-            right_tcpdump_container,
-            TRACE_PATH,
-            log_path / "sim" / "trace_node_right.pcap",
-        )
-        copy_file_from_container(
-            left_tcpdump_container,
-            TRACE_PATH,
-            log_path / "sim" / "trace_node_left.pcap",
-        )
-
-        for container in containers:
-            container.remove()
+        remove_containers(containers)
 
         return result
 

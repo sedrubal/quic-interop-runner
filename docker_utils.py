@@ -33,6 +33,13 @@ LOGGER = logging.getLogger(name="quic-interop-runner")
 #      return network.attrs["Options"]["com.docker.network.bridge.name"]
 
 
+def remove_containers(containers: list[Container]):
+    """Remove containers parallel."""
+    with concurrent.futures.ThreadPoolExecutor() as executor:
+        for container in containers:
+            executor.submit(container.remove)
+
+
 def _pack_and_copy_to_container(
     src: Union[Path, str],
     container: Container,

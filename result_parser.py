@@ -16,6 +16,8 @@ from dateutil.parser import parse as parse_date
 
 from utils import UrlOrPath
 
+LOGGER = logging.getLogger(name="quic-interop-runner")
+
 DETAILS_RE = re.compile(r"(?P<avg>\d+) \(± (?P<var>\d+)\) (?P<unit>\w+)")
 
 
@@ -382,13 +384,13 @@ class Result:
                 log_dir = abs_log_dir
             elif self.file_path.parent.name == log_dir.name:
                 log_dir = self.file_path.parent
-                #  logging.warning(
+                #  LOGGER.warning(
                 #      "Log dir in result file %s is not correct. Using %s",
                 #      self.file_path,
                 #      log_dir,
                 #  )
             elif self.file_path.is_path:
-                logging.warning(
+                LOGGER.warning(
                     "The log dir %s given in %s does not exist", log_dir, self.file_path
                 )
 

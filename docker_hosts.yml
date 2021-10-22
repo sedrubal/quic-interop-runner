@@ -1,0 +1,8 @@
+---
+
+default: "unix:///var/run/docker.sock"
+remote_server: "ssh://faui7s4.informatik.uni-erlangen.de"
+remote_client: "ssh://starlink:22005"
+starlink_client: "ssh://starlink:22005"
+
+...
