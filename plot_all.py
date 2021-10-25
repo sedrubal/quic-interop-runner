@@ -259,7 +259,7 @@ class PlotAllCli:
                 cprint(
                     (
                         f"⨯ Could not parse {err.trace} in "
-                        f"{test_case_dir.relative_to(self._current_log_dir)}. "
+                        f"{test_case_dir}. "
                         "Skipping..."
                     ),
                     file=sys.stderr,
@@ -269,7 +269,7 @@ class PlotAllCli:
 
                 with err_output_file.open("w") as file:
                     print(
-                        f"{err.trace.input_file.relative_to(self._current_log_dir)}:\n",
+                        f"{err.trace.input_file}:\n",
                         err.msg,
                         file=file,
                     )

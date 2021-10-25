@@ -560,7 +560,6 @@ class Deployment:
             testcase=testcase,
             version=version,
             request_urls="debug-request-url",
-            local_www_path=Path("/dev/null"),
             local_download_path=Path("/dev/null"),
             entrypoint=["sleep", str(timeout)],
         )
@@ -639,13 +638,13 @@ class Deployment:
         version: str,
     ) -> ExecResult:
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            thread0 = executor.submit(
+            create_sim_t = executor.submit(
                 lambda: self._create_sim(
                     waitforserver=True,
                     scenario=testcase.scenario,
                 )
             )
-            thread1 = executor.submit(
+            create_server_t = executor.submit(
                 lambda: self._create_implementation_sim(
                     image=server.image,
                     role=Role.SERVER,
@@ -656,7 +655,7 @@ class Deployment:
                     local_www_path=local_www_path,
                 )
             )
-            thread2 = executor.submit(
+            create_client_t = executor.submit(
                 lambda: self._create_implementation_sim(
                     image=client.image,
                     role=Role.CLIENT,
@@ -667,9 +666,9 @@ class Deployment:
                     local_download_path=local_downloads_path,
                 )
             )
-            sim_container = thread0.result()
-            server_container = thread1.result()
-            client_container = thread2.result()
+            sim_container = create_sim_t.result()
+            server_container = create_server_t.result()
+            client_container = create_client_t.result()
 
         containers = [sim_container, client_container, server_container]
         # wait
@@ -695,12 +694,19 @@ class Deployment:
         )
         # copy logs
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            executor.map(
-                copy_tree_from_container,
-                (
-                    (server_container, LOGS_PATH, log_path / "server"),
-                    (client_container, LOGS_PATH, log_path / "client"),
-                    (sim_container, LOGS_PATH, log_path / "sim"),
+            executor.submit(
+                lambda: copy_tree_from_container(
+                    server_container, LOGS_PATH, log_path / "server"
+                ),
+            )
+            executor.submit(
+                lambda: copy_tree_from_container(
+                    client_container, LOGS_PATH, log_path / "client"
+                ),
+            )
+            executor.submit(
+                lambda: copy_tree_from_container(
+                    sim_container, LOGS_PATH, log_path / "sim"
                 ),
             )
 
@@ -1010,10 +1016,12 @@ class Deployment:
         )
 
         return {
+            f"{other_role.value}": other_ipv4.exploded,
             f"{other_role.value}4": other_ipv4.exploded,
             f"{other_role.value}6": other_ipv6.exploded,
             f"{other_role.value}46": other_ipv4.exploded,
             f"{other_role.value}46 ": other_ipv6.exploded,
+            "sim": self.get_sim_ipv4(role).exploded,
             "sim4": self.get_sim_ipv4(role).exploded,
             "sim6": self.get_sim_ipv6(role).exploded,
             "sim46": self.get_sim_ipv4(role).exploded,

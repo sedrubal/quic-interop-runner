@@ -131,16 +131,18 @@ class InteropRunner:
                 testcases.QUIC_DRAFT == result.quic_draft
             ), f"QUIC draft differs: {testcases.QUIC_DRAFT} != {result.quic_draft}"
 
-            for impl_name, implementation in self._implementations.items():
+            for impl_name in frozenset(self._servers) | frozenset(self._clients):
+                implementation = self._implementations[impl_name]
                 old_impl = result.implementations.get(impl_name)
 
                 if not old_impl:
                     continue
 
-                assert (
-                    not old_impl.image_id
-                    or old_impl.image_id == implementation.image_id
-                )
+                if old_impl.image_id and old_impl.image_id != implementation.image_id:
+                    raise AssertionError(
+                        f"ID of image {implementation.name} differs from previous run."
+                        f" Previous: {old_impl.image_id} now: {implementation.image_id}"
+                    )
 
                 if old_impl.compliant is not None:
                     implementation.compliant = old_impl.compliant
@@ -165,7 +167,12 @@ class InteropRunner:
                 self.test_results[test.server.name][test.client.name][
                     test_cls
                 ] = TestResult(test.result)
-                self._num_skip_runs += 1
+
+                if (
+                    test.server.name in self._servers
+                    and test.client.name in self._clients
+                ):
+                    self._num_skip_runs += 1
 
             measuements_mapping = {meas.abbreviation: meas for meas in MEASUREMENTS}
 
@@ -191,7 +198,12 @@ class InteropRunner:
                     result=TestResult(res_meas.result),
                     details=res_meas.details,
                 )
-                self._num_skip_runs += meas_cls.repetitions
+
+                if (
+                    res_meas.server.name in self._servers
+                    and res_meas.client.name in self._clients
+                ):
+                    self._num_skip_runs += meas_cls.repetitions
 
             LOGGER.info(
                 "Skipping %d tests and measurement runs from previous run",
@@ -248,7 +260,9 @@ class InteropRunner:
                 return False
 
             if exec_result.exit_codes[role.value] != UNSUPPORTED_EXIT_CODE:
-                LOGGER.error("%s %s is not compliant ❌", implementation.name, role.value)
+                LOGGER.error(
+                    "%s %s is not compliant ❌", implementation.name, role.value
+                )
                 implementation.compliant = False
 
                 return False
@@ -399,6 +413,8 @@ class InteropRunner:
         client: str,
         log_dir_prefix: Optional[str],
         test: Type[testcases.TestCase],
+        iteration: Optional[int] = None,
+        repetitions: Optional[int] = None,
     ) -> tuple[TestResult, Optional[float]]:
         start_time = datetime.now()
         log_dir: Path = self._log_dir / f"{server}_{client}" / test.name
@@ -430,18 +446,33 @@ class InteropRunner:
             client_keylog_file=client_log_dir / "keys.log",
             server_keylog_file=server_log_dir / "keys.log",
         )
-        msg = "  ".join(
-            (
-                colored(f"[{self.progress:3} %]", color="cyan", attrs=["bold"]),
-                colored("Server:", color="cyan"),
-                colored(server, color="cyan", attrs=["bold"]),
-                colored("Client:", color="cyan"),
-                colored(client, color="cyan", attrs=["bold"]),
-                colored("Running test case:", color="cyan"),
-                colored(str(testcase), color="cyan", attrs=["bold"]),
+        msg_parts = [
+            colored(f"[{self.progress:3} %]", color="cyan", attrs=["bold"]),
+            colored("Server:", color="cyan"),
+            colored(server, color="cyan", attrs=["bold"]),
+            colored("Client:", color="cyan"),
+            colored(client, color="cyan", attrs=["bold"]),
+            colored("Running test case:", color="cyan"),
+            colored(str(testcase), color="cyan", attrs=["bold"]),
+        ]
+
+        if iteration is not None:
+            msg_parts.extend(
+                (
+                    colored("Iteration:", color="cyan"),
+                    colored(str(iteration + 1), color="cyan", attrs=["bold"]),
+                )
             )
-        )
-        print(msg)
+
+        if repetitions is not None:
+            msg_parts.extend(
+                (
+                    colored("of", color="cyan"),
+                    colored(str(repetitions), color="cyan", attrs=["bold"]),
+                )
+            )
+
+        print(" ".join(msg_parts))
 
         reqs = " ".join([testcase.urlprefix() + p for p in testcase.get_paths()])
         LOGGER.debug("Requests: %s", reqs)
@@ -500,6 +531,17 @@ class InteropRunner:
         else:
             value = None
 
+        LOGGER.log(
+            {
+                TestResult.SUCCEEDED: logging.INFO,
+                TestResult.UNSUPPORTED: logging.WARNING,
+                TestResult.FAILED: logging.ERROR,
+            }[status],
+            "Test Result: %s%s",
+            status.value,
+            f" ({value})" if value else "",
+        )
+
         self._nr_run += 1
 
         return status, value
@@ -512,8 +554,15 @@ class InteropRunner:
     ) -> MeasurementResult:
         values = list[float]()
 
-        for i in range(test.repetitions):
-            result, value = self._run_test(server, client, f"{i + 1}", test)
+        for iteration in range(test.repetitions):
+            result, value = self._run_test(
+                server,
+                client,
+                f"{iteration + 1}",
+                test,
+                iteration=iteration,
+                repetitions=test.repetitions,
+            )
             assert value is not None
 
             if result != TestResult.SUCCEEDED:
@@ -521,7 +570,7 @@ class InteropRunner:
                     result=result,
                     details="",
                 )
-                self._num_skip_runs += test.repetitions - 1 - i
+                self._num_skip_runs += test.repetitions - 1 - iteration
 
                 return res
             values.append(value)
