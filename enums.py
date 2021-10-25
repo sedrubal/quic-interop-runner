@@ -12,6 +12,7 @@ class PlotMode(Enum):
     FILE_SIZE = "file-size"
     PACKET_SIZE = "packet-size"
     DATA_RATE = "data-rate"
+    RETURN_PATH = "return-path"
     #  SIZE_HIST = "size-hist"
     #  RTT = "rtt"
 

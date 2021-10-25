@@ -34,6 +34,7 @@ DEFAULT_TITLES = {
     PlotMode.FILE_SIZE: "Time vs. Transmitted File Size",
     PlotMode.PACKET_SIZE: "Time vs. Packet Size",
     PlotMode.DATA_RATE: "Time vs. Data Rate",
+    PlotMode.RETURN_PATH: "Time vs. Return Path Data Rate",
     #  PlotMode.SIZE_HIST: "Size Histogram",
     #  PlotMode.RTT: "Time vs. RTT",
 }
@@ -616,6 +617,120 @@ class PlotCli:
                     markersize=self._markersize,
                 )
                 ax.legend(loc="upper left", fontsize=8)
+
+                self._annotate_time_plot(ax, height=max_data_rate, spinner=spinner)
+                self._save(fig, output_file, spinner)
+
+    def plot_return_path(self, output_file: Optional[Path]):
+        """Plot the return path utilization."""
+
+        with Subplot(nrows=1, ncols=1) as (fig, ax):
+            ax.grid(True)
+            ax.set_xlabel("Time (s)")
+            ax.set_ylabel("Data Rate (Return Path)")
+            assert self.title
+            ax.set_title(self.title)
+            ax.yaxis.set_major_formatter(lambda val, _pos: natural_data_rate(val))
+            DATA_RATE_WINDOW = 1  # 1s
+
+            with YaspinWrapper(
+                debug=self.debug, text="processing...", color="cyan"
+            ) as spinner:
+                timestamps = []
+                data_rates = list[list[float]]()
+                min_timestamp: float = 0
+                max_timestamp: float = 0
+
+                @dataclass
+                class DataRateBufEntry:
+                    timestamp: float
+                    raw_data: int
+
+                for trace in self.traces:
+                    data_rates.append(list[float]())
+                    trace_max_timestamp = trace.extended_facts["plt"]
+                    trace_timestamps = np.arange(
+                        min_timestamp, trace_max_timestamp, 0.1
+                    )
+                    timestamps.append(trace_timestamps)
+                    max_timestamp = max(max_timestamp, trace_max_timestamp)
+
+                    data_rate_buf = deque[DataRateBufEntry]()
+
+                    assert trace.pair_trace
+                    with spinner.hidden():
+                        trace.pair_trace.parse()
+
+                    for packet in trace.pair_trace.client_server_packets:
+                        raw_data_len = len(packet.udp.payload.binary_value)
+
+                        # *8: convert from byte to bit
+                        data_rate_buf.append(
+                            DataRateBufEntry(
+                                timestamp=packet.norm_time,
+                                raw_data=raw_data_len * 8,
+                            )
+                        )
+
+                    # calculate data rates
+
+                    # marker_start is inclusive, marker_end is exclusive
+                    marker_start = marker_end = 0
+
+                    for timestamp in trace_timestamps:
+                        while data_rate_buf[marker_end].timestamp < timestamp:
+                            if marker_end == len(data_rate_buf) - 1:
+                                break
+                            marker_end += 1
+
+                        while (
+                            data_rate_buf[marker_start].timestamp
+                            < timestamp - DATA_RATE_WINDOW
+                        ):
+                            if marker_start == len(data_rate_buf) - 1:
+                                break
+                            marker_start += 1
+
+                        buf_slice = list(data_rate_buf)[marker_start:marker_end]
+                        data_rates[-1].append(
+                            sum(entry.raw_data for entry in buf_slice)
+                            / DATA_RATE_WINDOW
+                        )
+
+                max_data_rate: float = map2d(max, data_rates)
+
+                ax.set_xlim(left=min(0, min_timestamp), right=max_timestamp)
+                ax.set_ylim(bottom=0, top=max_data_rate)
+                #  ax.set_yticks(np.arange(0, max_offset * 1.1, 1024 * 1024))
+
+            with YaspinWrapper(
+                debug=self.debug, text="plotting...", color="cyan"
+            ) as spinner:
+                # plot shadow traces (request and response separated)
+
+                for trace_timestamps, trace_goodput in zip(
+                    timestamps[1:], data_rates[1:]
+                ):
+                    ax.plot(
+                        trace_timestamps,
+                        trace_goodput,
+                        #  marker="o",
+                        linestyle="--",
+                        color=self._colors.aluminium4,
+                        markersize=self._markersize,
+                    )
+
+                # plot main trace
+
+                ax.plot(
+                    timestamps[0],
+                    data_rates[0],
+                    label=r"Data Rate in Return Path",
+                    #  marker="o",
+                    linestyle="--",
+                    color=self._colors.orange1,
+                    markersize=self._markersize,
+                )
 
                 self._annotate_time_plot(ax, height=max_data_rate, spinner=spinner)
                 self._save(fig, output_file, spinner)
@@ -1226,6 +1341,9 @@ class PlotCli:
             },
             PlotMode.DATA_RATE: {
                 "callback": self.plot_data_rate,
+            },
+            PlotMode.RETURN_PATH: {
+                "callback": self.plot_return_path,
             },
             #  PlotMode.SIZE_HIST: {
             #      "callback": self.plot_packet_hist,
