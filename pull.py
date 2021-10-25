@@ -44,7 +44,7 @@ def main():
     docker_pull("the iperf endpoint", IPERF_IMAGE)
 
     for name, value in implementations.items():
-        docker_pull(name, value["image"])
+        docker_pull(name, value.image)
 
 
 if __name__ == "__main__":
