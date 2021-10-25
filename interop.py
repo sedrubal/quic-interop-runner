@@ -336,18 +336,36 @@ class InteropRunner:
     def _export_results(self):
         if not self._output:
             return
+        servers = sorted(
+            frozenset(self._servers)
+            | frozenset(self.test_results.keys())
+            | frozenset(self.measurement_results.keys())
+        )
+        clients = sorted(
+            frozenset(self._clients)
+            | frozenset(
+                client
+                for mapping in self.test_results.values()
+                for client in mapping.keys()
+            )
+            | frozenset(
+                client
+                for mapping in self.measurement_results.values()
+                for client in mapping.keys()
+            )
+        )
         out = {
             "start_time": self._start_time.timestamp(),
             "end_time": datetime.now().timestamp(),
             "log_dir": str(self._log_dir),
-            "servers": [name for name in self._servers],
-            "clients": [name for name in self._clients],
+            "servers": servers,
+            "clients": clients,
             "urls": {
                 x: self._implementations[x].url for x in self._servers + self._clients
             },
             "images": {
                 x: self._implementations[x].img_metadata_json()
-                for x in self._servers + self._clients
+                for x in sorted(frozenset(servers) | frozenset(clients))
             },
             "tests": {
                 test.abbreviation: test.to_json()
@@ -359,19 +377,17 @@ class InteropRunner:
             "measurements": [],
         }
 
-        for client in self._clients:
-            for server in self._servers:
+        for client in clients:
+            for server in servers:
                 results = []
 
                 for test in self._tests:
-                    result = None
+                    result = self.test_results.get(server, {}).get(client, {}).get(test, None)
 
-                    if test in self.test_results[server][client].keys():
-                        result = self.test_results[server][client][test].value
                     results.append(
                         {
                             "abbr": test.abbreviation,
-                            "result": result,
+                            "result": result.value if result else None,
                         }
                     )
                 out["results"].append(results)
@@ -380,18 +396,12 @@ class InteropRunner:
 
                 for measurement in self._measurements:
 
-                    if measurement in self.measurement_results[server][client].keys():
-                        res = self.measurement_results[server][client][measurement]
-                        result = res.result.value
-                        details = res.details
-                    else:
-                        result = None
-                        details = ""
+                    res = self.measurement_results.get(server, {}).get(client, {}).get(measurement, None)
                     measurements.append(
                         {
                             "abbr": measurement.abbreviation,
-                            "result": result,
-                            "details": details,
+                            "result": res.result.value if res else None,
+                            "details": res.details if res else None,
                         }
                     )
                 out["measurements"].append(measurements)
