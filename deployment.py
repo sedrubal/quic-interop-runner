@@ -732,14 +732,10 @@ class Deployment:
 
         # ensure image version is the same
         with concurrent.futures.ThreadPoolExecutor() as executor:
-            executor.map(
-                force_same_img_version,
-                (
-                    (client, client_cli),
-                    (server, server_cli),
-                ),
-            )
+            executor.submit(lambda: force_same_img_version(client, client_cli))
+            executor.submit(lambda: force_same_img_version(server, server_cli))
 
+        self._remove_existing_container(f"{self.project_name}_server", server_cli)
         server_port = 443
         server_ip = negotiate_server_ip(server_cli, client_cli, port=server_port)
         server_ip4 = server_ip if server_ip.version == 4 else None
