@@ -2211,7 +2211,7 @@ class MeasurementStarlink(MeasurementRealLink):
     @property
     def desc(cls):
         return (
-            "Measures connection goodput over a starlink network link. "
+            "Measures connection goodput over a starlink network link (LEO). "
             f"File: {int(cls.FILESIZE / FileSize.MiB)} MiB; "
         )
 
@@ -2222,7 +2222,55 @@ class MeasurementStarlink(MeasurementRealLink):
 
 
 class MeasurementAstra(MeasurementRealLink):
-    ...
+    @classmethod
+    @property
+    def name(cls):
+        return "astra"
+
+    @classmethod
+    @property
+    def abbreviation(cls):
+        return "AST"
+
+    @classmethod
+    @property
+    def desc(cls):
+        return (
+            "Measures connection goodput over an astra network link (GEO). "
+            f"File: {int(cls.FILESIZE / FileSize.MiB)} MiB; "
+            f"Data Rate: 20/2 MiB"
+        )
+
+    @classmethod
+    @property
+    def client_docker_host(cls) -> str:
+        return "astra_client"
+
+
+class MeasurementEutelsat(MeasurementRealLink):
+    @classmethod
+    @property
+    def name(cls):
+        return "eutelsat"
+
+    @classmethod
+    @property
+    def abbreviation(cls):
+        return "EUT"
+
+    @classmethod
+    @property
+    def desc(cls):
+        return (
+            "Measures connection goodput over a eutelsat network link (GEO). "
+            f"File: {int(cls.FILESIZE / FileSize.MiB)} MiB; "
+            f"Data Rate: 50/5 MiB"
+        )
+
+    @classmethod
+    @property
+    def client_docker_host(cls) -> str:
+        return "eutelsat_client"
 
 
 TESTCASES: list[Type[TestCase]] = [
@@ -2258,4 +2306,6 @@ MEASUREMENTS: list[Type[Measurement]] = [
     MeasurementSatelliteLoss,
     MeasurementRealLink,
     MeasurementStarlink,
+    MeasurementAstra,
+    MeasurementEutelsat,
 ]
