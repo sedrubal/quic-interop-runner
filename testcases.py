@@ -1960,10 +1960,11 @@ class MeasurementGoodput(Measurement):
     def desc(cls):
         return "Measures connection goodput over a 10Mbps link."
 
-    #  @classmethod
-    #  @property
-    #  def theoretical_max_value(cls):
-    #      return 1 / ((1 / cls.data_rate) + (cls.rtt / cls.FILESIZE)) / DataRate.KBPS
+    @classmethod
+    @property
+    def theoretical_max_value(cls):
+        return cls.data_rate / DataRate.KBPS
+        # return 1 / ((1 / cls.data_rate) + (cls.rtt / cls.FILESIZE)) / DataRate.KBPS
 
     @classmethod
     @property
@@ -2149,6 +2150,9 @@ class MeasurementSatelliteLoss(MeasurementSatellite):
 
 
 class MeasurementRealLink(MeasurementGoodput):
+    forward_data_rate: int
+    return_data_rate: int
+
     @classmethod
     @property
     def name(cls):
@@ -2167,11 +2171,10 @@ class MeasurementRealLink(MeasurementGoodput):
             f"File: {int(cls.FILESIZE / FileSize.MiB)} MiB; "
         )
 
-    # TODO
-    #  @classmethod
-    #  @property
-    #  def theoretical_max_value(cls):
-    #      return cls.forward_data_rate / DataRate.KBPS
+    @classmethod
+    @property
+    def theoretical_max_value(cls):
+        return cls.forward_data_rate / DataRate.KBPS
 
     @classmethod
     @property
@@ -2197,6 +2200,10 @@ class MeasurementRealLink(MeasurementGoodput):
 
 class MeasurementStarlink(MeasurementRealLink):
     """Measurement over a starlink connection."""
+    # https://www.starlink.com/faq : 50..150 Mbit/s
+    forward_data_rate = 150 * DataRate.MBPS
+    return_data_rate = 150 * DataRate.MBPS
+
     @classmethod
     @property
     def name(cls):
@@ -2222,6 +2229,9 @@ class MeasurementStarlink(MeasurementRealLink):
 
 
 class MeasurementAstra(MeasurementRealLink):
+    forward_data_rate = 20 * DataRate.MBPS
+    return_data_rate = 2 * DataRate.MBPS
+
     @classmethod
     @property
     def name(cls):
@@ -2248,6 +2258,9 @@ class MeasurementAstra(MeasurementRealLink):
 
 
 class MeasurementEutelsat(MeasurementRealLink):
+    forward_data_rate = 50 * DataRate.MBPS
+    return_data_rate = 5 * DataRate.MBPS
+
     @classmethod
     @property
     def name(cls):
