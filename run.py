@@ -86,6 +86,11 @@ def get_args():
         action="store_true",
         help="Skip compliance check.",
     )
+    parser.add_argument(
+        "--retry-failed",
+        action="store_true",
+        help="Retry failed tests and measurements when resuming a run.",
+    )
 
     return parser.parse_args()
 
@@ -156,6 +161,7 @@ def main():
         log_dir=args.log_dir,
         save_files=args.save_files,
         skip_compliance_check=args.skip_compliance_check,
+        retry_failed=args.retry_failed,
     ).run()
 
 

@@ -57,6 +57,7 @@ class InteropRunner:
         save_files=False,
         log_dir: Optional[str] = None,
         skip_compliance_check=False,
+        retry_failed=False,
     ):
         LOGGER.setLevel(logging.DEBUG)
 
@@ -88,6 +89,7 @@ class InteropRunner:
 
         self._save_files = save_files
         self._skip_compliance_check = skip_compliance_check
+        self._retry_failed = retry_failed
 
         self.test_results = defaultdict[
             str, defaultdict[str, dict[Type[testcases.TestCase], TestResult]]
@@ -161,10 +163,11 @@ class InteropRunner:
             }
 
             for test in result.all_test_results:
-                if not test.result:
-                    # TODO don't retry failed ones? Check with is None
-
+                if not test.result or (
+                    self._retry_failed and TestResult(test.result) == TestResult.FAILED
+                ):
                     continue
+
                 test_cls = testcases_mapping[test.test.abbr]
 
                 self.test_results[test.server.name][test.client.name][
@@ -181,6 +184,12 @@ class InteropRunner:
 
             for res_meas in result.all_measurement_results:
                 meas_cls = measuements_mapping[res_meas.test.abbr]
+
+                if not res_meas.result or (
+                    self._retry_failed
+                    and TestResult(res_meas.result) == TestResult.FAILED
+                ):
+                    continue
 
                 if res_meas.test.repetitions != meas_cls.repetitions:
                     LOGGER.debug(
