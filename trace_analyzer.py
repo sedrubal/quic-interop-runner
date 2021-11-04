@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import logging
 from enum import Enum
 from pathlib import Path
@@ -219,3 +220,75 @@ class TraceAnalyzer:
         """Get all 0-RTT packets."""
 
         return self._get_long_header_packets(PacketType.ZERORTT, Direction.FROM_CLIENT)
+
+
+# --- for debugging ---
+
+
+def parse_args():
+    """Load command line args."""
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "pcap",
+        action="store",
+        type=Path,
+        help="The pcap file to load",
+    )
+    parser.add_argument(
+        "--keylog",
+        action="store",
+        type=Path,
+        default=None,
+        help="The keylog file to load",
+    )
+    parser.add_argument(
+        "--ip4-client",
+        action="store",
+        default="193.167.0.100",
+    )
+    parser.add_argument(
+        "--ip4-server",
+        action="store",
+        default="193.167.100.100",
+    )
+    parser.add_argument(
+        "--ip6-client",
+        action="store",
+        default=None,
+    )
+    parser.add_argument(
+        "--ip6-server",
+        action="store",
+        default=None,
+    )
+
+    return parser.parse_args()
+
+
+def main():
+    """Interactive repl."""
+    args = parse_args()
+
+    trace = TraceAnalyzer(
+        pcap_path=args.pcap,
+        ip4_client=args.ip4_client,
+        ip6_client=args.ip6_client,
+        ip4_server=args.ip4_server,
+        ip6_server=args.ip6_server,
+        keylog_file=args.keylog,
+    )
+
+    from ipdb import pm  # pylint: disable=import-outside-toplevel
+    from IPython import embed, get_ipython  # pylint: disable=import-outside-toplevel
+
+    # TODO launching ipdb on exception does not work, because ipython overwrites exception hook
+    # -> configure ipython to launch ipdb
+    embed(banner="Use pm() on exception")
+
+    print("Done")
+
+
+if __name__ == "__main__":
+    main()

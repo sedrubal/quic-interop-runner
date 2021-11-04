@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Parse quic-interop-runner result.json files."""
 
 import json
@@ -959,3 +960,16 @@ class Result:
         assert self.file_path.is_path
         with self.file_path.path.open("w") as file:
             json.dump(self.raw_data, fp=file)
+
+
+def main():
+    import sys
+
+    path = sys.argv[-1]
+    result = Result(path)
+    print(result)
+    breakpoint()
+
+
+if __name__ == "__main__":
+    main()
