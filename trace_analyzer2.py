@@ -19,6 +19,7 @@ from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.shortcuts import ProgressBar
 from termcolor import colored, cprint
 
+from conf import CONFIG
 from enums import CacheMode, Direction, Side
 from utils import TraceTriple, YaspinWrapper, clear_line, create_relpath
 
@@ -123,7 +124,11 @@ class Trace:
             # see https://github.com/marten-seemann/quic-interop-runner/pull/179/
             disable_protocol="http3",
             decode_as={f"udp.port=={port}": "quic"},
+            tshark_path=CONFIG.tshark_bin,
         )
+
+        if CONFIG.pyshark_debug:
+            self._cap.set_debug()
         self._facts = dict[str, Any]()
         self._response_stream_packets_first_tx = list[QuicStreamPacket]()
         self._response_stream_packets_retrans = list[QuicStreamPacket]()

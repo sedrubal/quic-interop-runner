@@ -15,9 +15,9 @@ from typing import Callable, Optional, Union
 
 import docker
 import paramiko
-import yaml
 from termcolor import colored
 
+from conf import CONFIG
 from custom_types import IPAddress
 from docker_utils import (
     Container,
@@ -260,8 +260,7 @@ class Deployment:
         }
         self._docker_clis = dict[str, docker.DockerClient]()
         self._stage_status_cv = threading.Condition()
-        with (Path(__file__).parent / "docker_hosts.yml").open("r") as file:
-            self.docker_host_urls = yaml.safe_load(file)
+        self.docker_host_urls = CONFIG.docker_host_urls
 
     def get_docker_cli(self, name="default"):
         if name not in self._docker_clis.keys():

@@ -6,6 +6,8 @@ from typing import List, Optional
 
 import pyshark
 
+from conf import CONFIG
+
 LOGGER = logging.getLogger(name="quic-interop-runner")
 
 #  IP4_CLIENT = "193.167.0.100"
@@ -133,7 +135,11 @@ class TraceAnalyzer:
             override_prefs=override_prefs,
             disable_protocol="http3",  # see https://github.com/marten-seemann/quic-interop-runner/pull/179/
             decode_as={"udp.port==443": "quic"},
+            tshark_path=CONFIG.tshark_bin,
         )
+
+        if CONFIG.pyshark_debug:
+            cap.set_debug()
         packets = []
         # If the pcap has been cut short in the middle of the packet, pyshark will crash.
         # See https://github.com/KimiNewt/pyshark/issues/390.
