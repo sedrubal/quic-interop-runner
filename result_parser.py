@@ -973,8 +973,9 @@ class Result:
     def save(self):
         """Save to file."""
         assert self.file_path.is_path
+        json_data = json.dumps(self.raw_data, indent=" " * 4)
         with self.file_path.path.open("w") as file:
-            json.dump(self.raw_data, fp=file)
+            file.write(json_data)
 
 
 def main():
