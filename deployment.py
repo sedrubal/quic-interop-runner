@@ -283,8 +283,6 @@ class Deployment:
                 Stage(int(container.labels["de.sedrubal.interop.stage"]))
             ].append(container)
 
-        start = time.time()
-
         max_container_name_len = max(
             len(get_container_name(container)) for container in containers
         )
@@ -367,10 +365,12 @@ class Deployment:
             for container in containers
         }
 
-        # start according to stage
+        # start containers in the order of their stage
 
         timed_out = False
         failed = False
+
+        start = time.time()
 
         for stage in Stage:
             containers_in_stage = containers_by_stage[stage]
@@ -381,16 +381,23 @@ class Deployment:
                         "Starting containers in stage %s(%i)", stage.name, stage.value
                     )
 
-                    for container in containers_in_stage:
-                        data_structure[container].status = get_container_status(
-                            container
+                    # check that all containers are in created state (in parallel)
+
+                    with concurrent.futures.ThreadPoolExecutor() as executor:
+                        statuses = executor.map(
+                            get_container_status, containers_in_stage
                         )
-                        assert (
-                            data_structure[container].status == ContainerStatus.CREATED
-                        )
+
+                        for container, status in zip(containers_in_stage, statuses):
+                            assert status == ContainerStatus.CREATED
+                            data_structure[container].status = status
+
+                    # start containers and their monitor threads
 
                     for container in containers_in_stage:
                         data_structure[container].monitor_thread.start()
+
+                    # wait until all containers are in started state (cv will be signaled)
 
                     timed_out = False
 
@@ -403,7 +410,14 @@ class Deployment:
                         )
 
                         if timed_out:
+                            LOGGER.error(
+                                "Timeout after %i seconds. Could not even start all containers.",
+                                timeout,
+                            )
+
                             break
+
+                    # check if any container did not start
 
                     containers_not_running = [
                         container
@@ -428,10 +442,14 @@ class Deployment:
 
                         break
 
+                # call hooks as we successfully started this staget
+
                 for hook in hooks.get(stage, []):
                     hook()
 
         # exit
+
+        abort = False
 
         for container, container_data_structure in data_structure.items():
             thread: threading.Thread = container_data_structure.monitor_thread
@@ -440,18 +458,23 @@ class Deployment:
                 if thread._started.is_set():  # noqa
                     thread.join(timeout=thread_timeout)
             except KeyboardInterrupt:
+                abort = True
                 print(end="\r", file=sys.stderr)
                 LOGGER.warning("Stopping containers")
 
             if thread.is_alive():
                 # timeout
                 timed_out = True
+                LOGGER.error("Timeout after %i seconds", timeout)
                 end_callback()
                 thread.join(timeout=1)
 
                 if thread.is_alive():
                     end_callback(force=True)
                     thread.join()
+
+        if abort:
+            sys.exit(1)
 
         for container in containers:
             status = get_container_status(container)
