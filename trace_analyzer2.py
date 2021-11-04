@@ -20,7 +20,7 @@ from prompt_toolkit.shortcuts import ProgressBar
 from termcolor import colored, cprint
 
 from enums import CacheMode, Direction, Side
-from utils import YaspinWrapper, clear_line, create_relpath
+from utils import TraceTriple, YaspinWrapper, clear_line, create_relpath
 
 if typing.TYPE_CHECKING:
     from pyshark.packet.packet import Packet
@@ -1014,18 +1014,17 @@ class Trace:
             return [fin_pkg["packet_number"] for fin_pkg in stream_fins]
 
 
+# --- for debugging ---
+
+
 def parse_args():
     """Load command line args."""
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "left_trace",
-        type=lambda path: Trace(Path(path), Side.LEFT),
-        help="The left pcap file",
-    )
-    parser.add_argument(
-        "right_trace",
-        type=lambda path: Trace(Path(path), Side.RIGHT),
-        help="The right pcap file",
+        "trace_triple",
+        action="store",
+        type=TraceTriple.from_str,
+        help="':'-separated triples or tuples of the left pcap(ng) traces, right pcap(ng) traces and optional a keylog file.",
     )
 
     return parser.parse_args()
@@ -1034,9 +1033,17 @@ def parse_args():
 def main():
     """Interactive repl."""
     args = parse_args()
-    left_trace: Trace = args.left_trace
-    right_trace: Trace = args.right_trace
 
+    left_trace = Trace(
+        file=args.trace_triple.left_pcap_path,
+        keylog_file=args.trace_triple.keylog_path,
+        side=Side.LEFT,
+    )
+    right_trace = Trace(
+        file=args.trace_triple.right_pcap_path,
+        keylog_file=args.trace_triple.keylog_path,
+        side=Side.RIGHT,
+    )
     right_trace.pair_trace = left_trace
 
     cprint(
