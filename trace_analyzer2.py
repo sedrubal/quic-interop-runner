@@ -101,7 +101,7 @@ class Trace:
         file = file.resolve()
 
         if keylog_file is not None:
-            override_prefs["ssl.keylog_file"] = keylog_file
+            override_prefs["tls.keylog_file"] = keylog_file
 
         if cache:
             self._cache_file: Optional[Path] = file.parent / f".{file.stem}.pickle"
@@ -148,7 +148,7 @@ class Trace:
 
     @property
     def keylog_file(self) -> Optional[Path]:
-        keylog_file = self._cap._override_prefs.get("ssl.keylog_file")
+        keylog_file = self._cap._override_prefs.get("tls.keylog_file")
 
         if keylog_file:
             return Path(keylog_file)

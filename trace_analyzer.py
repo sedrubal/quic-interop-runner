@@ -126,7 +126,7 @@ class TraceAnalyzer:
         override_prefs = {}
 
         if self._keylog_file is not None:
-            override_prefs["ssl.keylog_file"] = str(self._keylog_file)
+            override_prefs["tls.keylog_file"] = str(self._keylog_file)
         cap = pyshark.FileCapture(
             str(self._pcap_path),
             display_filter=display_filter,
