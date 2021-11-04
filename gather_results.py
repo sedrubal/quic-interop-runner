@@ -37,6 +37,7 @@ class Reason(Enum):
     FILE_SIZE_MISSMATCH = "downloaded file size missmatch"
     NUM_CLIENT_HELLO_MISSMATCH = "amount of client hellos missmatch"
     CONTAINER_EXITED = "container exited"
+    KNOWN_QUICLY_ISSUE = "known quicly issue"
 
 
 LINE_REASON_MAPPING = {
@@ -50,6 +51,9 @@ LINE_REASON_MAPPING = {
         r".*Expected at least .* ClientHellos. Got:.*"
     ): Reason.NUM_CLIENT_HELLO_MISSMATCH,
     re.compile(r".*Aborting on container exit.*"): Reason.CONTAINER_EXITED,
+    re.compile(
+        r".*Illegal instruction\s+\(core dumped\) \/quicly\/cli.*"
+    ): Reason.KNOWN_QUICLY_ISSUE,
 }
 
 
@@ -116,6 +120,11 @@ def parse_args():
         action="store_true",
         help="Debug mode",
     )
+    parser.add_argument(
+        "--skip-existing-reasons",
+        action="store_true",
+        help="Don't update reasons",
+    )
 
     return parser.parse_args()
 
@@ -130,9 +139,16 @@ def get_none_or_first(query_result):
 
 
 class GatherResult:
-    def __init__(self, results: list[Result], dburl: str, debug=False):
+    def __init__(
+        self,
+        results: list[Result],
+        dburl: str,
+        debug=False,
+        skip_existing_reasons=False,
+    ):
         self.results = results
         self.debug = debug
+        self.skip_existing_reasons= skip_existing_reasons
         engine = sa.create_engine(dburl)
         Base.metadata.bind = engine
         session_factory = orm.sessionmaker()
@@ -162,7 +178,9 @@ class GatherResult:
         LOGGER.warning(
             f"Didn't find the reason for the fail of test in file {output_file}"
         )
-        LOGGER.debug("Last 10 lines (last %d have been analyzed):", ANALYZE_LAST_N_LINES)
+        LOGGER.debug(
+            "Last 10 lines (last %d have been analyzed):", ANALYZE_LAST_N_LINES
+        )
         LOGGER.debug("---")
 
         for line in output[-10:]:
@@ -221,10 +239,10 @@ class GatherResult:
         run.path = str(test_result.log_dir_for_test.path.absolute())
 
         if test_result.result == "failed":
-            run.reason = self.get_reason(
-                test_result.log_dir_for_test.path / "output.txt"
-            )
-        # TODO reason
+            if not run.reason or not self.skip_existing_reasons:
+                run.reason = self.get_reason(
+                    test_result.log_dir_for_test.path / "output.txt"
+                )
 
         self.session.add(run)
         self.session.commit()
@@ -281,9 +299,10 @@ class GatherResult:
             run.var = meas_result.var
 
         if meas_result.result == "failed" and meas_result.repetition_log_dirs:
-            run.reason = self.get_reason(
-                meas_result.repetition_log_dirs[-1] / "output.txt"
-            )
+            if not run.reason or not self.skip_existing_reasons:
+                run.reason = self.get_reason(
+                    meas_result.repetition_log_dirs[-1] / "output.txt"
+                )
 
         self.session.add(run)
         self.session.commit()
@@ -339,7 +358,7 @@ def main():
     console_log_handler.setLevel(logging.DEBUG if args.debug else logging.INFO)
     console_log_handler.setFormatter(TerminalFormatter())
     LOGGER.addHandler(console_log_handler)
-    cli = GatherResult(results=args.results, dburl=args.database, debug=args.debug)
+    cli = GatherResult(results=args.results, dburl=args.database, debug=args.debug, skip_existing_reasons=args.skip_existing_reasons)
     cli.run()
 
 
