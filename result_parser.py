@@ -165,13 +165,23 @@ class MeasurmentDescription(TestDescription):
             repetitions=self.repetitions,
         )
 
+    @classmethod
+    def from_test_desc(cls, test_desc: TestDescription) -> "MeasurmentDescription":
+        return cls(
+            abbr=test_desc.abbr,
+            name=test_desc.name,
+            desc=test_desc.desc,
+            theoretical_max_value=None,
+            repetitions=None,
+        )
+
 
 @dataclass(frozen=True)  # type: ignore
 class _ExtendedTestResultMixin(ABC):
     result: RawTestResultResult
     server: Implementation
     client: Implementation
-    test: TestDescription
+    test: Union[TestDescription, MeasurmentDescription]
     _base_log_dir: UrlOrPath
 
     @property
@@ -201,6 +211,8 @@ class _ExtendedTestResultMixin(ABC):
 class ExtendedTestResult(_ExtendedTestResultMixin):
     """Test result with more information."""
 
+    test: TestDescription
+
     def to_raw(self) -> RawTestResult:
         """Return a raw measurement result."""
 
@@ -214,6 +226,7 @@ class ExtendedTestResult(_ExtendedTestResultMixin):
 class ExtendedMeasurementResult(_ExtendedTestResultMixin):
     """Measurement result with more information."""
 
+    test: MeasurmentDescription
     details: str
 
     @cached_property
@@ -744,12 +757,14 @@ class Result:
                 for measurement in self.raw_data["measurements"][index]:
                     if not measurement["result"]:
                         continue
+                    test_desc = self.tests[measurement["abbr"]]
+                    meas_desc = MeasurmentDescription.from_test_desc(test_desc)
                     ext_result = ExtendedMeasurementResult(
                         result=measurement["result"],
                         details=measurement["details"],
                         server=server,
                         client=client,
-                        test=self.tests[measurement["abbr"]],
+                        test=meas_desc,
                         _base_log_dir=self.log_dir,
                     )
                     results[server.name][client.name][measurement["abbr"]] = ext_result
