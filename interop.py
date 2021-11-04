@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Type
+from uuid import uuid4
 
 import prettytable
 from termcolor import colored
@@ -66,6 +67,7 @@ class InteropRunner:
         CONSOLE_LOG_HANDLER.setFormatter(TerminalFormatter())
         LOGGER.addHandler(CONSOLE_LOG_HANDLER)
 
+        self._run_id = uuid4()
         self._start_time = datetime.now()
         self._tests = tests
         self._measurements = measurements
@@ -123,6 +125,7 @@ class InteropRunner:
                     f"You specified another log_dir than the result file {self._output} used before"
                 )
 
+            self._run_id = result.id
             self._start_time = result.start_time
             assert (
                 int(testcases.QUIC_VERSION, base=16) == result.quic_version
@@ -355,6 +358,7 @@ class InteropRunner:
             )
         )
         out = {
+            "id": str(self._run_id),
             "start_time": self._start_time.timestamp(),
             "end_time": datetime.now().timestamp(),
             "log_dir": str(self._log_dir),

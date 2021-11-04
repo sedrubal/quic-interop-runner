@@ -11,6 +11,7 @@ from functools import cached_property
 from itertools import chain
 from pathlib import Path
 from typing import Literal, Optional, TypedDict, Union, cast
+from uuid import UUID, uuid4
 
 from dateutil.parser import parse as parse_date
 
@@ -71,6 +72,7 @@ class RawImageMetadata(TypedDict):
 class RawResult(TypedDict):
     """The unmodified content of result.json."""
 
+    id: Optional[str]
     start_time: float
     end_time: float
     log_dir: str
@@ -325,6 +327,23 @@ class Result:
     @raw_data.setter
     def raw_data(self, value: RawResult):
         self._raw_data = value
+
+    @property
+    def id(self) -> UUID:
+        """The UUID of this test."""
+
+        if not self.raw_data.get("id"):
+            self.raw_data["id"] = str(uuid4())
+            self.save()
+
+        raw_id = self.raw_data["id"]
+        assert raw_id
+
+        return UUID(hex=raw_id)
+
+    @id.setter
+    def id(self, value: UUID):
+        self.raw_data["id"] = str(value)
 
     @property
     def start_time(self) -> datetime:
@@ -918,6 +937,7 @@ class Result:
         }
 
         output: RawResult = {
+            "id": str(self.id),
             "start_time": min(self.start_time, other.start_time).timestamp(),
             "end_time": max(self.end_time, other.end_time).timestamp(),
             "log_dir": str(log_dir),
