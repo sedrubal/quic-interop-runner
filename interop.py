@@ -201,7 +201,7 @@ class InteropRunner:
                         res_meas.server.name,
                         res_meas.client.name,
                     )
-                    shutil.rmtree(res_meas.log_dir_for_test, ignore_errors=True)
+                    shutil.rmtree(res_meas.log_dir_for_test.path, ignore_errors=True)
 
                     continue
                 self.measurement_results[res_meas.server.name][res_meas.client.name][
@@ -395,7 +395,11 @@ class InteropRunner:
                 results = []
 
                 for test in self._tests:
-                    result = self.test_results.get(server, {}).get(client, {}).get(test, None)
+                    result = (
+                        self.test_results.get(server, {})
+                        .get(client, {})
+                        .get(test, None)
+                    )
 
                     results.append(
                         {
@@ -409,7 +413,11 @@ class InteropRunner:
 
                 for measurement in self._measurements:
 
-                    res = self.measurement_results.get(server, {}).get(client, {}).get(measurement, None)
+                    res = (
+                        self.measurement_results.get(server, {})
+                        .get(client, {})
+                        .get(measurement, None)
+                    )
                     measurements.append(
                         {
                             "abbr": measurement.abbreviation,
@@ -419,8 +427,8 @@ class InteropRunner:
                     )
                 out["measurements"].append(measurements)
 
-        with open(self._output, "w") as file:
-            json.dump(out, file)
+        with self._output.open("w") as file:
+            json.dump(out, file, indent=" " * 4)
 
     def _run_testcase(
         self,
@@ -534,14 +542,16 @@ class InteropRunner:
         LOGGER.removeHandler(log_handler)
         log_handler.close()
 
+        shutil.copyfile(log_file.name, log_dir / "output.txt")
+
         if status in (TestResult.FAILED, TestResult.SUCCEEDED):
-            shutil.copyfile(log_file.name, log_dir / "output.txt")
 
             if self._save_files and status == TestResult.FAILED:
                 shutil.copytree(testcase.www_dir, log_dir / "www")
                 try:
                     shutil.copytree(testcase.download_dir, log_dir / "downloads")
                 except Exception as exception:
+                    breakpoint()
                     LOGGER.info("Could not copy downloaded files: %s", exception)
 
         testcase.cleanup()
@@ -611,7 +621,7 @@ class InteropRunner:
     def progress(self) -> int:
         """Return the progress in percent."""
 
-        return int(self._nr_run * 100 / (self._nr_runs - self._num_skip_runs))
+        return int((self._nr_run + self._num_skip_runs) * 100 / self._nr_runs)
 
     def run(self):
         """run the interop test suite and output the table"""
