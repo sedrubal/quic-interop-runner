@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import logging
+import subprocess
 from enum import Enum
 from pathlib import Path
 from typing import List, Optional
@@ -7,6 +8,7 @@ from typing import List, Optional
 import pyshark
 
 from conf import CONFIG
+from exceptions import TestFailed
 
 LOGGER = logging.getLogger(name="quic-interop-runner")
 
@@ -71,6 +73,34 @@ class TraceAnalyzer:
         self._ip6_client = ip6_client
         self._ip4_server = ip4_server
         self._ip6_server = ip6_server
+
+    def validate_pcap(self):
+        """Validate that the pcap can be parsed."""
+        cmd = [
+            CONFIG.tshark_bin or "tshark",
+            "-n",
+            "-Y",
+            "!quic && quic",
+            "-d",
+            "udp.port==443,quic",
+            "--disable-protocol",
+            "http3",
+            "-r",
+            self._pcap_path,
+        ]
+
+        if self._keylog_file:
+            cmd.extend(
+                [
+                    "-o",
+                    f"tls.keylog_file:{self._keylog_file}",
+                ]
+            )
+        try:
+            subprocess.check_output(cmd, text=True, stderr=subprocess.PIPE)
+        except subprocess.CalledProcessError as err:
+            msg = err.stderr.split(":", 1)[1].strip()
+            raise TestFailed(msg) from err
 
     def get_direction(self, packet) -> Direction:
         """Return the direction of a packet."""
@@ -147,8 +177,9 @@ class TraceAnalyzer:
             for packet in cap:
                 packets.append(packet)
             cap.close()
-        except Exception as exc:
-            LOGGER.debug(exc)
+        except pyshark.capture.capture.TSharkCrashException as exc:
+            breakpoint()
+            LOGGER.error(exc)
 
         if self._keylog_file is not None:
             for packet in packets:

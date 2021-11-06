@@ -537,7 +537,13 @@ class InteropRunner:
                 status = TestResult.UNSUPPORTED
             elif exec_result.exit_codes["client"] == 0:
                 try:
-                    status = testcase.check()
+                    testcase.check()
+                except TestUnsupported as exc:
+                    LOGGER.warning(exc)
+                    status = TestResult.UNSUPPORTED
+                except TestFailed as exc:
+                    LOGGER.warning(exc)
+                    status = TestResult.FAILED
                 except FileNotFoundError as err:
                     LOGGER.error("testcase.check() threw FileNotFoundError: %s", err)
                     status = TestResult.FAILED

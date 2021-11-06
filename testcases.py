@@ -273,21 +273,18 @@ class TestCase(abc.ABC):
     def _retry_sent(self) -> bool:
         return len(self._client_trace.get_retry()) > 0
 
-    def _check_version_and_files(self) -> bool:
+    def _check_version_and_files(self):
         versions = [hex(int(v, 0)) for v in self._get_versions()]
 
         if len(versions) != 1:
-            LOGGER.info("Expected exactly one version. Got %s", versions)
-
-            return False
+            raise TestFailed(f"Expected exactly one version. Got {versions}")
 
         if QUIC_VERSION not in versions:
-            LOGGER.info("Wrong version. Expected %s, got %s", QUIC_VERSION, versions)
-
-            return False
+            raise TestFailed(f"Wrong version. Expected {QUIC_VERSION}, got {versions}")
 
         if len(self._files) == 0:
-            raise Exception("No test files generated.")
+            raise AssertionError("No test files generated.")
+
         files = [
             n.name
             for n in self.download_dir.iterdir()
@@ -296,64 +293,56 @@ class TestCase(abc.ABC):
         too_many = [f for f in files if f not in self._files]
 
         if len(too_many) != 0:
-            LOGGER.info("Found unexpected downloaded files: %s", too_many)
+            raise TestFailed(f"Found unexpected downloaded files: {too_many}")
+
         too_few = [f for f in self._files if f not in files]
 
         if len(too_few) != 0:
-            LOGGER.info("Missing files: %s", too_few)
-
-        if len(too_many) != 0 or len(too_few) != 0:
-            return False
+            raise TestFailed(f"Missing files: {too_few}")
 
         for file_name in self._files:
             file_path = self.download_dir / file_name
 
             if not os.path.isfile(file_path):
-                LOGGER.info("File %s does not exist.", file_path)
+                raise TestFailed(f"File {file_path} does not exist.")
 
-                return False
             try:
                 size = (self.www_dir / file_name).stat().st_size
                 downloaded_size = os.path.getsize(file_path)
 
                 if size != downloaded_size:
-                    LOGGER.info(
-                        "File size of %s doesn't match. Original: %d bytes, downloaded: %d bytes.",
-                        file_path,
-                        size,
-                        downloaded_size,
+                    raise TestFailed(
+                        f"File size of {file_path} doesn't match. "
+                        f"Original: {size} bytes, downloaded: {downloaded_size} bytes.",
                     )
 
-                    return False
-
                 if not filecmp.cmp(self.www_dir / file_name, file_path, shallow=False):
-                    LOGGER.info("File contents of %s do not match.", file_path)
+                    raise TestFailed(f"File contents of {file_path} do not match.")
 
-                    return False
             except Exception as exception:
-                LOGGER.info(
-                    "Could not compare files %s and %s: %s",
-                    self.www_dir / file_name,
-                    file_path,
-                    exception,
-                )
+                raise TestFailed(
+                    f"Could not compare files {self.www_dir / file_name} and {file_path}: {exception}",
+                ) from exception
 
-                return False
         LOGGER.debug("Check of downloaded files succeeded.")
 
-        return True
-
-    def _count_handshakes(self) -> int:
-        """Count the number of QUIC handshakes"""
+    def _check_handshakes(self, expected_num):
+        """Count the number of QUIC handshakes and check if it equals the expected amount."""
         # Determine the number of handshakes by looking at Initial packets.
         # This is easier, since the SCID of Initial packets doesn't changes.
 
-        return len(
+        num_handshakes = len(
             {
                 packet.scid
                 for packet in self._server_trace.get_initial(Direction.FROM_SERVER)
             }
         )
+
+        if num_handshakes != expected_num:
+            raise TestFailed(
+                f"Expected exactly {expected_num} handshake{'' if expected_num == 1 else 's'}."
+                f" Got: {num_handshakes}"
+            )
 
     def _get_versions(self) -> set:
         """Get the QUIC versions"""
@@ -379,6 +368,15 @@ class TestCase(abc.ABC):
 
         return size
 
+    def _check_traces(self):
+        breakpoint()
+        self._server_trace.validate_pcap()
+        self._client_trace.validate_pcap()
+
+    def _check_keylog(self):
+        if not self._keylog_file:
+            raise TestUnsupported("Can't check test result. SSLKEYLOG required.")
+
     def cleanup(self):
         if self._www_dir:
             self._www_dir.cleanup()
@@ -393,7 +391,7 @@ class TestCase(abc.ABC):
         pass
 
     @abc.abstractmethod
-    def check(self) -> TestResult:
+    def check(self):
         pass
 
 
@@ -454,7 +452,8 @@ class TestCaseVersionNegotiation(TestCase):
     def get_paths(self):
         return [""]
 
-    def check(self) -> TestResult:
+    def check(self):
+        self._check_traces()
         initials = self._client_trace.get_initial(Direction.FROM_CLIENT)
         dcid = ""
 
@@ -464,19 +463,15 @@ class TestCaseVersionNegotiation(TestCase):
             break
 
         if dcid == "":
-            LOGGER.info("Didn't find an Initial / a DCID.")
+            raise TestFailed("Didn't find an Initial / a DCID.")
 
-            return TestResult.FAILED
-
-        vnps = self._client_trace.trace.get_vnp()
+        vnps = self._client_trace.get_vnp()
 
         for packet in vnps:
             if packet.scid == dcid:
-                return TestResult.SUCCEEDED
+                return
 
-        LOGGER.info("Didn't find a Version Negotiation Packet with matching SCID.")
-
-        return TestResult.FAILED
+        raise TestFailed("Didn't find a Version Negotiation Packet with matching SCID.")
 
 
 class TestCaseHandshake(TestCase):
@@ -500,22 +495,14 @@ class TestCaseHandshake(TestCase):
 
         return self._files
 
-    def check(self) -> TestResult:
-        if not self._check_version_and_files():
-            return TestResult.FAILED
+    def check(self):
+        self._check_traces()
+        self._check_version_and_files()
 
         if self._retry_sent():
-            LOGGER.info("Didn't expect a Retry to be sent.")
+            raise TestFailed("Didn't expect a Retry to be sent.")
 
-            return TestResult.FAILED
-        num_handshakes = self._count_handshakes()
-
-        if num_handshakes != 1:
-            LOGGER.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
-
-            return TestResult.FAILED
-
-        return TestResult.SUCCEEDED
+        self._check_handshakes(1)
 
 
 class TestCaseLongRTT(TestCaseHandshake):
@@ -554,16 +541,11 @@ class TestCaseLongRTT(TestCaseHandshake):
             )
         )
 
-    def check(self) -> TestResult:
-        num_handshakes = self._count_handshakes()
+    def check(self):
+        self._check_traces()
+        self._check_handshakes(1)
+        self._check_version_and_files()
 
-        if num_handshakes != 1:
-            LOGGER.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
-
-            return TestResult.FAILED
-
-        if not self._check_version_and_files():
-            return TestResult.FAILED
         num_ch = 0
 
         for packet in self._client_trace.get_initial(Direction.FROM_CLIENT):
@@ -572,11 +554,7 @@ class TestCaseLongRTT(TestCaseHandshake):
                     num_ch += 1
 
         if num_ch < 2:
-            LOGGER.info("Expected at least 2 ClientHellos. Got: %d", num_ch)
-
-            return TestResult.FAILED
-
-        return TestResult.SUCCEEDED
+            raise TestFailed(f"Expected at least 2 ClientHellos. Got: {num_ch}")
 
 
 class TestCaseTransfer(TestCase):
@@ -604,18 +582,10 @@ class TestCaseTransfer(TestCase):
 
         return self._files
 
-    def check(self) -> TestResult:
-        num_handshakes = self._count_handshakes()
-
-        if num_handshakes != 1:
-            LOGGER.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
-
-            return TestResult.FAILED
-
-        if not self._check_version_and_files():
-            return TestResult.FAILED
-
-        return TestResult.SUCCEEDED
+    def check(self):
+        self._check_traces()
+        self._check_handshakes(1)
+        self._check_version_and_files()
 
 
 class TestCaseChaCha20(TestCase):
@@ -643,13 +613,9 @@ class TestCaseChaCha20(TestCase):
 
         return self._files
 
-    def check(self) -> TestResult:
-        num_handshakes = self._count_handshakes()
-
-        if num_handshakes != 1:
-            LOGGER.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
-
-            return TestResult.FAILED
+    def check(self):
+        self._check_traces()
+        self._check_handshakes(1)
 
         ciphersuites = set()
 
@@ -658,17 +624,11 @@ class TestCaseChaCha20(TestCase):
                 ciphersuites.add(packet.tls_handshake_ciphersuite)
 
         if len(ciphersuites) != 1 or "4867" not in ciphersuites:
-            LOGGER.info(
-                "Expected only ChaCha20 cipher suite to be offered. Got: %s",
-                ciphersuites,
+            raise TestFailed(
+                f"Expected only ChaCha20 cipher suite to be offered. Got: {ciphersuites}"
             )
 
-            return TestResult.FAILED
-
-        if not self._check_version_and_files():
-            return TestResult.FAILED
-
-        return TestResult.SUCCEEDED
+        self._check_version_and_files()
 
 
 class TestCaseMultiplexing(TestCase):
@@ -697,20 +657,12 @@ class TestCaseMultiplexing(TestCase):
 
         return self._files
 
-    def check(self) -> TestResult:
-        if not self._keylog_file:
-            LOGGER.info("Can't check test result. SSLKEYLOG required.")
+    def check(self):
+        self._check_keylog()
+        self._check_traces()
+        self._check_handshakes(1)
+        self._check_version_and_files()
 
-            return TestResult.UNSUPPORTED
-        num_handshakes = self._count_handshakes()
-
-        if num_handshakes != 1:
-            LOGGER.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
-
-            return TestResult.FAILED
-
-        if not self._check_version_and_files():
-            return TestResult.FAILED
         # Check that the server set a bidirectional stream limit <= 1000
         checked_stream_limit = False
 
@@ -723,16 +675,10 @@ class TestCaseMultiplexing(TestCase):
                 LOGGER.debug("Server set bidirectional stream limit: %d", stream_limit)
 
                 if stream_limit > 1000:
-                    LOGGER.info("Server set a stream limit > 1000.")
-
-                    return TestResult.FAILED
+                    raise TestFailed("Server set a stream limit > 1000.")
 
         if not checked_stream_limit:
-            LOGGER.info("Couldn't check stream limit.")
-
-            return TestResult.FAILED
-
-        return TestResult.SUCCEEDED
+            raise TestFailed("Couldn't check stream limit.")
 
 
 class TestCaseRetry(TestCase):
@@ -758,41 +704,35 @@ class TestCaseRetry(TestCase):
 
         return self._files
 
-    def _check_trace(self) -> bool:
-        # check that (at least) one Retry packet was actually sent
+    def _check_trace(self):
+        """Check that (at least) one Retry packet was actually sent."""
         tokens = []
         retries = self._client_trace.get_retry(Direction.FROM_SERVER)
 
         for packet in retries:
             if not hasattr(packet, "retry_token"):
-                LOGGER.info("Retry packet doesn't have a retry_token")
-                LOGGER.info(packet)
+                raise TestFailed(f"Retry packet doesn't have a retry_token: {packet}")
 
-                return False
             tokens += [packet.retry_token.replace(":", "")]
 
         if len(tokens) == 0:
-            LOGGER.info("Didn't find any Retry packets.")
-
-            return False
+            raise TestFailed("Didn't find any Retry packets.")
 
         # check that an Initial packet uses a token sent in the Retry packet(s)
         highest_pn_before_retry = -1
 
         for packet in self._client_trace.get_initial(Direction.FROM_CLIENT):
-            pn = int(packet.packet_number)
+            packet_number = int(packet.packet_number)
 
             if packet.token_length == "0":
-                highest_pn_before_retry = max(highest_pn_before_retry, pn)
+                highest_pn_before_retry = max(highest_pn_before_retry, packet_number)
 
                 continue
 
-            if pn <= highest_pn_before_retry:
-                LOGGER.debug(
-                    "Client reset the packet number. Check failed for PN %d", pn
+            if packet_number <= highest_pn_before_retry:
+                raise TestFailed(
+                    f"Client reset the packet number. Check failed for PN {packet_number}"
                 )
-
-                return False
 
             token = packet.token.replace(":", "")
 
@@ -800,25 +740,14 @@ class TestCaseRetry(TestCase):
                 LOGGER.debug("Check of Retry succeeded. Token used: %s", token)
 
                 return True
-        LOGGER.info("Didn't find any Initial packet using a Retry token.")
 
-        return False
+        raise TestFailed("Didn't find any Initial packet using a Retry token.")
 
-    def check(self) -> TestResult:
-        num_handshakes = self._count_handshakes()
-
-        if num_handshakes != 1:
-            LOGGER.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
-
-            return TestResult.FAILED
-
-        if not self._check_version_and_files():
-            return TestResult.FAILED
-
-        if not self._check_trace():
-            return TestResult.FAILED
-
-        return TestResult.SUCCEEDED
+    def check(self):
+        self._check_traces()
+        self._check_handshakes(1)
+        self._check_version_and_files()
+        self._check_trace()
 
 
 class TestCaseResumption(TestCase):
@@ -845,17 +774,10 @@ class TestCaseResumption(TestCase):
 
         return self._files
 
-    def check(self) -> TestResult:
-        if not self._keylog_file:
-            LOGGER.info("Can't check test result. SSLKEYLOG required.")
-
-            return TestResult.UNSUPPORTED
-        num_handshakes = self._count_handshakes()
-
-        if num_handshakes != 2:
-            LOGGER.info("Expected exactly 2 handshake. Got: %d", num_handshakes)
-
-            return TestResult.FAILED
+    def check(self):
+        self._check_keylog()
+        self._check_traces()
+        self._check_handshakes(2)
 
         handshake_packets = self._client_trace.get_handshake(Direction.FROM_SERVER)
         cids = [p.scid for p in handshake_packets]
@@ -867,29 +789,21 @@ class TestCaseResumption(TestCase):
                     first_handshake_has_cert = True
             elif packet.scid == cids[len(cids) - 1]:  # second handshake
                 if hasattr(packet, "tls_handshake_certificates_length"):
-                    LOGGER.info(
+                    raise TestFailed(
                         "Server sent a Certificate message in the second handshake."
                     )
 
-                    return TestResult.FAILED
             else:
-                LOGGER.info(
+                raise TestFailed(
                     "Found handshake packet that neither belongs to the first nor the second handshake."
                 )
 
-                return TestResult.FAILED
-
         if not first_handshake_has_cert:
-            LOGGER.info(
+            raise TestFailed(
                 "Didn't find a Certificate message in the first handshake. That's weird."
             )
 
-            return TestResult.FAILED
-
-        if not self._check_version_and_files():
-            return TestResult.FAILED
-
-        return TestResult.SUCCEEDED
+        self._check_version_and_files()
 
 
 class TestCaseZeroRTT(TestCase):
@@ -920,35 +834,23 @@ class TestCaseZeroRTT(TestCase):
 
         return self._files
 
-    def check(self) -> TestResult:
-        num_handshakes = self._count_handshakes()
+    def check(self):
+        self._check_traces()
+        self._check_handshakes(2)
+        self._check_version_and_files()
 
-        if num_handshakes != 2:
-            LOGGER.info("Expected exactly 2 handshakes. Got: %d", num_handshakes)
-
-            return TestResult.FAILED
-
-        if not self._check_version_and_files():
-            return TestResult.FAILED
-
-        zeroRTTSize = self._payload_size(self._client_trace.get_0rtt())
-        oneRTTSize = self._payload_size(
+        zero_rtt_size = self._payload_size(self._client_trace.get_0rtt())
+        one_rtt_size = self._payload_size(
             self._client_trace.get_1rtt(Direction.FROM_CLIENT)
         )
-        LOGGER.debug("0-RTT size: %d", zeroRTTSize)
-        LOGGER.debug("1-RTT size: %d", oneRTTSize)
+        LOGGER.debug("0-RTT size: %d", zero_rtt_size)
+        LOGGER.debug("1-RTT size: %d", one_rtt_size)
 
-        if zeroRTTSize == 0:
-            LOGGER.info("Client didn't send any 0-RTT data.")
+        if zero_rtt_size == 0:
+            raise TestFailed("Client didn't send any 0-RTT data.")
 
-            return TestResult.FAILED
-
-        if oneRTTSize > 0.5 * self.FILENAMELEN * self.NUM_FILES:
-            LOGGER.info("Client sent too much data in 1-RTT packets.")
-
-            return TestResult.FAILED
-
-        return TestResult.SUCCEEDED
+        if one_rtt_size > 0.5 * self.FILENAMELEN * self.NUM_FILES:
+            raise TestFailed("Client sent too much data in 1-RTT packets.")
 
 
 class TestCaseHTTP3(TestCase):
@@ -976,18 +878,10 @@ class TestCaseHTTP3(TestCase):
 
         return self._files
 
-    def check(self) -> TestResult:
-        num_handshakes = self._count_handshakes()
-
-        if num_handshakes != 1:
-            LOGGER.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
-
-            return TestResult.FAILED
-
-        if not self._check_version_and_files():
-            return TestResult.FAILED
-
-        return TestResult.SUCCEEDED
+    def check(self):
+        self._check_traces()
+        self._check_handshakes(1)
+        self._check_version_and_files()
 
 
 class TestCaseAmplificationLimit(TestCase):
@@ -1038,20 +932,12 @@ class TestCaseAmplificationLimit(TestCase):
 
         return self._files
 
-    def check(self) -> TestResult:
-        if not self._keylog_file:
-            LOGGER.info("Can't check test result. SSLKEYLOG required.")
+    def check(self):
+        self._check_keylog()
+        self._check_traces()
+        self._check_handshakes(1)
+        self._check_version_and_files()
 
-            return TestResult.UNSUPPORTED
-        num_handshakes = self._count_handshakes()
-
-        if num_handshakes != 1:
-            LOGGER.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
-
-            return TestResult.FAILED
-
-        if not self._check_version_and_files():
-            return TestResult.FAILED
         # Check the highest offset of CRYPTO frames sent by the server.
         # This way we can make sure that it actually used the provided cert chain.
         max_handshake_offset = 0
@@ -1064,12 +950,11 @@ class TestCaseAmplificationLimit(TestCase):
                 )
 
         if max_handshake_offset < 7500:
-            LOGGER.info(
-                "Server sent too little Handshake CRYPTO data (%d bytes). Not using the provided cert chain?",
-                max_handshake_offset,
+            raise TestFailed(
+                f"Server sent too little Handshake CRYPTO data ({max_handshake_offset} bytes)."
+                " Not using the provided cert chain?",
             )
 
-            return TestResult.FAILED
         LOGGER.debug(
             "Server sent %d bytes in Handshake CRYPTO frames.", max_handshake_offset
         )
@@ -1078,7 +963,7 @@ class TestCaseAmplificationLimit(TestCase):
         allowed = 0
         allowed_with_tolerance = 0
         client_sent, server_sent = 0, 0  # only for debug messages
-        res = TestResult.FAILED
+        failed = True
         log_output = []
 
         for packet in self._server_trace.get_raw_packets():
@@ -1086,37 +971,30 @@ class TestCaseAmplificationLimit(TestCase):
             packet_type = get_packet_type(packet)
 
             if packet_type == PacketType.VERSIONNEGOTIATION:
-                LOGGER.info("Didn't expect a Version Negotiation packet.")
+                raise TestFailed("Didn't expect a Version Negotiation packet.")
 
-                return TestResult.FAILED
             packet_size = int(packet.udp.length) - 8  # subtract the UDP header length
 
             if packet_type == PacketType.INVALID:
-                LOGGER.debug("Couldn't determine packet type.")
-
-                return TestResult.FAILED
+                raise TestFailed("Couldn't determine packet type.")
 
             if direction == Direction.FROM_CLIENT:
                 if packet_type is PacketType.HANDSHAKE:
-                    res = TestResult.SUCCEEDED
-
-                    break
+                    failed = False
 
                 if packet_type is PacketType.INITIAL:
                     client_sent += packet_size
                     allowed += 3 * packet_size
                     allowed_with_tolerance += 4 * packet_size
                     log_output.append(
-                        "Received a {} byte Initial packet from the client. Amplification limit: {}".format(
-                            packet_size, 3 * client_sent
-                        )
+                        f"Received a {packet_size} byte Initial packet from the client."
+                        f" Amplification limit: {3 * client_sent}"
                     )
             elif direction == Direction.FROM_SERVER:
                 server_sent += packet_size
                 log_output.append(
-                    "Received a {} byte Handshake packet from the server. Total: {}".format(
-                        packet_size, server_sent
-                    )
+                    f"Received a {packet_size} byte Handshake packet from the server."
+                    f" Total: {server_sent}"
                 )
 
                 if packet_size >= allowed_with_tolerance:
@@ -1131,19 +1009,13 @@ class TestCaseAmplificationLimit(TestCase):
                 allowed_with_tolerance -= packet_size
                 allowed -= packet_size
             else:
-                LOGGER.debug("Couldn't determine sender of packet.")
+                raise TestFailed("Couldn't determine sender of packet.")
 
-                return TestResult.FAILED
-
-        log_level = logging.DEBUG
-
-        if res == TestResult.FAILED:
-            log_level = logging.INFO
-
-        for msg in log_output:
-            LOGGER.log(log_level, msg)
-
-        return res
+        if failed:
+            raise TestFailed("\n".join(log_output))
+        else:
+            for msg in log_output:
+                LOGGER.debug(msg)
 
 
 class TestCaseBlackhole(TestCase):
@@ -1185,18 +1057,10 @@ class TestCaseBlackhole(TestCase):
 
         return self._files
 
-    def check(self) -> TestResult:
-        num_handshakes = self._count_handshakes()
-
-        if num_handshakes != 1:
-            LOGGER.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
-
-            return TestResult.FAILED
-
-        if not self._check_version_and_files():
-            return TestResult.FAILED
-
-        return TestResult.SUCCEEDED
+    def check(self):
+        self._check_traces()
+        self._check_handshakes(1)
+        self._check_version_and_files()
 
 
 class TestCaseKeyUpdate(TestCaseHandshake):
@@ -1207,7 +1071,7 @@ class TestCaseKeyUpdate(TestCaseHandshake):
 
     @classmethod
     def testname(cls, perspective: Perspective):
-        if p is Perspective.CLIENT:
+        if perspective is Perspective.CLIENT:
             return "keyupdate"
 
         return "transfer"
@@ -1227,21 +1091,11 @@ class TestCaseKeyUpdate(TestCaseHandshake):
 
         return self._files
 
-    def check(self) -> TestResult:
-        if not self._keylog_file:
-            LOGGER.info("Can't check test result. SSLKEYLOG required.")
-
-            return TestResult.UNSUPPORTED
-
-        num_handshakes = self._count_handshakes()
-
-        if num_handshakes != 1:
-            LOGGER.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
-
-            return TestResult.FAILED
-
-        if not self._check_version_and_files():
-            return TestResult.FAILED
+    def check(self):
+        self._check_keylog()
+        self._check_traces()
+        self._check_handshakes(1)
+        self._check_version_and_files()
 
         client = {0: 0, 1: 0}
         server = {0: 0, 1: 0}
@@ -1251,12 +1105,10 @@ class TestCaseKeyUpdate(TestCaseHandshake):
 
             for packet in self._server_trace.get_1rtt(Direction.FROM_SERVER):
                 server[int(packet.key_phase)] += 1
-        except Exception:
-            LOGGER.info(
+        except Exception as exc:
+            raise TestFailed(
                 "Failed to read key phase bits. Potentially incorrect SSLKEYLOG?"
-            )
-
-            return TestResult.FAILED
+            ) from exc
 
         succeeded = client[1] * server[1] > 0
 
@@ -1279,13 +1131,9 @@ class TestCaseKeyUpdate(TestCaseHandshake):
         )
 
         if not succeeded:
-            LOGGER.info(
+            raise TestFailed(
                 "Expected to see packets sent with key phase 1 from both client and server."
             )
-
-            return TestResult.FAILED
-
-        return TestResult.SUCCEEDED
 
 
 class TestCaseHandshakeLoss(TestCase):
@@ -1335,20 +1183,10 @@ class TestCaseHandshakeLoss(TestCase):
 
         return self._files
 
-    def check(self) -> TestResult:
-        num_handshakes = self._count_handshakes()
-
-        if num_handshakes != self._num_runs:
-            LOGGER.info(
-                "Expected %d handshakes. Got: %d", self._num_runs, num_handshakes
-            )
-
-            return TestResult.FAILED
-
-        if not self._check_version_and_files():
-            return TestResult.FAILED
-
-        return TestResult.SUCCEEDED
+    def check(self):
+        self._check_traces()
+        self._check_handshakes(self._num_runs)
+        self._check_version_and_files()
 
 
 class TestCaseTransferLoss(TestCase):
@@ -1391,18 +1229,10 @@ class TestCaseTransferLoss(TestCase):
 
         return self._files
 
-    def check(self) -> TestResult:
-        num_handshakes = self._count_handshakes()
-
-        if num_handshakes != 1:
-            LOGGER.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
-
-            return TestResult.FAILED
-
-        if not self._check_version_and_files():
-            return TestResult.FAILED
-
-        return TestResult.SUCCEEDED
+    def check(self):
+        self._check_traces()
+        self._check_handshakes(1)
+        self._check_version_and_files()
 
 
 class TestCaseHandshakeCorruption(TestCaseHandshakeLoss):
@@ -1478,11 +1308,11 @@ class TestCaseECN(TestCaseHandshake):
     def abbreviation(cls):
         return "E"
 
-    def _count_ecn(self, tr):
+    def _count_ecn(self, trace):
         ecn = [0] * (max(ECN) + 1)
 
-        for p in tr:
-            e = int(getattr(p["ip"], "dsfield.ecn"))
+        for packet in trace:
+            e = int(getattr(packet["ip"], "dsfield.ecn"))
             ecn[e] += 1
 
         for e in ECN:
@@ -1509,16 +1339,11 @@ class TestCaseECN(TestCaseHandshake):
 
         return False
 
-    def check(self) -> TestResult:
-        if not self._keylog_file:
-            LOGGER.info("Can't check test result. SSLKEYLOG required.")
+    def check(self):
+        self._check_keylog()
+        self._check_traces()
 
-            return TestResult.UNSUPPORTED
-
-        result = super(TestCaseECN, self).check()
-
-        if result != TestResult.SUCCEEDED:
-            return result
+        super(TestCaseECN, self).check()
 
         tr_client = self._client_trace._get_packets(
             self._client_trace._get_direction_filter(Direction.FROM_CLIENT) + " quic"
@@ -1536,23 +1361,25 @@ class TestCaseECN(TestCaseHandshake):
         ecn_server_all_ok = self._check_ecn_marks(ecn)
         ack_ecn_server_ok = self._check_ack_ecn(tr_server)
 
+        msgs = list[str]()
+
         if ecn_client_any_marked is False:
-            LOGGER.info("Client did not mark any packets ECT(0) or ECT(1)")
+            msgs.append("Client did not mark any packets ECT(0) or ECT(1)")
         else:
             if ack_ecn_server_ok is False:
-                LOGGER.info("Server did not send any ACK-ECN frames")
+                msgs.append("Server did not send any ACK-ECN frames")
             elif ecn_client_all_ok is False:
-                LOGGER.info(
+                msgs.append(
                     "Not all client packets were consistently marked with ECT(0) or ECT(1)"
                 )
 
         if ecn_server_any_marked is False:
-            LOGGER.info("Server did not mark any packets ECT(0) or ECT(1)")
+            msgs.append("Server did not mark any packets ECT(0) or ECT(1)")
         else:
             if ack_ecn_client_ok is False:
-                LOGGER.info("Client did not send any ACK-ECN frames")
+                msgs.append("Client did not send any ACK-ECN frames")
             elif ecn_server_all_ok is False:
-                LOGGER.info(
+                msgs.append(
                     "Not all server packets were consistently marked with ECT(0) or ECT(1)"
                 )
 
@@ -1562,9 +1389,9 @@ class TestCaseECN(TestCaseHandshake):
             and ack_ecn_client_ok
             and ack_ecn_server_ok
         ):
-            return TestResult.SUCCEEDED
+            return
 
-        return TestResult.FAILED
+        raise TestFailed("\n".join(msgs))
 
 
 class TestCasePortRebinding(TestCaseTransfer):
@@ -1608,16 +1435,10 @@ class TestCasePortRebinding(TestCaseTransfer):
             )
         )
 
-    def check(self) -> TestResult:
-        if not self._keylog_file:
-            LOGGER.info("Can't check test result. SSLKEYLOG required.")
-
-            return TestResult.UNSUPPORTED
-
-        result = super(TestCasePortRebinding, self).check()
-
-        if result != TestResult.SUCCEEDED:
-            return result
+    def check(self):
+        self._check_keylog()
+        self._check_traces()
+        super(TestCasePortRebinding, self).check()
 
         tr_server = self._server_trace._get_packets(
             self._server_trace._get_direction_filter(Direction.FROM_SERVER) + " quic"
@@ -1628,9 +1449,9 @@ class TestCasePortRebinding(TestCaseTransfer):
         LOGGER.info("Server saw these client ports: %s", ports)
 
         if len(ports) <= 1:
-            LOGGER.info("Server saw only a single client port in use; test broken?")
-
-            return TestResult.FAILED
+            raise TestFailed(
+                "Server saw only a single client port in use; test broken?"
+            )
 
         last = None
         num_migrations = 0
@@ -1654,13 +1475,11 @@ class TestCasePortRebinding(TestCaseTransfer):
                 # packet to different IP/port, should have a PATH_CHALLENGE frame
 
                 if hasattr(p["quic"], "path_challenge.data") is False:
-                    LOGGER.info(
-                        "First server packet to new client destination %s did not contain a PATH_CHALLENGE frame",
-                        cur,
+                    raise TestFailed(
+                        f"First server packet to new client destination {cur} did not contain"
+                        f" a PATH_CHALLENGE frame.\n"
+                        f"{p['quic']}",
                     )
-                    LOGGER.info(p["quic"])
-
-                    return TestResult.FAILED
 
         tr_client = self._client_trace._get_packets(
             self._client_trace._get_direction_filter(Direction.FROM_CLIENT) + " quic"
@@ -1675,13 +1494,10 @@ class TestCasePortRebinding(TestCaseTransfer):
         )
 
         if len(challenges) < num_migrations:
-            LOGGER.info(
-                "Saw %d migrations, but only %d unique PATH_CHALLENGE frames",
-                len(challenges),
-                num_migrations,
+            raise TestFailed(
+                f"Saw {len(challenges)} migrations, "
+                f"but only {num_migrations} unique PATH_CHALLENGE frames",
             )
-
-            return TestResult.FAILED
 
         responses = list(
             set(
@@ -1693,12 +1509,8 @@ class TestCasePortRebinding(TestCaseTransfer):
 
         unresponded = [c for c in challenges if c not in responses]
 
-        if unresponded != []:
-            LOGGER.info("PATH_CHALLENGE without a PATH_RESPONSE: %s", unresponded)
-
-            return TestResult.FAILED
-
-        return TestResult.SUCCEEDED
+        if unresponded:
+            raise TestFailed(f"PATH_CHALLENGE without a PATH_RESPONSE: {unresponded}")
 
 
 class TestCaseAddressRebinding(TestCasePortRebinding):
@@ -1727,11 +1539,9 @@ class TestCaseAddressRebinding(TestCasePortRebinding):
             + " --rebind-addr"
         )
 
-    def check(self) -> TestResult:
-        if not self._keylog_file:
-            LOGGER.info("Can't check test result. SSLKEYLOG required.")
-
-            return TestResult.UNSUPPORTED
+    def check(self):
+        self._check_keylog()
+        self._check_traces()
 
         tr_server = self._server_trace._get_packets(
             self._server_trace._get_direction_filter(Direction.FROM_SERVER) + " quic"
@@ -1749,18 +1559,11 @@ class TestCaseAddressRebinding(TestCasePortRebinding):
         LOGGER.info("Server saw these client addresses: %s", ips)
 
         if len(ips) <= 1:
-            LOGGER.info(
+            raise TestFailed(
                 "Server saw only a single client IP address in use; test broken?"
             )
 
-            return TestResult.FAILED
-
-        result = super(TestCaseAddressRebinding, self).check()
-
-        if result != TestResult.SUCCEEDED:
-            return result
-
-        return TestResult.SUCCEEDED
+        super(TestCaseAddressRebinding, self).check()
 
 
 class TestCaseIPv6(TestCaseTransfer):
@@ -1795,11 +1598,8 @@ class TestCaseIPv6(TestCaseTransfer):
 
         return self._files
 
-    def check(self) -> TestResult:
-        result = super(TestCaseIPv6, self).check()
-
-        if result != TestResult.SUCCEEDED:
-            return result
+    def check(self):
+        super().check()
 
         tr_server = self._server_trace._get_packets(
             self._server_trace._get_direction_filter(Direction.FROM_SERVER)
@@ -1807,11 +1607,7 @@ class TestCaseIPv6(TestCaseTransfer):
         )
 
         if tr_server:
-            LOGGER.info("Packet trace contains %s IPv4 packets.", len(tr_server))
-
-            return TestResult.FAILED
-
-        return TestResult.SUCCEEDED
+            raise TestFailed(f"Packet trace contains {len(tr_server)} IPv4 packets.")
 
 
 class TestCaseConnectionMigration(TestCaseAddressRebinding):
@@ -1849,13 +1645,10 @@ class TestCaseConnectionMigration(TestCaseAddressRebinding):
 
         return self._files
 
-    def check(self) -> TestResult:
+    def check(self):
         # The parent check() method ensures that the client changed addresses
         # and that PATH_CHALLENGE/RESPONSE frames were sent and received
-        result = super(TestCaseConnectionMigration, self).check()
-
-        if result != TestResult.SUCCEEDED:
-            return result
+        super().check()
 
         tr_client = self._client_trace._get_packets(
             self._client_trace._get_direction_filter(Direction.FROM_CLIENT) + " quic"
@@ -1883,20 +1676,16 @@ class TestCaseConnectionMigration(TestCaseAddressRebinding):
                 # packet to different IP/port, should have a new DCID
 
                 if dcid == getattr(p["quic"], "dcid"):
-                    LOGGER.info(
-                        "First client packet during active migration to %s used previous DCID %s",
-                        cur,
-                        dcid,
+                    raise TestFailed(
+                        f"First client packet during active migration to {cur}"
+                        f" used previous DCID {dcid}.\n"
+                        f"{p['quic']}"
                     )
-                    LOGGER.info(p["quic"])
 
-                    return TestResult.FAILED
                 dcid = getattr(p["quic"], "dcid")
                 LOGGER.info(
                     "DCID changed to %s during active migration to %s", dcid, cur
                 )
-
-        return TestResult.SUCCEEDED
 
 
 class MeasurementGoodput(Measurement):
@@ -1942,16 +1731,10 @@ class MeasurementGoodput(Measurement):
 
         return self._files
 
-    def check(self) -> TestResult:
-        num_handshakes = self._count_handshakes()
-
-        if num_handshakes != 1:
-            LOGGER.info("Expected exactly 1 handshake. Got: %d", num_handshakes)
-
-            return TestResult.FAILED
-
-        if not self._check_version_and_files():
-            return TestResult.FAILED
+    def check(self):
+        self._check_traces()
+        self._check_handshakes(1)
+        self._check_version_and_files()
 
         packets = self._client_trace.get_1rtt(Direction.FROM_SERVER)
         packet_times: list[timedelta] = [packet.sniff_time for packet in packets]
@@ -1960,7 +1743,7 @@ class MeasurementGoodput(Measurement):
         time = last - first
 
         if not time:
-            return TestResult.FAILED
+            raise TestFailed("No time difference between first an last packet.")
 
         time_ms = time.total_seconds() * 1000
         goodput_kbps = (8 * self.FILESIZE) / time_ms
@@ -1971,8 +1754,6 @@ class MeasurementGoodput(Measurement):
             goodput_kbps,
         )
         self._result = goodput_kbps
-
-        return TestResult.SUCCEEDED
 
 
 class MeasurementCrossTraffic(MeasurementGoodput):
@@ -2166,6 +1947,7 @@ class MeasurementRealLink(MeasurementGoodput):
 
 class MeasurementStarlink(MeasurementRealLink):
     """Measurement over a starlink connection."""
+
     # https://www.starlink.com/faq : 50..150 Mbit/s
     forward_data_rate = 150 * DataRate.MBPS
     return_data_rate = 150 * DataRate.MBPS
