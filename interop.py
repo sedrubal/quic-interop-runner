@@ -538,6 +538,7 @@ class InteropRunner:
             elif exec_result.exit_codes["client"] == 0:
                 try:
                     testcase.check()
+                    status = TestResult.SUCCEEDED
                 except TestUnsupported as exc:
                     LOGGER.warning(exc)
                     status = TestResult.UNSUPPORTED
