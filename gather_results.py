@@ -148,7 +148,7 @@ class GatherResult:
     ):
         self.results = results
         self.debug = debug
-        self.skip_existing_reasons= skip_existing_reasons
+        self.skip_existing_reasons = skip_existing_reasons
         engine = sa.create_engine(dburl)
         Base.metadata.bind = engine
         session_factory = orm.sessionmaker()
@@ -358,7 +358,12 @@ def main():
     console_log_handler.setLevel(logging.DEBUG if args.debug else logging.INFO)
     console_log_handler.setFormatter(TerminalFormatter())
     LOGGER.addHandler(console_log_handler)
-    cli = GatherResult(results=args.results, dburl=args.database, debug=args.debug, skip_existing_reasons=args.skip_existing_reasons)
+    cli = GatherResult(
+        results=args.results,
+        dburl=args.database,
+        debug=args.debug,
+        skip_existing_reasons=args.skip_existing_reasons,
+    )
     cli.run()
 
 

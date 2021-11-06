@@ -1367,7 +1367,7 @@ def main():
         "Use docker exec to execute a shell inside the containers as soon as they are running."
     )
     result = deployment.run_debug_setup()
-    logging.info(str(result))
+    LOGGER.info(str(result))
 
 
 if __name__ == "__main__":
