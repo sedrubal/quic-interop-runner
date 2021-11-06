@@ -225,11 +225,10 @@ class ExtendedMeasurementResult(_ExtendedTestResultMixin):
         assert self.log_dir_for_test.is_path
         try:
             repetitions = sorted(
-                iterdir
+                (int(iterdir.name), iterdir)
                 for iterdir in self.log_dir_for_test.path.iterdir()
                 if iterdir.is_dir() and iterdir.name.isnumeric()
             )
-            repetition_nums = [int(iterdir.name) for iterdir in repetitions]
         except FileNotFoundError as err:
             if self.result == "success":
                 breakpoint()
@@ -237,14 +236,14 @@ class ExtendedMeasurementResult(_ExtendedTestResultMixin):
             else:
                 return []
 
-        for index, cur_num in enumerate(repetition_nums):
+        for index, (cur_num, _path) in enumerate(repetitions):
             if index + 1 != cur_num:
                 raise AssertionError(
                     f"Expected the {index}th repetition directory "
                     f"to be named {index} instead of {cur_num}."
                 )
 
-        return repetitions
+        return [path for (_index, path) in repetitions]
 
     @property
     def num_repetitions(self) -> int:
