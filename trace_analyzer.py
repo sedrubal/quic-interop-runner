@@ -2,6 +2,7 @@
 import logging
 import subprocess
 from enum import Enum
+from functools import lru_cache
 from pathlib import Path
 from typing import List, Optional
 
@@ -155,6 +156,7 @@ class TraceAnalyzer:
         else:
             return display_filter
 
+    @lru_cache
     def _get_packets(self, display_filter: str) -> List:
         override_prefs = {}
 
@@ -171,6 +173,7 @@ class TraceAnalyzer:
 
         if CONFIG.pyshark_debug:
             cap.set_debug()
+
         packets = []
         # If the pcap has been cut short in the middle of the packet, pyshark will crash.
         # See https://github.com/KimiNewt/pyshark/issues/390.
