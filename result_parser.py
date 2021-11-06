@@ -758,9 +758,14 @@ class Result:
                     if not measurement["result"]:
                         continue
                     test_desc = self.tests[measurement["abbr"]]
-                    meas_desc = MeasurmentDescription.from_test_desc(test_desc)
+
+                    if isinstance(test_desc, MeasurmentDescription):
+                        meas_desc = test_desc
+                    else:
+                        meas_desc = MeasurmentDescription.from_test_desc(test_desc)
+
                     ext_result = ExtendedMeasurementResult(
-                        result=measurement["result"],
+                        result=TestResult(measurement["result"]),
                         details=measurement["details"],
                         server=server,
                         client=client,

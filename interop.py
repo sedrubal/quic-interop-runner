@@ -191,7 +191,10 @@ class InteropRunner:
                 ):
                     continue
 
-                if res_meas.test.repetitions != meas_cls.repetitions:
+                if (
+                    res_meas.test.repetitions is not None
+                    and res_meas.test.repetitions != meas_cls.repetitions
+                ):
                     LOGGER.debug(
                         (
                             "Measurement %s for server=%s and client=%s has a different amount "
