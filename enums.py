@@ -1,7 +1,39 @@
 """Some enums."""
 
-from enum import Enum, IntFlag
+from enum import Enum, IntFlag, IntEnum
 from typing import Literal, Union
+
+
+class TestResult(Enum):
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    UNSUPPORTED = "unsupported"
+
+
+class ImplementationRole(Enum):
+    BOTH = "both"
+    SERVER = "server"
+    CLIENT = "client"
+
+    @property
+    def is_client(self) -> bool:
+        return self in (ImplementationRole.CLIENT, ImplementationRole.BOTH)
+
+    @property
+    def is_server(self) -> bool:
+        return self in (ImplementationRole.SERVER, ImplementationRole.BOTH)
+
+
+class Perspective(Enum):
+    SERVER = "server"
+    CLIENT = "client"
+
+
+class ECN(IntEnum):
+    NONE = 0
+    ECT1 = 1
+    ECT0 = 2
+    CE = 3
 
 
 class PlotMode(Enum):

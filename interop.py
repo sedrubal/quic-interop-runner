@@ -17,8 +17,9 @@ from termcolor import colored
 
 import testcases
 from deployment import Deployment
-from implementations import Implementation, Role
-from result import TestResult
+from enums import ImplementationRole, TestResult
+from exceptions import TestFailed, TestUnsupported
+from implementations import Implementation
 from result_parser import Result
 from testcases import MEASUREMENTS, TESTCASES
 from utils import TerminalFormatter
@@ -253,7 +254,7 @@ class InteropRunner:
 
         testcases.generate_cert_chain(certs_dir.name)
 
-        for role in (Role.SERVER, Role.CLIENT):
+        for role in (ImplementationRole.SERVER, ImplementationRole.CLIENT):
 
             exec_result = self._deployment.run_compliance_check(
                 implementation=implementation,
@@ -554,8 +555,8 @@ class InteropRunner:
                 try:
                     shutil.copytree(testcase.download_dir, log_dir / "downloads")
                 except Exception as exception:
-                    breakpoint()
                     LOGGER.info("Could not copy downloaded files: %s", exception)
+                    breakpoint()
 
         testcase.cleanup()
         LOGGER.debug("Test took %ss", (datetime.now() - start_time).total_seconds())

@@ -7,7 +7,6 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from enum import Enum
 from functools import cached_property
 from itertools import chain
 from pathlib import Path
@@ -16,6 +15,7 @@ from uuid import UUID, uuid4
 
 from dateutil.parser import parse as parse_date
 
+from enums import ImplementationRole, TestResult
 from utils import UrlOrPath
 
 LOGGER = logging.getLogger(name="quic-interop-runner")
@@ -39,9 +39,7 @@ class RawMeasurementDescr(TypedDict):
     repetitions: Optional[int]
 
 
-RawTestResultResult = Union[
-    None, Literal["succeeded"], Literal["failed"], Literal["unsupported"]
-]
+RawTestResultResult = Optional[str]
 
 
 class RawTestResult(TypedDict):
@@ -86,14 +84,6 @@ class RawResult(TypedDict):
     quic_version: str
     results: list[list[RawTestResult]]
     measurements: list[list[RawMeasurement]]
-
-
-class ImplementationRole(Enum):
-    """The role of an implementation."""
-
-    SERVER = "server"
-    CLIENT = "client"
-    BOTH = "both"
 
 
 @dataclass(frozen=True)
@@ -178,7 +168,7 @@ class MeasurmentDescription(TestDescription):
 
 @dataclass(frozen=True)  # type: ignore
 class _ExtendedTestResultMixin(ABC):
-    result: RawTestResultResult
+    result: Optional[TestResult]
     server: Implementation
     client: Implementation
     test: Union[TestDescription, MeasurmentDescription]
@@ -188,7 +178,7 @@ class _ExtendedTestResultMixin(ABC):
     def succeeded(self) -> bool:
         """True if the test succeeded."""
 
-        return self.result == "succeeded"
+        return self.result == TestResult.SUCCEEDED
 
     @property
     def combination(self) -> str:
@@ -218,7 +208,7 @@ class ExtendedTestResult(_ExtendedTestResultMixin):
 
         return RawTestResult(
             abbr=self.test.abbr,
-            result=self.result,
+            result=self.result.value if self.result else None,
         )
 
 
@@ -296,7 +286,7 @@ class ExtendedMeasurementResult(_ExtendedTestResultMixin):
 
         return RawMeasurement(
             abbr=self.test.abbr,
-            result=self.result,
+            result=self.result.value if self.result else None,
             details=self.details,
         )
 
@@ -729,7 +719,7 @@ class Result:
                     if not test["result"]:
                         continue
                     ext_result = ExtendedTestResult(
-                        result=test["result"],
+                        result=TestResult(test["result"]),
                         server=server,
                         client=client,
                         test=self.tests[test["abbr"]],

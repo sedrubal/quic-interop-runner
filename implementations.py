@@ -4,30 +4,17 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
-from typing import TYPE_CHECKING, Optional, TypedDict, Union
+from typing import TYPE_CHECKING, Optional, TypedDict
 
 import docker
 from dateutil.parser import parse as parse_date
+
+from enums import ImplementationRole
 
 if TYPE_CHECKING:
     from deployment import Deployment
 
 LOGGER = logging.getLogger(name="quic-interop-runner")
-
-
-class Role(Enum):
-    BOTH = "both"
-    SERVER = "server"
-    CLIENT = "client"
-
-    @property
-    def is_client(self) -> bool:
-        return self in (Role.CLIENT, Role.BOTH)
-
-    @property
-    def is_server(self) -> bool:
-        return self in (Role.SERVER, Role.BOTH)
 
 
 class ImgMetadataJson(TypedDict):
@@ -44,7 +31,7 @@ class Implementation:
     name: str
     image: str
     url: str
-    role: Role
+    role: ImplementationRole
     compliant: Optional[bool] = None
     _img_versions: Optional[frozenset[str]] = None
     _img_id: Optional[str] = None
@@ -55,7 +42,11 @@ class Implementation:
         try:
             img = docker_cli.images.get(self.image)
         except docker.errors.ImageNotFound:
-            LOGGER.info("Pulling image %s on %s host", self.image, Role.CLIENT.value)
+            LOGGER.info(
+                "Pulling image %s on %s host",
+                self.image,
+                ImplementationRole.CLIENT.value,
+            )
             img = docker_cli.images.pull(self.image)
 
         image_base = self.image.split(":", 1)[0]
@@ -134,5 +125,5 @@ with open("implementations.json", "r") as f:
             name=name,
             image=val["image"],
             url=val["url"],
-            role=Role(val["role"]),
+            role=ImplementationRole(val["role"]),
         )

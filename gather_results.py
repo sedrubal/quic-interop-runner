@@ -294,7 +294,7 @@ class GatherResult:
         run.result = meas_result.result
         run.planned_repetitions = meas_result.test.repetitions
 
-        if meas_result.result == "succeeded":
+        if meas_result.succeeded:
             run.avg = meas_result.avg
             run.var = meas_result.var
 

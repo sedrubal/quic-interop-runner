@@ -11,7 +11,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Optional, Union
+from typing import Callable, Optional
 
 import docker
 import paramiko
@@ -31,7 +31,8 @@ from docker_utils import (
     negotiate_server_ip,
     remove_containers,
 )
-from implementations import IMPLEMENTATIONS, Implementation, Role
+from enums import ImplementationRole as Role
+from implementations import IMPLEMENTATIONS, Implementation
 from testcases import MeasurementRealLink, Perspective, TestCase
 from utils import TerminalFormatter, random_string
 

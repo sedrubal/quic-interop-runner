@@ -2,10 +2,10 @@
 
 import argparse
 import sys
-from typing import List, Literal, Tuple, Type, Union
+from typing import List, Tuple, Type
 
 import testcases
-from implementations import IMPLEMENTATIONS, Role
+from implementations import IMPLEMENTATIONS
 from interop import InteropRunner
 from testcases import MEASUREMENTS, TESTCASES
 

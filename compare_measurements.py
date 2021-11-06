@@ -136,16 +136,13 @@ class CompareCli:
             ):
                 compare_result[self.miss_in_1_txt].append(combi)
                 num_missing_or_failed += 1
-            elif meas_result1.result == "failed" and meas_result2.result == "succeeded":
+            elif not meas_result1.succeeded and meas_result2.succeeded:
                 compare_result[self.failed_in_1_txt].append(combi)
                 num_missing_or_failed += 1
-            elif meas_result1.result == "succeeded" and meas_result2.result == "failed":
+            elif meas_result1.succeeded and not meas_result2.succeeded:
                 compare_result[self.failed_in_2_txt].append(combi)
                 num_missing_or_failed += 1
-            elif (
-                meas_result1.result == "succeeded"
-                and meas_result2.result == "succeeded"
-            ):
+            elif meas_result1.succeeded and meas_result2.succeeded:
                 self._unit = meas_result1.unit
                 assert meas_result1.unit == meas_result2.unit
                 eff1 = meas_result1.avg / theoretical_max_value1

@@ -121,15 +121,14 @@ class CompareCli:
             ):
                 compare_result["missing in 1"].append(combi)
                 num_missing_or_failed += 1
-            elif meas_result1.result == "failed" and meas_result2.result == "succeeded":
+            elif not meas_result1.succeeded and meas_result2.succeeded:
                 compare_result["failed in 1"].append(combi)
                 num_missing_or_failed += 1
-            elif meas_result1.result == "succeeded" and meas_result2.result == "failed":
+            elif meas_result1.succeeded and not meas_result2.succeeded:
                 compare_result["failed in 2"].append(combi)
                 num_missing_or_failed += 1
             elif (
-                meas_result1.result == "succeeded"
-                and meas_result2.result == "succeeded"
+                meas_result1.succeeded and meas_result2.succeeded
             ):
                 assert meas_result1.unit == meas_result2.unit
                 self._unit = meas_result1.unit

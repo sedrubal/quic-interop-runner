@@ -1,15 +1,13 @@
+"""Test case definitions."""
 import abc
 import filecmp
 import logging
 import os
-import random
 import re
-import string
 import subprocess
 import sys
 import tempfile
 from datetime import timedelta
-from enum import Enum, IntEnum
 from functools import cached_property
 from pathlib import Path
 from typing import ClassVar, Optional, Type, Union
@@ -17,49 +15,17 @@ from typing import ClassVar, Optional, Type, Union
 from Crypto.Cipher import AES
 
 from custom_types import IPAddress
-from result import TestResult
+from enums import ECN, Perspective
+from exceptions import TestFailed, TestUnsupported
 from trace_analyzer import Direction, PacketType, TraceAnalyzer, get_packet_type
+from units import DataRate, FileSize, Time
+from utils import random_string
 
 LOGGER = logging.getLogger(name="quic-interop-runner")
 
 
-class FileSize:
-    KiB: ClassVar[int] = 1 << 10
-    MiB: ClassVar[int] = 1 << 20
-
-
-class DataRate:
-    KBPS: ClassVar[int] = 10 ** 3
-    MBPS: ClassVar[int] = 10 ** 6
-    GBPS: ClassVar[int] = 10 ** 9
-
-
-class Time:
-    S: ClassVar[int] = 1
-    MS: ClassVar[float] = 10 ** -3
-
-
 QUIC_DRAFT = 34  # draft-34
 QUIC_VERSION = hex(0x1)
-
-
-class Perspective(Enum):
-    SERVER = "server"
-    CLIENT = "client"
-
-
-class ECN(IntEnum):
-    NONE = 0
-    ECT1 = 1
-    ECT0 = 2
-    CE = 3
-
-
-def random_string(length: int):
-    """Generate a random string of fixed length"""
-    letters = string.ascii_lowercase
-
-    return "".join(random.choice(letters) for i in range(length))
 
 
 def generate_cert_chain(directory: str, length: int = 1):
