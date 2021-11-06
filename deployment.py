@@ -449,8 +449,6 @@ class Deployment:
 
         # exit
 
-        abort = False
-
         for container, container_data_structure in data_structure.items():
             thread: threading.Thread = container_data_structure.monitor_thread
             thread_timeout = max(0, timeout - (time.time() - start))
@@ -458,9 +456,11 @@ class Deployment:
                 if thread._started.is_set():  # noqa
                     thread.join(timeout=thread_timeout)
             except KeyboardInterrupt:
-                abort = True
                 print(end="\r", file=sys.stderr)
                 LOGGER.warning("Stopping containers")
+                end_callback(force=True)
+                thread.join(timeout=1)
+                sys.exit(1)
 
             if thread.is_alive():
                 # timeout
@@ -473,9 +473,6 @@ class Deployment:
                     end_callback(force=True)
                     thread.join()
 
-        if abort:
-            sys.exit(1)
-
         for container in containers:
             status = get_container_status(container)
 
@@ -485,7 +482,6 @@ class Deployment:
                     container.name,
                     status.value,
                 )
-                #  breakpoint()
                 failed = True
 
                 break
