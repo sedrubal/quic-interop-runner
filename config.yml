@@ -1,6 +1,8 @@
 ---
 
-tshark_bin: /home/se/Documents/programming/git/wiresharek/build/run/tshark
+# tshark_bin: /home/se/Documents/programming/git/wiresharek/build/run/tshark
+
+# pyshark_debug: true
 
 docker_hosts:
   default: "unix:///var/run/docker.sock"

@@ -137,10 +137,11 @@ class TraceAnalyzer:
             ip6_addr,
         ) -> str:
             ip4_filter = f"ip.src=={ip4_addr}" if ip4_addr else None
-            ip6_filter = f"ip.src=={ip6_addr}" if ip6_addr else None
+            ip6_filter = f"ipv6.src=={ip6_addr}" if ip6_addr else None
             assert ip4_filter or ip6_filter
 
             if ip4_filter and ip6_filter:
+                # use "or" connection to connect both ip filters
                 return f"{display_filter} ({ip4_filter} || {ip6_filter}) && "
             else:
                 ip_filter = ip4_filter or ip6_filter
@@ -178,7 +179,6 @@ class TraceAnalyzer:
                 packets.append(packet)
             cap.close()
         except pyshark.capture.capture.TSharkCrashException as exc:
-            breakpoint()
             LOGGER.error(exc)
 
         if self._keylog_file is not None:

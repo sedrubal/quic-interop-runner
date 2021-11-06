@@ -211,13 +211,13 @@ class TestCase(abc.ABC):
             if ip_addr.version == 4:
                 ipv4_client = ip_addr.exploded
             elif ip_addr.version == 6:
-                ipv4_client = ip_addr.exploded
+                ipv6_client = ip_addr.exploded
 
         for ip_addr in self._client_server_addrs:
             if ip_addr.version == 4:
                 ipv4_server = ip_addr.exploded
             elif ip_addr.version == 6:
-                ipv4_server = ip_addr.exploded
+                ipv6_server = ip_addr.exploded
 
         assert (ipv4_client or ipv6_client) and (ipv4_server or ipv6_server)
 
@@ -241,13 +241,13 @@ class TestCase(abc.ABC):
             if ip_addr.version == 4:
                 ipv4_client = ip_addr.exploded
             elif ip_addr.version == 6:
-                ipv4_client = ip_addr.exploded
+                ipv6_client = ip_addr.exploded
 
         for ip_addr in self._server_server_addrs:
             if ip_addr.version == 4:
                 ipv4_server = ip_addr.exploded
             elif ip_addr.version == 6:
-                ipv4_server = ip_addr.exploded
+                ipv6_server = ip_addr.exploded
 
         assert (ipv4_client or ipv6_client) and (ipv4_server or ipv6_server)
 
@@ -369,7 +369,6 @@ class TestCase(abc.ABC):
         return size
 
     def _check_traces(self):
-        breakpoint()
         self._server_trace.validate_pcap()
         self._client_trace.validate_pcap()
 
