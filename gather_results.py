@@ -29,6 +29,7 @@ ANALYZE_LAST_N_LINES = 100
 
 class Reason(Enum):
     NO_OUTPUT_FILE = "no output file"
+    CUT_SHORT_PCAP = ("pcap appears to have been cut short in the middle of a packet",)
     TSHARK_CRASHED = "TShark seems to have crashed"
     TIMEOUT = "timeout"
     NO_KEYLOG_FILE = "no key log file"
@@ -41,7 +42,6 @@ class Reason(Enum):
 
 
 LINE_REASON_MAPPING = {
-    re.compile(r".*TShark seems to have crashed.*"): Reason.TSHARK_CRASHED,
     re.compile(r".*Test failed: took longer than.*"): Reason.TIMEOUT,
     re.compile(r".*No key log file found.*"): Reason.NO_OUTPUT_FILE,
     re.compile(r".*Wrong version\..*"): Reason.WRONG_VERSION,
@@ -54,6 +54,15 @@ LINE_REASON_MAPPING = {
     re.compile(
         r".*Illegal instruction\s+\(core dumped\) \/quicly\/cli.*"
     ): Reason.KNOWN_QUICLY_ISSUE,
+    re.compile(
+        r".*appears to have been cut short in the middle of a packet.*"
+    ): Reason.CUT_SHORT_PCAP,
+    re.compile(
+        r".*TShark seems to have crashed \(retcode: 2\).*"
+    ): Reason.CUT_SHORT_PCAP,
+    re.compile(
+        r".*TShark seems to have crashed \(retcode: ([^2]|\d\d+)\).*"
+    ): Reason.TSHARK_CRASHED,
 }
 
 
