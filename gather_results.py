@@ -253,6 +253,8 @@ class GatherResult:
                 run.reason = self.get_reason(
                     test_result.log_dir_for_test.path / "output.txt"
                 )
+        else:
+            run.reason = None
 
         self.session.add(run)
         self.session.commit()
@@ -308,12 +310,13 @@ class GatherResult:
             run.avg = meas_result.avg
             run.var = meas_result.var
 
-        breakpoint()
         if meas_result.result == TestResult.FAILED and meas_result.repetition_log_dirs:
             if not run.reason or not self.skip_existing_reasons:
                 run.reason = self.get_reason(
                     meas_result.repetition_log_dirs[-1] / "output.txt"
                 )
+        else:
+            run.reason = None
 
         self.session.add(run)
         self.session.commit()
