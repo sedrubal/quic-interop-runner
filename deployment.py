@@ -434,8 +434,7 @@ class Deployment:
                             "Some containers did not start successfully. Exiting."
                         )
                         LOGGER.error(different_status_str)
-                        timeout = 0
-                        end_callback()
+                        end_callback(force=True)
                         failed = True
 
                         # don't start next stage
@@ -453,7 +452,7 @@ class Deployment:
             thread: threading.Thread = container_data_structure.monitor_thread
             thread_timeout = max(0, timeout - (time.time() - start))
             try:
-                if thread._started.is_set():  # noqa
+                if thread._started.is_set():  # type: ignore
                     thread.join(timeout=thread_timeout)
             except KeyboardInterrupt:
                 print(end="\r", file=sys.stderr)
