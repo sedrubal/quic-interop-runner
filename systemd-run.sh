@@ -5,7 +5,7 @@ set -eu
 # Script to run interop runner while telling systemd / linux through cgroups to controll memory and CPU usage.
 #
 
-# SLICE=user.slice
+SLICE=user.slice
 # --slice="${SLICE}" \
 # --user \
 # --uid="$(id -u)" \
@@ -17,7 +17,7 @@ exec systemd-run \
     --collect \
     --same-dir \
     --wait \
-    --slice-inherit \
+    --slice="${SLICE}" \
     --description="QUIC Interop Runner with constrained CPU and Memory usage" \
     --property=CPUQuota=95% \
     --property=MemoryLimit=95% \
