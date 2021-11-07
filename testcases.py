@@ -385,6 +385,19 @@ class TestCase(abc.ABC):
             self._download_dir.cleanup()
             self._download_dir = None
 
+        # clear traces: https://stackoverflow.com/a/62662941/3077972
+        try:
+            del self._server_trace.value  # type: ignore
+        except AttributeError:
+            pass
+        try:
+            del self._client_trace.value  # type: ignore
+        except AttributeError:
+            pass
+
+    def __del__(self):
+        self.cleanup()
+
     @abc.abstractmethod
     def get_paths(self) -> list[str]:
         pass
