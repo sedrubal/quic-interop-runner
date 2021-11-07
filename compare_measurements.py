@@ -9,6 +9,7 @@ import requests
 from matplotlib import pyplot as plt
 from termcolor import colored, cprint
 
+from enums import TestResult
 from result_parser import Result
 from utils import Subplot
 
@@ -131,8 +132,8 @@ class CompareCli:
             meas_result1 = lookup1.pop(combi, None)
 
             if not meas_result1 or (
-                meas_result1.result == "unsupported"
-                and meas_result2.result != "unsupported"
+                meas_result1.result == TestResult.UNSUPPORTED
+                and meas_result2.result != TestResult.UNSUPPORTED
             ):
                 compare_result[self.miss_in_1_txt].append(combi)
                 num_missing_or_failed += 1

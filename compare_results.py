@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-
 import argparse
 from functools import cached_property
 from pathlib import Path
@@ -9,6 +8,7 @@ import requests
 from matplotlib import pyplot as plt
 from termcolor import colored, cprint
 
+from enums import TestResult
 from result_parser import Result
 from utils import Subplot
 
@@ -116,8 +116,8 @@ class CompareCli:
             meas_result1 = lookup1.pop(combi, None)
 
             if not meas_result1 or (
-                meas_result1.result == "unsupported"
-                and meas_result2.result != "unsupported"
+                meas_result1.result == TestResult.UNSUPPORTED
+                and meas_result2.result != TestResult.UNSUPPORTED
             ):
                 compare_result["missing in 1"].append(combi)
                 num_missing_or_failed += 1
@@ -127,9 +127,7 @@ class CompareCli:
             elif meas_result1.succeeded and not meas_result2.succeeded:
                 compare_result["failed in 2"].append(combi)
                 num_missing_or_failed += 1
-            elif (
-                meas_result1.succeeded and meas_result2.succeeded
-            ):
+            elif meas_result1.succeeded and meas_result2.succeeded:
                 assert meas_result1.unit == meas_result2.unit
                 self._unit = meas_result1.unit
                 # compare avg

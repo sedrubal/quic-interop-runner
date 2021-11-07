@@ -19,6 +19,7 @@ from sqlalchemy_utils import UUIDType
 
 from result_parser import ExtendedMeasurementResult, ExtendedTestResult, Result
 from utils import TerminalFormatter
+from enums import TestResult
 
 Base = declarative_base()
 
@@ -82,7 +83,7 @@ class TestCaseRun(Base):
     test_abbr = sa.Column(sa.String(255), nullable=False)
     client = sa.Column(sa.String(255), nullable=False)
     server = sa.Column(sa.String(255), nullable=False)
-    result = sa.Column(sa.String(255))
+    result = sa.Column(sa.Enum(TestResult))
     reason = sa.Column(sa.Enum(Reason), nullable=True)
     path = sa.Column(sa.String(512))
 
@@ -94,7 +95,7 @@ class MeasurementRun(Base):
     test_abbr = sa.Column(sa.String(255), nullable=False)
     client = sa.Column(sa.String(255), nullable=False)
     server = sa.Column(sa.String(255), nullable=False)
-    result = sa.Column(sa.String(255))
+    result = sa.Column(sa.Enum(TestResult))
     reason = sa.Column(sa.Enum(Reason), nullable=True)
     planned_repetitions = sa.Column(sa.Integer)
     avg = sa.Column(sa.Integer)
@@ -247,7 +248,7 @@ class GatherResult:
         run.result = test_result.result
         run.path = str(test_result.log_dir_for_test.path.absolute())
 
-        if test_result.result == "failed":
+        if test_result.result == TestResult.FAILED:
             if not run.reason or not self.skip_existing_reasons:
                 run.reason = self.get_reason(
                     test_result.log_dir_for_test.path / "output.txt"
@@ -307,7 +308,8 @@ class GatherResult:
             run.avg = meas_result.avg
             run.var = meas_result.var
 
-        if meas_result.result == "failed" and meas_result.repetition_log_dirs:
+        breakpoint()
+        if meas_result.result == TestResult.FAILED and meas_result.repetition_log_dirs:
             if not run.reason or not self.skip_existing_reasons:
                 run.reason = self.get_reason(
                     meas_result.repetition_log_dirs[-1] / "output.txt"

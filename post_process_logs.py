@@ -19,7 +19,7 @@ from typing import Optional, Union
 
 from termcolor import colored, cprint
 
-from enums import PostProcessingMode
+from enums import PostProcessingMode, TestResult
 from result_parser import Result
 from utils import YaspinWrapper
 
@@ -276,13 +276,13 @@ class PostProcessor:
         """Post process in result log dir."""
 
         for test_result in result.all_test_results:
-            if test_result.result == "unsupported":
+            if test_result.result == TestResult.UNSUPPORTED:
                 continue
 
             self.post_process_test_repetition_run_dir(test_result.log_dir_for_test.path)
 
         for meas_result in result.all_measurement_results:
-            if meas_result.result == "unsupported":
+            if meas_result.result == TestResult.UNSUPPORTED:
                 continue
 
             for repetition_log_dir in meas_result.repetition_log_dirs:
