@@ -30,6 +30,7 @@ termcolor.ATTRIBUTES["italic"] = 3
 
 T = TypeVar("T")
 
+
 def random_string(length: int):
     """Generate a random string of fixed length"""
     letters = string.ascii_lowercase

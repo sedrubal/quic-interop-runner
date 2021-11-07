@@ -19,8 +19,16 @@ from termcolor import colored, cprint
 from enums import CacheMode, Direction, PlotMode, Side
 from tango_colors import Tango
 from trace_analyzer2 import ParsingError, Trace
-from utils import (Statistics, Subplot, TraceTriple, YaspinWrapper,
-                   create_relpath, map2d, map3d, natural_data_rate)
+from utils import (
+    Statistics,
+    Subplot,
+    TraceTriple,
+    YaspinWrapper,
+    create_relpath,
+    map2d,
+    map3d,
+    natural_data_rate,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterable
@@ -749,26 +757,21 @@ class PlotCli:
             ) as spinner:
                 request_timestamps = [
                     [layer.norm_time for layer in trace.request_stream_packets]
-
                     for trace in self.traces
                 ]
                 response_timestamps = [
                     [layer.norm_time for layer in trace.response_stream_packets]
-
                     for trace in self.traces
                 ]
                 request_packet_numbers = [
                     [int(layer.packet_number) for layer in trace.request_stream_packets]
-
                     for trace in self.traces
                 ]
                 response_packet_numbers = [
                     [
                         int(layer.packet_number)
-
                         for layer in trace.response_stream_packets
                     ]
-
                     for trace in self.traces
                 ]
                 all_packet_numbers = [request_packet_numbers, response_packet_numbers]
@@ -855,18 +858,15 @@ class PlotCli:
                     np.array(
                         [packet.norm_time for packet in trace.server_client_packets]
                     )
-
                     for trace in self.traces
                 ]
                 file_sizes = [
                     np.array(
                         [
                             trace.get_quic_payload_size(packet)
-
                             for packet in trace.server_client_packets
                         ]
                     )
-
                     for trace in self.traces
                 ]
                 accumulated_transmitted_file_size = [
@@ -1317,7 +1317,6 @@ class PlotCli:
                         attrs=["bold"] if i == 0 else None,
                     ),
                     create_relpath(right_trace.keylog_file)
-
                     if right_trace.keylog_file
                     else colored("-", color="grey"),
                 ]
