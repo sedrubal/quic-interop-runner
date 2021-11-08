@@ -327,20 +327,29 @@ class Deployment:
                         ].values()
                     }
 
+        def stop_container(container: Container, force=False):
+            log_buf(container)
+
+            if get_container_status(container) in (ContainerStatus.RUNNING,):
+                if force:
+                    log_callback(container, "Killing container...")
+                    container.kill()
+                else:
+                    log_callback(container, "Stopping container...")
+                    container.stop()
+            #  else:
+            #      log_callback(container, f"status={container.status}")
+
+            log_buf(container)
+
         def end_callback(force=False):
-            for container in reversed(containers):
-
-                if get_container_status(container) in (ContainerStatus.RUNNING,):
-                    if force:
-                        log_callback(container, "Killing container...")
-                        container.kill()
-                    else:
-                        log_callback(container, "Stopping container...")
-                        container.stop()
-                #  else:
-                #      log_callback(container, f"status={container.status}")
-
-                log_buf(container)
+            with concurrent.futures.ThreadPoolExecutor() as exc:
+                tmp = exc.map(
+                    lambda container: stop_container(container, force),
+                    reversed(containers),
+                )
+                tmp = list(tmp)
+                assert all(entry is None for entry in tmp)
 
         @dataclass
         class DataStructureEntry:
