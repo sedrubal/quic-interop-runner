@@ -3,6 +3,7 @@ import argparse
 import logging
 import os
 import random
+import re
 import statistics
 import string
 import sys
@@ -341,8 +342,10 @@ class UrlOrPath:
                 )
             )
 
-    def __truediv__(self, other: Union[str, Path]) -> "UrlOrPath":
-        if isinstance(self.src, Path):
+    def __truediv__(self, other: Union[str, Path, "UrlOrPath"]) -> "UrlOrPath":
+        if isinstance(other, UrlOrPath):
+            return UrlOrPath(self.path / other.path)
+        elif isinstance(self.src, Path):
             return UrlOrPath(self.path / other)
         else:
             return UrlOrPath(
@@ -355,8 +358,10 @@ class UrlOrPath:
                 )
             )
 
-    def __rtruediv__(self, other: Union[str, Path]) -> "UrlOrPath":
-        if isinstance(self.src, Path):
+    def __rtruediv__(self, other: Union[str, Path, "UrlOrPath"]) -> "UrlOrPath":
+        if isinstance(other, UrlOrPath):
+            return UrlOrPath(self.path / other.path)
+        elif isinstance(self.src, Path):
             return UrlOrPath(Path(other) / self.path)
         else:
             return UrlOrPath(
@@ -374,6 +379,17 @@ class UrlOrPath:
 
     def is_absolute(self) -> bool:
         return self.path.is_absolute()
+
+    def is_file(self) -> bool:
+        if isinstance(self.src, Path):
+            return self.path.is_file()
+        else:
+            resp = requests.head(self.src)
+            if resp.status_code == 404:
+                return False
+
+            resp.raise_for_status()
+            return True
 
     @property
     def name(self):
@@ -480,3 +496,11 @@ class TerminalFormatter(logging.Formatter):
             color=self.colors[record.levelno],
             attrs=self.attrs.get(record.levelno),
         )
+
+
+class LogFileFormatter(logging.Formatter):
+    def format(self, record):
+        msg = super(LogFileFormatter, self).format(record)
+        # remove color control characters
+
+        return re.compile(r"\x1B[@-_][0-?]*[ -/]*[@-~]").sub("", msg)

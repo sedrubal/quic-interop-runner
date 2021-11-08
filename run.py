@@ -2,6 +2,7 @@
 
 import argparse
 import sys
+from pathlib import Path
 from typing import List, Tuple, Type
 
 import testcases
@@ -65,6 +66,7 @@ def get_args():
         "--log-dir",
         help="log directory",
         default="",
+        type=Path,
     )
     parser.add_argument(
         "-f",
@@ -76,6 +78,7 @@ def get_args():
         "-j",
         "--json",
         help="output the matrix to file in json format",
+        type=Path,
     )
     parser.add_argument(
         "--skip-compliance-check",

@@ -17,6 +17,7 @@ from Crypto.Cipher import AES
 from custom_types import IPAddress
 from enums import ECN, Perspective
 from exceptions import TestFailed, TestUnsupported
+from result_parser import MeasurmentDescription, TestDescription
 from trace_analyzer import Direction, PacketType, TraceAnalyzer, get_packet_type
 from units import DataRate, FileSize, Time
 from utils import random_string
@@ -86,7 +87,13 @@ class TestCase(abc.ABC):
     @property
     @abc.abstractmethod
     def name(cls) -> str:
-        pass
+        """A long string for this test."""
+
+    @classmethod
+    @property
+    @abc.abstractmethod
+    def abbreviation(cls) -> str:
+        """A short string for this test."""
 
     @classmethod
     @property
@@ -125,11 +132,12 @@ class TestCase(abc.ABC):
         return 60
 
     @classmethod
-    def to_json(cls) -> dict:
-        return {
-            "name": cls.name,
-            "desc": cls.desc,
-        }
+    def to_desc(cls) -> TestDescription:
+        return TestDescription(
+            name=cls.name,
+            abbr=cls.abbreviation,
+            desc=cls.desc,
+        )
 
     @classmethod
     def urlprefix(cls) -> str:
@@ -433,14 +441,14 @@ class Measurement(TestCase):
         pass
 
     @classmethod
-    def to_json(cls) -> dict:
-        return {
-            **super().to_json(),
-            **{
-                "theoretical_max_value": cls.theoretical_max_value,
-                "repetitions": cls.repetitions,
-            },
-        }
+    def to_desc(cls) -> MeasurmentDescription:
+        return MeasurmentDescription(
+            name=cls.name,
+            abbr=cls.abbreviation,
+            desc=cls.desc,
+            theoretical_max_value=cls.theoretical_max_value,
+            repetitions=cls.repetitions,
+        )
 
 
 class TestCaseVersionNegotiation(TestCase):

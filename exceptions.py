@@ -7,3 +7,7 @@ class TestFailed(Exception):
 
 class TestUnsupported(Exception):
     pass
+
+
+class ConflictError(Exception):
+    pass

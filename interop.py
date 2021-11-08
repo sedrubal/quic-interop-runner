@@ -1,16 +1,14 @@
-import json
+import concurrent.futures
 import logging
-import re
 import shutil
 import statistics
 import sys
 import tempfile
-from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
+from itertools import chain
 from pathlib import Path
-from typing import Optional, Type
-from uuid import uuid4
+from typing import Iterable, Optional, Type
 
 import prettytable
 from termcolor import colored
@@ -18,11 +16,11 @@ from termcolor import colored
 import testcases
 from deployment import Deployment
 from enums import ImplementationRole, TestResult
-from exceptions import TestFailed, TestUnsupported
+from exceptions import ConflictError, TestFailed, TestUnsupported
 from implementations import Implementation
-from result_parser import Result
-from testcases import MEASUREMENTS, TESTCASES
-from utils import TerminalFormatter
+from result_parser import MeasurementResultInfo, Result, TestResultInfo
+from testcases import Measurement
+from utils import LogFileFormatter, TerminalFormatter
 
 CONSOLE_LOG_HANDLER = logging.StreamHandler(stream=sys.stderr)
 
@@ -37,14 +35,6 @@ class MeasurementResult:
     details: str
 
 
-class LogFileFormatter(logging.Formatter):
-    def format(self, record):
-        msg = super(LogFileFormatter, self).format(record)
-        # remove color control characters
-
-        return re.compile(r"\x1B[@-_][0-?]*[ -/]*[@-~]").sub("", msg)
-
-
 class InteropRunner:
     def __init__(
         self,
@@ -53,12 +43,12 @@ class InteropRunner:
         clients: list[str],
         tests: list[Type[testcases.TestCase]],
         measurements: list[Type[testcases.Measurement]],
-        output: str,
+        output: Optional[Path],
         debug: bool,
         save_files=False,
-        log_dir: Optional[str] = None,
-        skip_compliance_check=False,
-        retry_failed=False,
+        log_dir: Optional[Path] = None,
+        skip_compliance_check: bool = False,
+        retry_failed: bool = False,
     ):
         LOGGER.setLevel(logging.DEBUG)
 
@@ -69,44 +59,22 @@ class InteropRunner:
         CONSOLE_LOG_HANDLER.setFormatter(TerminalFormatter())
         LOGGER.addHandler(CONSOLE_LOG_HANDLER)
 
-        self._run_id = uuid4()
-        self._start_time = datetime.now()
+        start_time = datetime.now()
+
+        if not log_dir:
+            log_dir = Path(f"logs_{start_time:%Y-%m-%dT%H:%M:%S}")
+
         self._tests = tests
         self._measurements = measurements
         self._servers = servers
         self._clients = clients
         self._implementations = implementations
-        self._output = Path(output) if output else None
-        self._deployment = Deployment()
-
-        for impl_name in frozenset(self._servers) | frozenset(self._clients):
-            implementation = self._implementations[impl_name]
-            implementation.gather_infos_from_docker(self._deployment.get_docker_cli())
-
-        if not log_dir:
-            self._log_dir = Path(f"logs_{self._start_time:%Y-%m-%dT%H:%M:%S}")
-        else:
-            self._log_dir = Path(log_dir)
 
         self._save_files = save_files
         self._skip_compliance_check = skip_compliance_check
         self._retry_failed = retry_failed
 
-        self.test_results = defaultdict[
-            str, defaultdict[str, dict[Type[testcases.TestCase], TestResult]]
-        ](
-            lambda: defaultdict[str, dict[Type[testcases.TestCase], TestResult]](
-                dict[Type[testcases.TestCase], TestResult]
-            )
-        )
-        self.measurement_results = defaultdict[
-            str,
-            defaultdict[str, dict[Type[testcases.Measurement], MeasurementResult]],
-        ](
-            lambda: defaultdict[
-                str, dict[Type[testcases.Measurement], MeasurementResult]
-            ](dict[Type[testcases.Measurement], MeasurementResult])
-        )
+        self._deployment = Deployment()
 
         self._num_skip_runs = 0
         self._nr_runs = (
@@ -114,121 +82,105 @@ class InteropRunner:
             * len(self._clients)
             * (len(self._tests) + sum(meas.repetitions for meas in self._measurements))
         )
-        self._nr_run = 0
+        self._nr_complete = 0
 
-        if self._output and self._output.is_file():
+        self._result = Result(
+            file_path=output,
+            log_dir=log_dir,
+            quic_version=int(testcases.QUIC_VERSION, base=16),
+            quic_draft=testcases.QUIC_DRAFT,
+            start_time=start_time,
+        )
+
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+
+            def add_impl(impl_name):
+                implementation = self._implementations[impl_name]
+                implementation.gather_infos_from_docker(
+                    self._deployment.get_docker_cli()
+                )
+                if impl_name in self._servers and impl_name in self._clients:
+                    role = ImplementationRole.BOTH
+                elif impl_name in self._servers:
+                    role = ImplementationRole.SERVER
+                elif impl_name in self._clients:
+                    role = ImplementationRole.CLIENT
+                else:
+                    assert False
+                self._result.add_implementation(implementation, role)
+                return True
+
+            future_results = executor.map(
+                add_impl, frozenset(self._servers) | frozenset(self._clients)
+            )
+            assert all(future_results)
+
+        for test in chain(self._tests, self._measurements):
+            self._result.add_test_description(test.to_desc())
+
+        if self._result.file_path and self._result.file_path.is_file():
             LOGGER.warning(
                 "Output json file %s already exists. Trying to resume run...",
-                self._output,
+                self._result.file_path,
             )
-            result = Result(self._output)
+            orig_result = Result(self._result.file_path)
+            orig_result.load_from_json()
+            self._result.end_time = datetime.now()
+            try:
+                self._result = orig_result.merge(self._result)
+            except ConflictError as err:
+                raise err
+                # sys.exit(err)
 
-            if result.log_dir.path.absolute() != self._log_dir.absolute():
-                sys.exit(
-                    f"You specified another log_dir than the result file {self._output} used before"
-                )
-
-            self._run_id = result.id
-            self._start_time = result.start_time
-            assert (
-                int(testcases.QUIC_VERSION, base=16) == result.quic_version
-            ), f"QUIC VERSION differs: {int(testcases.QUIC_VERSION, base=16)} != {result.quic_version}"
-            assert (
-                testcases.QUIC_DRAFT == result.quic_draft
-            ), f"QUIC draft differs: {testcases.QUIC_DRAFT} != {result.quic_draft}"
-
-            for impl_name in frozenset(self._servers) | frozenset(self._clients):
-                implementation = self._implementations[impl_name]
-                old_impl = result.implementations.get(impl_name)
-
-                if not old_impl:
-                    continue
-
-                if old_impl.image_id and old_impl.image_id != implementation.image_id:
-                    raise AssertionError(
-                        f"ID of image {implementation.name} differs from previous run."
-                        f" Previous: {old_impl.image_id} now: {implementation.image_id}"
-                    )
-
-                if old_impl.compliant is not None:
-                    implementation.compliant = old_impl.compliant
-
-                    if not implementation.compliant:
-                        LOGGER.warning(
-                            "Implementation %s seems not to be compliant.",
-                            implementation.name,
-                        )
-
-            testcases_mapping = {
-                testcase.abbreviation: testcase for testcase in TESTCASES
-            }
-
-            for test in result.all_test_results:
-                if not test.result or (
-                    self._retry_failed and TestResult(test.result) == TestResult.FAILED
-                ):
-                    continue
-
-                test_cls = testcases_mapping[test.test.abbr]
-
-                self.test_results[test.server.name][test.client.name][
-                    test_cls
-                ] = TestResult(test.result)
-
-                if (
-                    test.server.name in self._servers
-                    and test.client.name in self._clients
-                ):
-                    self._num_skip_runs += 1
-
-            measuements_mapping = {meas.abbreviation: meas for meas in MEASUREMENTS}
-
-            for res_meas in result.all_measurement_results:
-                meas_cls = measuements_mapping[res_meas.test.abbr]
-
-                if not res_meas.result or (
-                    self._retry_failed
-                    and TestResult(res_meas.result) == TestResult.FAILED
-                ):
-                    continue
-
-                if (
-                    res_meas.test.repetitions is not None
-                    and res_meas.test.repetitions != meas_cls.repetitions
-                ):
-                    LOGGER.debug(
-                        (
-                            "Measurement %s for server=%s and client=%s has a different amount "
-                            "of repetitions. Will delete logs and run measurement again.",
-                        ),
-                        res_meas.test.abbr,
-                        res_meas.server.name,
-                        res_meas.client.name,
-                    )
-                    shutil.rmtree(res_meas.log_dir_for_test.path, ignore_errors=True)
-
-                    continue
-                self.measurement_results[res_meas.server.name][res_meas.client.name][
-                    meas_cls
-                ] = MeasurementResult(
-                    result=TestResult(res_meas.result),
-                    details=res_meas.details,
-                )
-
-                if (
-                    res_meas.server.name in self._servers
-                    and res_meas.client.name in self._clients
-                ):
-                    self._num_skip_runs += meas_cls.repetitions
+            for client in self._clients:
+                for server in self._servers:
+                    for test_case in self._tests:
+                        try:
+                            test_result = self._result.get_test_result(
+                                server,
+                                client,
+                                test_case.abbreviation,
+                            )
+                        except KeyError:
+                            continue
+                        if test_result.succeeded or not self._retry_failed:
+                            self._num_skip_runs += 1
+                        elif (
+                            self._retry_failed
+                            and test_result.result == TestResult.FAILED
+                        ):
+                            self._result.remove_test_result(
+                                server, client, test_case.abbreviation
+                            )
+                    for meas_case in self._measurements:
+                        try:
+                            meas_result = self._result.get_measurement_result(
+                                server,
+                                client,
+                                meas_case.abbreviation,
+                            )
+                        except KeyError:
+                            continue
+                        if meas_result.succeeded or not self._retry_failed:
+                            assert meas_result.test.repetitions
+                            self._num_skip_runs += meas_result.test.repetitions
+                        elif (
+                            self._retry_failed
+                            and meas_result.result == TestResult.FAILED
+                        ):
+                            self._result.remove_measurement_result(
+                                server, client, meas_case.abbreviation
+                            )
 
             LOGGER.info(
                 "Skipping %d tests and measurement runs from previous run",
                 self._num_skip_runs,
             )
 
-        elif self._log_dir.is_dir():
-            sys.exit(f"Log dir {self._log_dir} already exists.")
-        LOGGER.info("Saving logs to %s.", self._log_dir)
+        elif self._result.log_dir.is_dir():
+            sys.exit(f"Log dir {self._result.log_dir} already exists.")
+
+        LOGGER.info("Saving logs to %s.", self._result.log_dir)
         LOGGER.info(
             "Will run %d tests and measurement runs",
             self._nr_runs - self._num_skip_runs,
@@ -291,14 +243,28 @@ class InteropRunner:
         return True
 
     def _print_results(self):
-        """print the interop table"""
-        LOGGER.info("Run took %s", datetime.now() - self._start_time)
+        """Print the interop tables."""
+        LOGGER.info("Run took %s", datetime.now() - self._result.start_time)
 
-        def get_letters(result):
-            return "".join([test.abbreviation for test in cell if cell[test] is result])
+        def get_letters(
+            tests_for_combi: Iterable[TestResultInfo],
+            result: TestResult,
+            color: str,
+        ) -> str:
+            return colored(
+                "".join(
+                    [
+                        test_result.test.abbr
+                        for test_result in tests_for_combi
+                        if test_result.result is result
+                    ]
+                ),
+                color=color,
+            )
 
-        if len(self._tests) > 0:
+        if self._tests:
             table = prettytable.PrettyTable()
+            table.title = "Test Cases"
             table.hrules = prettytable.ALL
             table.vrules = prettytable.ALL
             table.field_names = [""] + [name for name in self._servers]
@@ -307,16 +273,32 @@ class InteropRunner:
                 row = [client]
 
                 for server in self._servers:
-                    cell = self.test_results[server][client]
-                    res = colored(get_letters(TestResult.SUCCEEDED), "green") + "\n"
-                    res += colored(get_letters(TestResult.UNSUPPORTED), "grey") + "\n"
-                    res += colored(get_letters(TestResult.FAILED), "red")
-                    row += [res]
+                    tests_for_combi = self._result.get_test_results_for_combination(
+                        server, client
+                    ).values()
+                    res = "\n".join(
+                        (
+                            get_letters(
+                                tests_for_combi,
+                                TestResult.SUCCEEDED,
+                                "green",
+                            ),
+                            get_letters(
+                                tests_for_combi,
+                                TestResult.UNSUPPORTED,
+                                "grey",
+                            ),
+                            get_letters(tests_for_combi, TestResult.FAILED, "red"),
+                        )
+                    )
+                    row.append(res)
                 table.add_row(row)
+
             print(table)
 
-        if not self._measurements:
+        if self._measurements:
             table = prettytable.PrettyTable()
+            table.title = "Measurements"
             table.hrules = prettytable.ALL
             table.vrules = prettytable.ALL
             table.field_names = [""] + [name for name in self._servers]
@@ -325,11 +307,12 @@ class InteropRunner:
                 row = [client]
 
                 for server in self._servers:
-                    cell = self.measurement_results[server][client]
                     results = []
 
                     for measurement in self._measurements:
-                        res = cell[measurement]
+                        res = self._result.get_measurement_result(
+                            server, client, measurement.abbreviation
+                        )
 
                         if not hasattr(res, "result"):
                             continue
@@ -345,94 +328,16 @@ class InteropRunner:
                             results.append(colored(measurement.abbreviation, "grey"))
                         elif res.result == TestResult.FAILED:
                             results.append(colored(measurement.abbreviation, "red"))
-                    row += ["\n".join(results)]
+                    row.append("\n".join(results))
                 table.add_row(row)
+
             print(table)
 
     def _export_results(self):
-        if not self._output:
+        if not self._result.file_path:
             return
-        servers = sorted(
-            frozenset(self._servers)
-            | frozenset(self.test_results.keys())
-            | frozenset(self.measurement_results.keys())
-        )
-        clients = sorted(
-            frozenset(self._clients)
-            | frozenset(
-                client
-                for mapping in self.test_results.values()
-                for client in mapping.keys()
-            )
-            | frozenset(
-                client
-                for mapping in self.measurement_results.values()
-                for client in mapping.keys()
-            )
-        )
-        out = {
-            "id": str(self._run_id),
-            "start_time": self._start_time.timestamp(),
-            "end_time": datetime.now().timestamp(),
-            "log_dir": str(self._log_dir),
-            "servers": servers,
-            "clients": clients,
-            "urls": {
-                x: self._implementations[x].url for x in self._servers + self._clients
-            },
-            "images": {
-                x: self._implementations[x].img_metadata_json()
-                for x in sorted(frozenset(servers) | frozenset(clients))
-            },
-            "tests": {
-                test.abbreviation: test.to_json()
-                for test in self._tests + self._measurements
-            },
-            "quic_draft": testcases.QUIC_DRAFT,
-            "quic_version": testcases.QUIC_VERSION,
-            "results": [],
-            "measurements": [],
-        }
-
-        for client in clients:
-            for server in servers:
-                results = []
-
-                for test in self._tests:
-                    result = (
-                        self.test_results.get(server, {})
-                        .get(client, {})
-                        .get(test, None)
-                    )
-
-                    results.append(
-                        {
-                            "abbr": test.abbreviation,
-                            "result": result.value if result else None,
-                        }
-                    )
-                out["results"].append(results)
-
-                measurements = []
-
-                for measurement in self._measurements:
-
-                    res = (
-                        self.measurement_results.get(server, {})
-                        .get(client, {})
-                        .get(measurement, None)
-                    )
-                    measurements.append(
-                        {
-                            "abbr": measurement.abbreviation,
-                            "result": res.result.value if res else None,
-                            "details": res.details if res else None,
-                        }
-                    )
-                out["measurements"].append(measurements)
-
-        with self._output.open("w") as file:
-            json.dump(out, file, indent=" " * 4)
+        self._result.end_time = datetime.now()
+        self._result.save()
 
     def _run_testcase(
         self,
@@ -452,7 +357,7 @@ class InteropRunner:
         repetitions: Optional[int] = None,
     ) -> tuple[TestResult, Optional[float]]:
         start_time = datetime.now()
-        log_dir: Path = self._log_dir / f"{server}_{client}" / test.name
+        log_dir: Path = self._result.log_dir.path / f"{server}_{client}" / test.name
 
         if log_dir_prefix:
             log_dir /= log_dir_prefix
@@ -570,7 +475,7 @@ class InteropRunner:
 
         # measurements also have a value
 
-        if hasattr(testcase, "result"):
+        if isinstance(testcase, Measurement):
             value = testcase.result
         else:
             value = None
@@ -586,7 +491,7 @@ class InteropRunner:
             f" ({value})" if value else "",
         )
 
-        self._nr_run += 1
+        self._nr_complete += 1
 
         return status, value
 
@@ -632,7 +537,7 @@ class InteropRunner:
     def progress(self) -> int:
         """Return the progress in percent."""
 
-        return int((self._nr_run + self._num_skip_runs) * 100 / self._nr_runs)
+        return int((self._nr_complete + self._num_skip_runs) * 100 / self._nr_runs)
 
     def run(self):
         """run the interop test suite and output the table"""
@@ -676,18 +581,31 @@ class InteropRunner:
                 # run the test cases
 
                 for testcase in self._tests:
-                    if testcase in self.test_results[server][client].keys():
+                    try:
+                        existing_test_result = self._result.get_test_result(
+                            server, client, testcase.abbreviation
+                        )
+                    except KeyError:
+                        existing_test_result = None
+                    if existing_test_result and existing_test_result.result:
                         LOGGER.info(
-                            "Skipping testcase %s for server=%s and client=%s, because it was executed before.",
+                            "Skipping testcase %s for server=%s and client=%s, because it was executed before. Result: %s",
                             testcase.abbreviation,
                             server,
                             client,
+                            existing_test_result.result.value,
                         )
 
                         continue
 
                     status = self._run_testcase(server, client, testcase)
-                    self.test_results[server][client][testcase] = status
+                    self._result.add_test_result(
+                        server,
+                        client,
+                        testcase.abbreviation,
+                        status,
+                        update_failed=self._retry_failed,
+                    )
 
                     if status == TestResult.FAILED:
                         nr_failed += 1
@@ -698,12 +616,19 @@ class InteropRunner:
                 # run the measurements
 
                 for measurement in self._measurements:
-                    if measurement in self.measurement_results[server][client].keys():
+                    try:
+                        existing_meas_result = self._result.get_measurement_result(
+                            server, client, measurement.abbreviation
+                        )
+                    except KeyError:
+                        existing_meas_result = None
+                    if existing_meas_result and existing_meas_result.result:
                         LOGGER.info(
-                            "Skipping measurement %s for server=%s and client=%s, because it was executed before.",
+                            "Skipping measurement %s for server=%s and client=%s, because it was executed before. Result: %s",
                             measurement.abbreviation,
                             server,
                             client,
+                            existing_meas_result.result.value,
                         )
 
                         continue
@@ -713,7 +638,14 @@ class InteropRunner:
                         client,
                         measurement,
                     )
-                    self.measurement_results[server][client][measurement] = res
+                    self._result.add_measurement_result(
+                        server=server,
+                        client=client,
+                        meas_abbr=measurement.abbreviation,
+                        meas_result=res.result,
+                        details=res.details,
+                        update_failed=self._retry_failed,
+                    )
 
                     # save results after each run
                     self._export_results()

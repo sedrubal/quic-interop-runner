@@ -10,115 +10,26 @@ from datetime import datetime, timedelta
 from functools import cached_property
 from itertools import chain
 from pathlib import Path
-from typing import Literal, Optional, TypedDict, Union, cast
+from typing import Optional, Union, cast
 from uuid import UUID, uuid4
 
 from dateutil.parser import parse as parse_date
 
 from enums import ImplementationRole, TestResult
+from exceptions import ConflictError
+from implementations import IMPLEMENTATIONS, Implementation
+from result_json_types import (
+    JSONMeasurement,
+    JSONMeasurementDescr,
+    JSONResult,
+    JSONTestDescr,
+    JSONTestResult,
+)
 from utils import UrlOrPath
 
 LOGGER = logging.getLogger(name="quic-interop-runner")
 
 DETAILS_RE = re.compile(r"(?P<avg>\d+) \(± (?P<var>\d+)\) (?P<unit>\w+)")
-
-
-class RawTestDescr(TypedDict):
-    """A test description as parsed from result.json."""
-
-    name: str
-    desc: str
-
-
-class RawMeasurementDescr(TypedDict):
-    """A measurement description as parsed from result.json."""
-
-    name: str
-    desc: str
-    theoretical_max_value: Optional[float]
-    repetitions: Optional[int]
-
-
-RawTestResultResult = Optional[str]
-
-
-class RawTestResult(TypedDict):
-    """A test result as parsed from result.json."""
-
-    abbr: str
-    result: RawTestResultResult
-
-
-class RawMeasurement(TypedDict):
-    """A measurement result as parsed from result.json."""
-
-    abbr: str
-    result: RawTestResultResult
-    details: str
-
-
-class RawImageMetadata(TypedDict):
-    """Metadata about an image."""
-
-    image: str
-    id: str
-    repo_digests: Optional[list[str]]
-    versions: list[str]
-    created: Optional[str]
-    compliant: Optional[bool]
-
-
-class RawResult(TypedDict):
-    """The unmodified content of result.json."""
-
-    id: Optional[str]
-    start_time: float
-    end_time: float
-    log_dir: str
-    servers: list[str]
-    clients: list[str]
-    urls: dict[str, str]
-    images: Optional[dict[str, RawImageMetadata]]
-    tests: dict[str, Union[RawTestDescr, RawMeasurementDescr]]
-    quic_draft: int
-    quic_version: str
-    results: list[list[RawTestResult]]
-    measurements: list[list[RawMeasurement]]
-
-
-@dataclass(frozen=True)
-class Implementation:
-    """An server and/or client implementation with metadata."""
-
-    name: str
-    url: str
-    role: ImplementationRole
-
-    image: Optional[str] = None
-    image_id: Optional[str] = None
-    image_repo_digests: Optional[frozenset[str]] = None
-    image_versions: Optional[frozenset[str]] = None
-    image_created: Optional[datetime] = None
-    compliant: Optional[bool] = None
-
-    def img_metadata_json(self) -> Optional[RawImageMetadata]:
-        if not self.image or not self.image_id:
-            return None
-
-        return {
-            "image": self.image,
-            "id": self.image_id,
-            "repo_digests": list(self.image_repo_digests)
-            if self.image_repo_digests
-            else [],
-            "versions": list(self.image_versions) if self.image_versions else [],
-            "created": (
-                self.image_created.strftime("%Y-%m-%d %H:%M")
-                if self.image_created
-                else None
-            ),
-            "compliant": self.compliant,
-        }
 
 
 @dataclass(frozen=True)
@@ -129,10 +40,10 @@ class TestDescription:
     name: str
     desc: str
 
-    def to_raw(self) -> RawTestDescr:
+    def to_json(self) -> JSONTestDescr:
         """Convert to a raw test description."""
 
-        return RawTestDescr(
+        return JSONTestDescr(
             name=self.name,
             desc=self.desc,
         )
@@ -145,10 +56,10 @@ class MeasurmentDescription(TestDescription):
     theoretical_max_value: Optional[float]
     repetitions: Optional[int]
 
-    def to_raw(self) -> RawMeasurementDescr:
+    def to_json(self) -> JSONMeasurementDescr:
         """Convert to a raw test description."""
 
-        return RawMeasurementDescr(
+        return JSONMeasurementDescr(
             name=self.name,
             desc=self.desc,
             theoretical_max_value=self.theoretical_max_value,
@@ -167,7 +78,7 @@ class MeasurmentDescription(TestDescription):
 
 
 @dataclass(frozen=True)  # type: ignore
-class _ExtendedTestResultMixin(ABC):
+class _ResultInfoMixin(ABC):
     result: Optional[TestResult]
     server: Implementation
     client: Implementation
@@ -193,28 +104,28 @@ class _ExtendedTestResultMixin(ABC):
         return self._base_log_dir / self.combination / self.test.name
 
     @abstractmethod
-    def to_raw(self):
+    def to_json(self):
         """Convert to a raw result."""
 
 
 @dataclass(frozen=True)
-class ExtendedTestResult(_ExtendedTestResultMixin):
-    """Test result with more information."""
+class TestResultInfo(_ResultInfoMixin):
+    """Information about a test result."""
 
     test: TestDescription
 
-    def to_raw(self) -> RawTestResult:
+    def to_json(self) -> JSONTestResult:
         """Return a raw measurement result."""
 
-        return RawTestResult(
+        return JSONTestResult(
             abbr=self.test.abbr,
             result=self.result.value if self.result else None,
         )
 
 
 @dataclass(frozen=True)
-class ExtendedMeasurementResult(_ExtendedTestResultMixin):
-    """Measurement result with more information."""
+class MeasurementResultInfo(_ResultInfoMixin):
+    """Information about a measurement result."""
 
     test: MeasurmentDescription
     details: str
@@ -280,93 +191,276 @@ class ExtendedMeasurementResult(_ExtendedTestResultMixin):
 
         return self._details_match.group("unit")
 
-    def to_raw(self) -> RawMeasurement:
+    def to_json(self) -> JSONMeasurement:
         """Return a raw measurement result."""
 
-        return RawMeasurement(
+        return JSONMeasurement(
             abbr=self.test.abbr,
             result=self.result.value if self.result else None,
             details=self.details,
         )
 
 
-TestResults = dict[str, dict[str, dict[str, ExtendedTestResult]]]
-MeasurementResults = dict[str, dict[str, dict[str, ExtendedMeasurementResult]]]
+TestResults = dict[str, dict[str, dict[str, TestResultInfo]]]
+MeasurementResults = dict[str, dict[str, dict[str, MeasurementResultInfo]]]
 
 
 class Result:
     """A pythonic version of result.json."""
 
     def __init__(
-        self, file_path: Union[Path, str], raw_data: Optional[RawResult] = None
+        self,
+        file_path: Union[None, UrlOrPath, Path, str],
+        log_dir: Union[None, UrlOrPath, Path, str] = None,
+        id: Optional[UUID] = None,
+        start_time: Optional[datetime] = None,
+        end_time: Optional[datetime] = None,
+        quic_draft: Optional[int] = None,
+        quic_version: Optional[int] = None,
     ):
-        self.file_path = UrlOrPath(file_path)
-        self._raw_data = raw_data
-        self._test_results: Optional[TestResults] = None
-        self._measurement_results: Optional[MeasurementResults] = None
-        self._implementations_changed = False
+        self.file_path: Optional[UrlOrPath] = (
+            UrlOrPath(file_path) if file_path else None
+        )
+        self._log_dir: Optional[UrlOrPath] = UrlOrPath(log_dir) if log_dir else None
+
+        self._id: Optional[UUID] = id
+        self._start_time: Optional[datetime] = start_time
+        self._end_time: Optional[datetime] = end_time
+        self._quic_draft: Optional[int] = quic_draft
+        self._quic_version: Optional[int] = quic_version
+        self._servers = dict[str, Implementation]()
+        self._clients = dict[str, Implementation]()
+        self._test_descriptions = dict[
+            str, Union[TestDescription, MeasurmentDescription]
+        ]()
+        self._test_results = TestResults()
+        self._meas_results = MeasurementResults()
 
     def __str__(self):
         return (
-            f"<{self.__class__.__name__} {self.file_path.path.name} "
-            f"{len(self.tests)} test(s) "
+            f"<{self.__class__.__name__} "
+            f"{self.file_path.path.name if self.file_path else '[in memory]'} "
+            f"{len(self.test_descriptions)} test(s) "
             f"{len(self.implementations)} impl(s)>"
         )
 
     def __repr__(self):
         return f"{self.__class__.__name__}({repr(self.file_path)})"
 
-    @property
-    def raw_data(self) -> RawResult:
-        """Load and return the raw json data."""
+    def load_from_json(self):
+        assert self.file_path
+        content = self.file_path.read()
+        raw_data: JSONResult = json.loads(content)
+        assert isinstance(raw_data, dict)
+        # parse result ID
+        if raw_data.get("id"):
+            self._id = UUID(hex=raw_data.get("id"))
+        # parse start time
+        self._start_time = datetime.fromtimestamp(raw_data["start_time"])
+        # parse start time
+        self._end_time = datetime.fromtimestamp(raw_data["end_time"])
+        # parse quic_draft
+        self._quic_draft = int(raw_data["quic_draft"])
+        # parse quic_version
+        self._quic_version = int(raw_data["quic_version"], base=16)
+        # parse log_dir
+        self.log_dir = UrlOrPath(raw_data["log_dir"])
 
-        if not self._raw_data:
-            content = self.file_path.read()
-            self._raw_data = json.loads(content)
-            assert self._raw_data
+        if not self.log_dir.is_absolute():
+            abs_log_dir = UrlOrPath(self.file_path.parent / self.log_dir)
 
-        return self._raw_data
+            if abs_log_dir.is_dir():
+                self.log_dir = abs_log_dir
+            elif self.file_path.parent.name == self.log_dir.name:
+                self.log_dir = self.file_path.parent
+                #  LOGGER.warning(
+                #      "Log dir in result file %s is not correct. Using %s",
+                #      self.file_path,
+                #      log_dir,
+                #  )
+            elif self.file_path.is_path:
+                LOGGER.warning(
+                    "The log dir %s given in %s does not exist",
+                    self.log_dir,
+                    self.file_path,
+                )
 
-    @raw_data.setter
-    def raw_data(self, value: RawResult):
-        self._raw_data = value
+        # parse implementations
+        client_names = {client for client in raw_data["clients"]}
+        server_names = {server for server in raw_data["servers"]}
+
+        for name in client_names | server_names:
+            img_metadata = (raw_data.get("images", {}) or {}).get(name, {})
+
+            created_raw: Optional[str] = img_metadata.get("created")
+            created = parse_date(created_raw) if created_raw else None
+            image_versions = img_metadata.get("versions")
+            image_repo_digests = img_metadata.get("repo_digests")
+
+            if name in client_names and name in server_names:
+                role = ImplementationRole.BOTH
+            elif name in client_names:
+                role = ImplementationRole.CLIENT
+            elif name in server_names:
+                role = ImplementationRole.SERVER
+            else:
+                assert False
+
+            implementation = Implementation(
+                name=name,
+                url=raw_data["urls"][name],
+                role=role,
+                image=img_metadata.get("image", IMPLEMENTATIONS[name].image),
+                _image_id=img_metadata.get("id"),
+                _image_repo_digests=frozenset(image_repo_digests)
+                if image_repo_digests
+                else None,
+                _image_versions=frozenset(image_versions) if image_versions else None,
+                _image_created=created,
+                compliant=img_metadata.get("compliant"),
+            )
+            self.add_implementation(implementation, implementation.role)
+
+        # parse test (descriptions)
+        test_descriptions = dict[str, Union[TestDescription, MeasurmentDescription]]()
+
+        for abbr, test in raw_data["tests"].items():
+            if "theoretical_max_value" in test.keys() or "repetitions" in test.keys():
+                json_meas_desc: JSONMeasurementDescr = cast(JSONMeasurementDescr, test)
+                meas_desc = MeasurmentDescription(
+                    abbr=abbr,
+                    name=test["name"],
+                    desc=test["desc"],
+                    theoretical_max_value=json_meas_desc.get("theoretical_max_value"),
+                    repetitions=json_meas_desc.get("repetitions"),
+                )
+                test_descriptions[abbr] = meas_desc
+            else:
+                test_descriptions[abbr] = TestDescription(
+                    abbr=abbr, name=test["name"], desc=test["desc"]
+                )
+
+        self._test_descriptions = test_descriptions
+
+        # load test and measurement results
+        for server_index, server_name in enumerate(raw_data["servers"]):
+            for client_index, client_name in enumerate(raw_data["clients"]):
+
+                index = client_index * len(self.servers) + server_index
+
+                for test in raw_data["results"][index]:
+                    if not test["result"]:
+                        continue
+
+                    self.add_test_result(
+                        server=server_name,
+                        client=client_name,
+                        test_abbr=test["abbr"],
+                        test_result=TestResult(test["result"]),
+                    )
+
+                for measurement in raw_data["measurements"][index]:
+                    if not measurement["result"]:
+                        continue
+
+                    self.add_measurement_result(
+                        server=server_name,
+                        client=client_name,
+                        meas_abbr=measurement["abbr"],
+                        meas_result=TestResult(measurement["result"]),
+                        details=measurement["details"],
+                    )
+
+    def to_json(self) -> JSONResult:
+        """Return the raw json data."""
+
+        servers = sorted(self.servers.keys())
+        clients = sorted(self.clients.keys())
+
+        # linearize tests and measurements
+        test_results_lin = list[list[JSONTestResult]]()
+        meas_results_lin = list[list[JSONMeasurement]]()
+
+        for client in clients:
+            for server in servers:
+                try:
+                    test_results_for_combination = [
+                        test_result.to_json()
+                        for test_result in self.get_test_results_for_combination(
+                            server, client
+                        ).values()
+                    ]
+                except KeyError:
+                    test_results_for_combination = []
+                test_results_lin.append(test_results_for_combination)
+                try:
+                    meas_results_for_combination = [
+                        meas_result.to_json()
+                        for meas_result in self.get_measurements_for_combination(
+                            server, client
+                        ).values()
+                    ]
+                except KeyError:
+                    meas_results_for_combination = []
+                meas_results_lin.append(meas_results_for_combination)
+
+        test_descriptions: dict[str, Union[JSONTestDescr, JSONMeasurementDescr]] = {
+            abbr: test.to_json() for abbr, test in self.test_descriptions.items()
+        }
+
+        output: JSONResult = {
+            "id": str(self.id),
+            "start_time": self.start_time.timestamp(),
+            "end_time": self.end_time.timestamp(),
+            "log_dir": str(self.log_dir),
+            "servers": servers,
+            "clients": clients,
+            "urls": {
+                name: impl.url for name, impl in sorted(self.implementations.items())
+            },
+            "images": {
+                name: impl.img_metadata_json()
+                for name, impl in sorted(self.implementations.items())
+            },
+            "tests": test_descriptions,
+            "quic_draft": self.quic_draft,
+            "quic_version": hex(self.quic_version),
+            "results": test_results_lin,
+            "measurements": meas_results_lin,
+        }
+        return output
 
     @property
     def id(self) -> UUID:
         """The UUID of this test."""
+        if not self._id:
+            self._id = uuid4()
 
-        if not self.raw_data.get("id"):
-            self.raw_data["id"] = str(uuid4())
-            self.save()
-
-        raw_id = self.raw_data["id"]
-        assert raw_id
-
-        return UUID(hex=raw_id)
+        return self._id
 
     @id.setter
     def id(self, value: UUID):
-        self.raw_data["id"] = str(value)
+        self._id = value
 
     @property
     def start_time(self) -> datetime:
         """The start time of the test run."""
-
-        return datetime.fromtimestamp(self.raw_data["start_time"])
+        assert self._start_time
+        return self._start_time
 
     @start_time.setter
     def start_time(self, value: datetime):
-        self.raw_data["start_time"] = value.timestamp()
+        self._start_time = value
 
     @property
     def end_time(self) -> datetime:
         """The end time of the test run."""
-
-        return datetime.fromtimestamp(self.raw_data["end_time"])
+        assert self._end_time
+        return self._end_time
 
     @end_time.setter
     def end_time(self, value: datetime):
-        self.raw_data["end_time"] = value.timestamp()
+        self._end_time = value
 
     @property
     def duration(self) -> timedelta:
@@ -377,192 +471,148 @@ class Result:
     @property
     def quic_draft(self) -> int:
         """The quic draft version used in this test run."""
-
-        return int(self.raw_data["quic_draft"])
+        assert self._quic_draft is not None
+        return self._quic_draft
 
     @quic_draft.setter
     def quic_draft(self, value: int):
-        self.raw_data["quic_draft"] = value
+        self._quic_draft = value
 
     @property
     def quic_version(self) -> int:
         """The hexadecimal quic version used in this test run."""
-
-        return int(self.raw_data["quic_version"], base=16)
+        assert self._quic_version is not None
+        return self._quic_version
 
     @quic_version.setter
     def quic_version(self, value: int):
-        self.raw_data["quic_version"] = hex(value)
+        self._quic_version = value
 
     @property
     def log_dir(self) -> UrlOrPath:
         """The path to the detailed logs."""
-        log_dir = UrlOrPath(self.raw_data["log_dir"])
-
-        if not log_dir.is_absolute():
-            abs_log_dir = UrlOrPath(self.file_path.parent / log_dir)
-
-            if abs_log_dir.is_dir():
-                log_dir = abs_log_dir
-            elif self.file_path.parent.name == log_dir.name:
-                log_dir = self.file_path.parent
-                #  LOGGER.warning(
-                #      "Log dir in result file %s is not correct. Using %s",
-                #      self.file_path,
-                #      log_dir,
-                #  )
-            elif self.file_path.is_path:
-                LOGGER.warning(
-                    "The log dir %s given in %s does not exist", log_dir, self.file_path
-                )
-
-        return log_dir
+        assert self._log_dir is not None
+        return self._log_dir
 
     @log_dir.setter
     def log_dir(self, value: UrlOrPath):
-        self.raw_data["log_dir"] = str(value)
-
-    def get_image_metadata(
-        self, impl: Union[str, Implementation]
-    ) -> Union[RawImageMetadata, dict]:
-        images = self.raw_data.get("images", {}) or {}
-        impl_name = impl if isinstance(impl, str) else impl.name
-
-        return images.get(impl_name, {})
-
-    def _update_implementations(
-        self, value: list[Implementation], role: ImplementationRole
-    ):
-        assert role != ImplementationRole.BOTH
-
-        for impl in value:
-            img_info = self.get_image_metadata(impl.name)
-
-            if impl.name not in self.raw_data["urls"]:
-                self.raw_data["urls"][impl.name] = impl.url
-            elif impl.url != self.raw_data["urls"][impl.name]:
-                raise ValueError(
-                    "There are two different urls for implementation "
-                    f"{impl.url} and {self.raw_data['urls'][impl.name]}"
-                )
-            elif impl.image_id and "id" in img_info and impl.image_id != img_info["id"]:
-                raise ValueError(
-                    f"There current image ID of {impl.name} differs from the image ID "
-                    f"used in the other run: {impl.image_id} != {img_info['id']}"
-                )
-
-            list_key: Union[Literal["servers"], Literal["clients"]] = (
-                "servers" if role == ImplementationRole.SERVER else "clients"
-            )
-
-            if impl.name in self.raw_data[list_key]:
-                return
-
-            self._ensure_test_results_loaded()
-            self._implementations_changed = True
-            self.raw_data[list_key].append(impl.name)
-
-    def _get_implementations(self, role: ImplementationRole) -> list[Implementation]:
-        assert role != ImplementationRole.BOTH
-        ret = list[Implementation]()
-        lookup = (
-            self.raw_data["clients"]
-            if role == ImplementationRole.CLIENT
-            else self.raw_data["servers"]
-        )
-        lookup_other = (
-            self.raw_data["servers"]
-            if role == ImplementationRole.CLIENT
-            else self.raw_data["clients"]
-        )
-
-        for name in lookup:
-            img_metadata = self.get_image_metadata(name)
-            created_raw: Optional[str] = img_metadata.get("created")
-            created = parse_date(created_raw) if created_raw else None
-            image_versions = img_metadata.get("versions")
-            image_repo_digests = img_metadata.get("repo_digests")
-            ret.append(
-                Implementation(
-                    name=name,
-                    url=self.raw_data["urls"][name],
-                    role=ImplementationRole.BOTH if name in lookup_other else role,
-                    image_id=img_metadata.get("id"),
-                    image_repo_digests=frozenset(image_repo_digests)
-                    if image_repo_digests
-                    else None,
-                    image_versions=frozenset(image_versions)
-                    if image_versions
-                    else None,
-                    image_created=created,
-                    compliant=img_metadata.get("compliant"),
-                )
-            )
-
-        return ret
+        self._log_dir = value
 
     @property
-    def servers(self) -> list[Implementation]:
-        """The list of servers with metadata used in this test run."""
-
-        return self._get_implementations(ImplementationRole.SERVER)
-
-    @servers.setter
-    def servers(self, value: list[Implementation]):
-        self._update_implementations(value, role=ImplementationRole.SERVER)
+    def servers(self) -> dict[str, Implementation]:
+        """The servers with metadata used in this test run."""
+        return self._servers
 
     @property
-    def clients(self) -> list[Implementation]:
-        """The list of clients with metadata used in this test run."""
-
-        return self._get_implementations(ImplementationRole.CLIENT)
-
-    @clients.setter
-    def clients(self, value: list[Implementation]):
-        self._update_implementations(value, role=ImplementationRole.CLIENT)
+    def clients(self) -> dict[str, Implementation]:
+        """The clients with metadata used in this test run."""
+        return self._clients
 
     @property
     def implementations(self) -> dict[str, Implementation]:
         """Return a mapping of involved implementations."""
 
         return {
-            **{impl.name: impl for impl in self.servers},
-            **{impl.name: impl for impl in self.clients},
+            **self.servers,
+            **self.clients,
         }
 
+    def add_implementation(self, impl: Implementation, role: ImplementationRole):
+        assert role in impl.role
+
+        if impl.name in self.servers.keys():
+            impl2 = self.implementations[impl.name]
+            assert impl.name == impl2.name
+            assert impl.url == impl2.url
+            assert impl.image == impl2.image
+
+            def compare(prop, val1, val2):
+                if val1 is not None and val2 is not None:
+                    if val1 != val2:
+                        raise ConflictError(
+                            f"Conflict while adding image {impl.name}:"
+                            f" Property {prop}: {val1} != {val2}"
+                        )
+                return val1 or val2
+
+            # merge compliant
+            if impl.compliant is True and impl2.compliant is True:
+                compliant = True
+            elif impl.compliant is False or impl2.compliant is False:
+                compliant = False
+            else:
+                compliant = None
+            # merge / update
+            impl.role = impl.role | impl2.role
+            impl.compliant = compliant
+            impl.image = impl.image
+            impl._image_id = compare("Image ID", impl.image_id, impl2.image_id)
+            impl._image_repo_digests = compare(
+                "repo digest",
+                impl.image_repo_digests,
+                impl2.image_repo_digests,
+            )
+            impl._image_versions = compare(
+                "image_versions",
+                impl.image_versions,
+                impl2.image_versions,
+            )
+            impl._image_created = compare(
+                "image_created",
+                impl.image_created,
+                impl2.image_created,
+            )
+
+        if role.is_server:
+            self.servers[impl.name] = impl
+        if role.is_client:
+            self.clients[impl.name] = impl
+
     @property
-    def tests(self) -> dict[str, Union[TestDescription, MeasurmentDescription]]:
+    def test_descriptions(
+        self,
+    ) -> dict[str, Union[TestDescription, MeasurmentDescription]]:
         """
         Return a dict of test and measurement abbr.s and description that ran during this run.
         """
-        tests = dict[str, Union[TestDescription, MeasurmentDescription]]()
-
-        for abbr, test in self.raw_data["tests"].items():
-            if "theoretical_max_value" in test.keys() or "repetitions" in test.keys():
-                meas_desc: RawMeasurementDescr = cast(RawMeasurementDescr, test)
-                tests[abbr] = MeasurmentDescription(
-                    abbr=abbr,
-                    name=test["name"],
-                    desc=test["desc"],
-                    theoretical_max_value=meas_desc.get("theoretical_max_value"),
-                    repetitions=meas_desc.get("repetitions"),
-                )
-            else:
-                tests[abbr] = TestDescription(
-                    abbr=abbr, name=test["name"], desc=test["desc"]
-                )
-
-        return tests
+        return self._test_descriptions
 
     @property
     def measurement_descriptions(self) -> dict[str, MeasurmentDescription]:
         """Return a dict of measurment abbrs and their descriptions."""
-
         return {
-            abbr: meas
-            for abbr, meas in self.tests.items()
-            if isinstance(meas, MeasurmentDescription)
+            abbr: test_desc
+            for abbr, test_desc in self.test_descriptions.items()
+            if isinstance(test_desc, MeasurmentDescription)
         }
+
+    def add_test_description(
+        self, test_desc: Union[TestDescription, MeasurmentDescription]
+    ):
+        if test_desc.abbr in self.test_descriptions.keys():
+            test_desc2 = self.test_descriptions[test_desc.abbr]
+
+            def compare(name, val1, val2):
+                if val1 != val2:
+                    raise ConflictError(f"{name}: {val1} != {val2}")
+
+            compare("abbr", test_desc.abbr, test_desc2.abbr)
+            compare("name", test_desc.name, test_desc2.name)
+            compare("desc", test_desc.desc, test_desc2.desc)
+            if isinstance(test_desc2, MeasurmentDescription):
+                if isinstance(test_desc, MeasurmentDescription):
+                    compare(
+                        "theoretical_max_value",
+                        test_desc.theoretical_max_value,
+                        test_desc2.theoretical_max_value,
+                    )
+                    compare(
+                        "repetitions", test_desc.repetitions, test_desc2.repetitions
+                    )
+                else:
+                    test_desc = test_desc2
+
+        self._test_descriptions[test_desc.abbr] = test_desc
 
     @property
     def test_results(self) -> TestResults:
@@ -571,14 +621,10 @@ class Result:
 
         Dict keys are <server name> -> <client name> -> <test abbr>
         """
-
-        if not self._test_results:
-            self._test_results = self._load_test_results()
-
         return self._test_results
 
     @property
-    def all_test_results(self) -> list[ExtendedTestResult]:
+    def all_test_results(self) -> list[TestResultInfo]:
         """Return all test results."""
 
         return [
@@ -590,7 +636,7 @@ class Result:
 
     def get_test_results_for_combination(
         self, server: Union[str, Implementation], client: Union[str, Implementation]
-    ) -> dict[str, ExtendedTestResult]:
+    ) -> dict[str, TestResultInfo]:
         """Return all test results for a combination of client and server."""
         server_name = server if isinstance(server, str) else server.name
         client_name = client if isinstance(client, str) else client.name
@@ -602,7 +648,7 @@ class Result:
         server: Union[str, Implementation],
         client: Union[str, Implementation],
         test_abbr: str,
-    ) -> ExtendedTestResult:
+    ) -> TestResultInfo:
         """Get a specific test result."""
 
         return self.get_test_results_for_combination(server, client)[test_abbr]
@@ -611,14 +657,14 @@ class Result:
         self,
         test_abbr: str,
         succeeding: Optional[bool] = None,
-    ) -> list[ExtendedTestResult]:
+    ) -> list[TestResultInfo]:
         """Return a list of test results of a specific type."""
 
-        tests = list[ExtendedTestResult]()
+        tests = list[TestResultInfo]()
 
-        for server in self.servers:
-            for client in self.clients:
-                test_results_for_combi = self.test_results[server.name][client.name]
+        for server_name in self.servers.keys():
+            for client_name in self.clients.keys():
+                test_results_for_combi = self.test_results[server_name][client_name]
 
                 if test_abbr not in test_results_for_combi.keys():
                     continue
@@ -632,6 +678,88 @@ class Result:
 
         return tests
 
+    def add_test_result(
+        self,
+        server: Union[str, Implementation],
+        client: Union[str, Implementation],
+        test_abbr: str,
+        test_result: Optional[TestResult],
+        update_failed=False,
+    ):
+        server_impl = (
+            server if isinstance(server, Implementation) else self.servers[server]
+        )
+        client_impl = (
+            client if isinstance(client, Implementation) else self.clients[client]
+        )
+
+        if server_impl.name not in self.test_results.keys():
+            self._test_results[server_impl.name] = dict[
+                str, dict[str, TestResultInfo]
+            ]()
+        if client_impl.name not in self.test_results[server_impl.name].keys():
+            self._test_results[server_impl.name][client_impl.name] = dict[
+                str, TestResultInfo
+            ]()
+
+        test_result_info = TestResultInfo(
+            result=test_result,
+            server=server_impl,
+            client=client_impl,
+            test=self.test_descriptions[test_abbr],
+            _base_log_dir=self.log_dir,
+        )
+        if test_abbr in self.test_results[server_impl.name][client_impl.name].keys():
+            if update_failed:
+                test_included: TestResultInfo = self._test_results[server_impl.name][
+                    client_impl.name
+                ][test_abbr]
+
+                if not test_included.succeeded and test_result == TestResult.SUCCEEDED:
+                    # overwrite failed test:
+                    self._test_results[server_impl.name][client_impl.name][
+                        test_abbr
+                    ] = test_result_info
+                elif test_result != TestResult.SUCCEEDED:
+                    # do not overwrite with a failed test:
+                    return
+                else:
+                    breakpoint()
+                    raise ValueError(
+                        f"Both results have a result for the test {test_abbr} "
+                        f"for {server_impl.name}_{client_impl.name} and both succeeded."
+                    )
+            else:
+                breakpoint()
+                raise ValueError(
+                    f"Both results have a result for the test {test_abbr}."
+                )
+        else:
+            self._test_results[server_impl.name][client_impl.name][
+                test_abbr
+            ] = test_result_info
+
+    def remove_test_result(
+        self,
+        server: Union[str, Implementation],
+        client: Union[str, Implementation],
+        test_abbr: str,
+    ):
+        server_impl = (
+            server if isinstance(server, Implementation) else self.servers[server]
+        )
+        client_impl = (
+            client if isinstance(client, Implementation) else self.clients[client]
+        )
+
+        if server_impl.name not in self.test_results.keys():
+            return
+        if client_impl.name not in self.test_results[server_impl.name].keys():
+            return
+
+        if test_abbr in self.test_results[server_impl.name][client_impl.name].keys():
+            del self.test_results[server_impl.name][client_impl.name][test_abbr]
+
     @property
     def measurement_results(self) -> MeasurementResults:
         """
@@ -639,14 +767,10 @@ class Result:
 
         Dict keys are <server name> -> <client name> -> <measurement abbr>
         """
-
-        if not self._measurement_results:
-            self._measurement_results = self._load_measurement_results()
-
-        return self._measurement_results
+        return self._meas_results
 
     @property
-    def all_measurement_results(self) -> list[ExtendedMeasurementResult]:
+    def all_measurement_results(self) -> list[MeasurementResultInfo]:
         """Return all measurement results."""
 
         return [
@@ -658,19 +782,19 @@ class Result:
 
     def get_measurements_for_combination(
         self, server: Union[str, Implementation], client: Union[str, Implementation]
-    ) -> dict[str, ExtendedMeasurementResult]:
+    ) -> dict[str, MeasurementResultInfo]:
         """Return all measurements for a combination of client and server."""
         server_name = server if isinstance(server, str) else server.name
         client_name = client if isinstance(client, str) else client.name
 
         return self.measurement_results[server_name][client_name]
 
-    def get_measurement(
+    def get_measurement_result(
         self,
         server: Union[str, Implementation],
         client: Union[str, Implementation],
         measurement_abbr: str,
-    ) -> ExtendedMeasurementResult:
+    ) -> MeasurementResultInfo:
         """Get a specific measurement result."""
 
         return self.get_measurements_for_combination(server, client)[measurement_abbr]
@@ -679,14 +803,14 @@ class Result:
         self,
         measurement_abbr: str,
         succeeding: Optional[bool] = None,
-    ) -> list[ExtendedMeasurementResult]:
+    ) -> list[MeasurementResultInfo]:
         """Return a list of measurement results of a specific type."""
-        measurement_results = list[ExtendedMeasurementResult]()
+        measurement_results = list[MeasurementResultInfo]()
 
-        for server in self.servers:
-            for client in self.clients:
-                measurement_results_for_combi = self.measurement_results[server.name][
-                    client.name
+        for server_name in self.servers.keys():
+            for client_name in self.clients.keys():
+                measurement_results_for_combi = self.measurement_results[server_name][
+                    client_name
                 ]
 
                 if measurement_abbr not in measurement_results_for_combi.keys():
@@ -701,151 +825,174 @@ class Result:
 
         return measurement_results
 
-    def _load_test_results(self) -> TestResults:
-        assert not self._implementations_changed
+    def add_measurement_result(
+        self,
+        server: Union[str, Implementation],
+        client: Union[str, Implementation],
+        meas_abbr: str,
+        meas_result: Optional[TestResult],
+        details: str,
+        update_failed=False,
+    ):
+        server_impl = (
+            server if isinstance(server, Implementation) else self.servers[server]
+        )
+        client_impl = (
+            client if isinstance(client, Implementation) else self.clients[client]
+        )
 
-        results = TestResults()
+        if server_impl.name not in self._meas_results.keys():
+            self._meas_results[server_impl.name] = dict[
+                str, dict[str, MeasurementResultInfo]
+            ]()
+        if client_impl.name not in self._meas_results[server_impl.name].keys():
+            self._meas_results[server_impl.name][client_impl.name] = dict[
+                str, MeasurementResultInfo
+            ]()
 
-        for server_index, server in enumerate(self.servers):
-            results[server.name] = dict[str, dict[str, ExtendedTestResult]]()
+        test_desc = self.test_descriptions[meas_abbr]
 
-            for client_index, client in enumerate(self.clients):
-                results[server.name][client.name] = dict[str, ExtendedTestResult]()
+        if isinstance(test_desc, MeasurmentDescription):
+            meas_desc = test_desc
+        else:
+            meas_desc = MeasurmentDescription.from_test_desc(test_desc)
+            # update measurement description (as we know now that this belongs to a measurement and not to a test).
+            self._test_descriptions[meas_abbr] = meas_desc
 
-                index = client_index * len(self.servers) + server_index
+        meas_result_info = MeasurementResultInfo(
+            result=meas_result,
+            server=server_impl,
+            client=client_impl,
+            test=meas_desc,
+            _base_log_dir=self.log_dir,
+            details=details,
+        )
+        if meas_abbr in self._meas_results[server_impl.name][client_impl.name].keys():
+            if update_failed:
+                meas_included: MeasurementResultInfo = self._meas_results[
+                    server_impl.name
+                ][client_impl.name][meas_abbr]
 
-                for test in self.raw_data["results"][index]:
-                    if not test["result"]:
-                        continue
-                    ext_result = ExtendedTestResult(
-                        result=TestResult(test["result"]),
-                        server=server,
-                        client=client,
-                        test=self.tests[test["abbr"]],
-                        _base_log_dir=self.log_dir,
+                if not meas_included.succeeded and meas_result == TestResult.SUCCEEDED:
+                    # overwrite failed measurement:
+                    self._meas_results[server_impl.name][client_impl.name][
+                        meas_abbr
+                    ] = meas_result_info
+                elif meas_result != TestResult.SUCCEEDED:
+                    # do not overwrite with a failed measurement:
+
+                    return
+                else:
+                    breakpoint()
+                    raise ValueError(
+                        f"Both results have a result for the measurement {meas_abbr} "
+                        f"for {server}_{client} and both succeeded."
                     )
-                    results[server.name][client.name][test["abbr"]] = ext_result
+            else:
+                breakpoint()
+                raise ValueError(
+                    f"Both results have a result for the measurement {meas_abbr}."
+                )
+        else:
+            self._meas_results[server_impl.name][client_impl.name][
+                meas_abbr
+            ] = meas_result_info
 
-        return results
+    def remove_measurement_result(
+        self,
+        server: Union[str, Implementation],
+        client: Union[str, Implementation],
+        meas_abbr: str,
+    ):
+        server_impl = (
+            server if isinstance(server, Implementation) else self.servers[server]
+        )
+        client_impl = (
+            client if isinstance(client, Implementation) else self.clients[client]
+        )
 
-    def _load_measurement_results(self) -> MeasurementResults:
-        assert not self._implementations_changed
+        if server_impl.name not in self._meas_results.keys():
+            return
+        if client_impl.name not in self._meas_results[server_impl.name].keys():
+            return
 
-        results = MeasurementResults()
-
-        for server_index, server in enumerate(self.servers):
-            results[server.name] = dict[str, dict[str, ExtendedMeasurementResult]]()
-
-            for client_index, client in enumerate(self.clients):
-                results[server.name][client.name] = dict[
-                    str, ExtendedMeasurementResult
-                ]()
-
-                index = client_index * len(self.servers) + server_index
-
-                for measurement in self.raw_data["measurements"][index]:
-                    if not measurement["result"]:
-                        continue
-                    test_desc = self.tests[measurement["abbr"]]
-
-                    if isinstance(test_desc, MeasurmentDescription):
-                        meas_desc = test_desc
-                    else:
-                        meas_desc = MeasurmentDescription.from_test_desc(test_desc)
-
-                    ext_result = ExtendedMeasurementResult(
-                        result=TestResult(measurement["result"]),
-                        details=measurement["details"],
-                        server=server,
-                        client=client,
-                        test=meas_desc,
-                        _base_log_dir=self.log_dir,
-                    )
-                    results[server.name][client.name][measurement["abbr"]] = ext_result
-
-        return results
-
-    def _ensure_test_results_loaded(self):
-        """Ensure that all test results are loaded."""
-        self._test_results = self._load_test_results()
-        self._measurement_results = self._load_measurement_results()
+        if meas_abbr in self._meas_results[server_impl.name][client_impl.name].keys():
+            del self._meas_results[server_impl.name][client_impl.name][meas_abbr]
 
     def merge(
         self,
         other: "Result",
-        file_path: Union[Path, str],
-        log_dir: Union[Path, str],
-        update_failed=True,
+        update_failed: bool = True,
     ) -> "Result":
         """Merge this result with another result."""
-        assert self.quic_draft == other.quic_draft
-        assert self.quic_version == other.quic_version
+        if self.quic_draft != other.quic_draft:
+            raise ConflictError(
+                f"QUIC Draft missmatch: {self.quic_draft} != {other.quic_draft}"
+            )
+        if self.quic_version != other.quic_version:
+            raise ConflictError(
+                f"QUIC version missmatch: {self.quic_version} != {other.quic_version}"
+            )
 
-        servers1 = frozenset(server.name for server in self.servers)
-        servers2 = frozenset(server.name for server in other.servers)
-        clients1 = frozenset(client.name for client in self.clients)
-        clients2 = frozenset(client.name for client in other.clients)
+        ret = Result(self.file_path)
+        ret.id = self.id
+        ret.start_time = min(self.start_time, other.start_time)
+        ret.end_time = max(self.end_time, other.end_time)
+        ret.quic_draft = self.quic_draft
+        ret.quic_version = self.quic_version
 
-        servers_merged = sorted(servers1 | servers2)
-        clients_merged = sorted(clients1 | clients2)
+        if not (
+            self.log_dir.is_path
+            and other.log_dir.is_path
+            and self.log_dir.path.absolute() == other.log_dir.path.absolute()
+        ) and not (self.log_dir == other.log_dir):
+            raise ConflictError(
+                f"Log directory missmatch: {self.log_dir} != {other.log_dir}"
+            )
+
+        ret.log_dir = self.log_dir
+
+        for impl in chain(
+            self.implementations.values(), other.implementations.values()
+        ):
+            ret.add_implementation(impl, role=impl.role)
+
+        for test_desc in chain(
+            self.test_descriptions.values(), other.test_descriptions.values()
+        ):
+            ret.add_test_description(test_desc)
 
         # check and merge test and measurements
-        tests_merged = dict[str, dict[str, dict[str, ExtendedTestResult]]]()
-        meass_merged = dict[str, dict[str, dict[str, ExtendedMeasurementResult]]]()
 
-        for server in servers_merged:
-            tests_merged[server] = dict[str, dict[str, ExtendedTestResult]]()
-            meass_merged[server] = dict[str, dict[str, ExtendedMeasurementResult]]()
-
-            for client in clients_merged:
-                tests_merged[server][client] = dict[str, ExtendedTestResult]()
-                meass_merged[server][client] = dict[str, ExtendedMeasurementResult]()
+        for server_name, server in ret.servers.items():
+            for client_name, client in ret.clients.items():
 
                 # merge tests
                 try:
                     tests_for_combi1 = self.get_test_results_for_combination(
-                        server, client
+                        server_name, client_name
                     )
                 except KeyError:
-                    tests_for_combi1 = dict[str, ExtendedTestResult]()
+                    tests_for_combi1 = dict[str, TestResultInfo]()
 
                 try:
                     tests_for_combi2 = other.get_test_results_for_combination(
-                        server, client
+                        server_name, client_name
                     )
                 except KeyError:
-                    tests_for_combi2 = dict[str, ExtendedTestResult]()
+                    tests_for_combi2 = dict[str, TestResultInfo]()
 
                 for test_abbr, test in chain(
                     tests_for_combi1.items(),
                     tests_for_combi2.items(),
                 ):
-                    if test_abbr in tests_merged[server][client].keys():
-                        if update_failed:
-                            test_included: ExtendedTestResult = tests_merged[server][
-                                client
-                            ][test_abbr]
-
-                            if not test_included.succeeded and test.succeeded:
-                                # overwrite failed test:
-                                tests_merged[server][client][test_abbr] = test
-                            elif not test.succeeded:
-                                # do not overwrite with a failed test:
-
-                                continue
-                            else:
-                                breakpoint()
-                                raise ValueError(
-                                    f"Both results have a result for the test {test_abbr} "
-                                    f"for {server}_{client} and both succeeded."
-                                )
-                        else:
-                            breakpoint()
-                            raise ValueError(
-                                f"Both results have a result for the test {test_abbr}."
-                            )
-                    else:
-                        tests_merged[server][client][test_abbr] = test
+                    ret.add_test_result(
+                        server_name,
+                        client_name,
+                        test_abbr,
+                        test.result,
+                        update_failed,
+                    )
 
                 # merge measurements
                 try:
@@ -853,121 +1000,34 @@ class Result:
                         server, client
                     )
                 except KeyError:
-                    meass_for_combi1 = dict[str, ExtendedMeasurementResult]()
+                    meass_for_combi1 = dict[str, MeasurementResultInfo]()
 
                 try:
                     meass_for_combi2 = other.get_measurements_for_combination(
                         server, client
                     )
                 except KeyError:
-                    meass_for_combi2 = dict[str, ExtendedMeasurementResult]()
+                    meass_for_combi2 = dict[str, MeasurementResultInfo]()
 
                 for meas_abbr, meas in chain(
                     meass_for_combi1.items(),
                     meass_for_combi2.items(),
                 ):
-                    if meas_abbr in meass_merged[server][client].keys():
-                        if update_failed:
-                            meas_included: ExtendedMeasurementResult = meass_merged[
-                                server
-                            ][client][meas_abbr]
+                    ret.add_measurement_result(
+                        server_name,
+                        client_name,
+                        meas_abbr,
+                        meas.result,
+                        meas.details,
+                        update_failed,
+                    )
 
-                            if not meas_included.succeeded and meas.succeeded:
-                                # overwrite failed test:
-                                meass_merged[server][client][meas_abbr] = meas
-                            elif not meas.succeeded:
-                                # do not overwrite with a failed test:
-
-                                continue
-                            else:
-                                breakpoint()
-                                raise ValueError(
-                                    f"Both results have a result for the test {meas_abbr} "
-                                    f"for {server}_{client} and both succeeded."
-                                )
-                        else:
-                            breakpoint()
-                            raise ValueError(
-                                f"Both results have a result for the test {meas_abbr}."
-                            )
-                    else:
-                        meass_merged[server][client][meas_abbr] = meas
-
-        # linearize tests and measurements
-        tests_lin = list[list[RawTestResult]]()
-        meass_lin = list[list[RawMeasurement]]()
-
-        for client in clients_merged:
-            for server in servers_merged:
-                tests_lin.append(
-                    [test.to_raw() for test in tests_merged[server][client].values()]
-                )
-                meass_lin.append(
-                    [test.to_raw() for test in meass_merged[server][client].values()]
-                )
-
-        urls = dict[str, str]()
-        images = dict[str, RawImageMetadata]()
-
-        for name, impl in self.implementations.items():
-            own_img_metadata = impl.img_metadata_json()
-            common_img_metadata: Optional[RawImageMetadata] = None
-
-            if name in other.implementations.keys():
-                other_impl = other.implementations[name]
-                assert impl.url == other_impl.url
-                other_img_metadata = other_impl.img_metadata_json()
-
-                if own_img_metadata and other_img_metadata:
-                    assert own_img_metadata == other_img_metadata
-                    common_img_metadata = own_img_metadata
-                elif own_img_metadata and not other_img_metadata:
-                    common_img_metadata = own_img_metadata
-                elif not own_img_metadata and other_img_metadata:
-                    common_img_metadata = other_img_metadata
-            else:
-                common_img_metadata = own_img_metadata
-
-            urls[name] = impl.url
-
-            if common_img_metadata:
-                images[name] = common_img_metadata
-
-        for name, impl in other.implementations.items():
-            if name not in self.implementations.keys():
-                urls[name] = impl.url
-                img_metadata = impl.img_metadata_json()
-
-                if img_metadata:
-                    images[name] = img_metadata
-
-        test_descriptions: dict[str, Union[RawTestDescr, RawMeasurementDescr]] = {
-            **{abbr: test.to_raw() for abbr, test in self.tests.items()},
-            **{abbr: test.to_raw() for abbr, test in other.tests.items()},
-        }
-
-        output: RawResult = {
-            "id": str(self.id),
-            "start_time": min(self.start_time, other.start_time).timestamp(),
-            "end_time": max(self.end_time, other.end_time).timestamp(),
-            "log_dir": str(log_dir),
-            "servers": servers_merged,
-            "clients": clients_merged,
-            "urls": urls,
-            "images": images,
-            "tests": test_descriptions,
-            "quic_draft": self.quic_draft,
-            "quic_version": hex(other.quic_version),
-            "results": tests_lin,
-            "measurements": meass_lin,
-        }
-
-        return Result(file_path, raw_data=output)
+        return ret
 
     def save(self):
         """Save to file."""
-        assert self.file_path.is_path
-        json_data = json.dumps(self.raw_data, indent=" " * 4)
+        assert self.file_path and self.file_path.is_path
+        json_data = json.dumps(self.to_json(), indent=" " * 4)
         with self.file_path.path.open("w") as file:
             file.write(json_data)
 

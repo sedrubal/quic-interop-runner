@@ -4,12 +4,13 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional, TypedDict
+from typing import TYPE_CHECKING, Optional
 
 import docker
 from dateutil.parser import parse as parse_date
 
 from enums import ImplementationRole
+from result_json_types import JSONImageMetadata
 
 if TYPE_CHECKING:
     from deployment import Deployment
@@ -17,26 +18,21 @@ if TYPE_CHECKING:
 LOGGER = logging.getLogger(name="quic-interop-runner")
 
 
-class ImgMetadataJson(TypedDict):
-    image: str
-    id: str
-    repo_digests: list[str]
-    versions: list[str]
-    created: Optional[str]
-    compliant: Optional[bool]
-
-
 @dataclass
 class Implementation:
+    """An server and/or client implementation with metadata."""
+
     name: str
-    image: str
     url: str
     role: ImplementationRole
+    image: str
+
     compliant: Optional[bool] = None
-    _img_versions: Optional[frozenset[str]] = None
-    _img_id: Optional[str] = None
-    _img_repo_digests: Optional[frozenset[str]] = None
-    _img_created: Optional[datetime] = None
+
+    _image_id: Optional[str] = None
+    _image_repo_digests: Optional[frozenset[str]] = None
+    _image_versions: Optional[frozenset[str]] = None
+    _image_created: Optional[datetime] = None
 
     def gather_infos_from_docker(self, docker_cli: docker.DockerClient):
         try:
@@ -50,44 +46,52 @@ class Implementation:
             img = docker_cli.images.pull(self.image)
 
         image_base = self.image.split(":", 1)[0]
-        self._img_id = img.id
-        self._img_versions = frozenset(
+        self._image_id = img.id
+        self._image_versions = frozenset(
             (tag.replace(f"{image_base}:", "") for tag in img.tags)
         )
-        self._img_repo_digests = (
+        self._image_repo_digests = (
             frozenset(img.attrs["RepoDigests"]) if "RepoDigests" in img.attrs else None
         )
         created_raw: Optional[str] = img.attrs.get("Created")
-        self._img_created = parse_date(created_raw) if created_raw else None
+        self._image_created = (
+            parse_date(created_raw).replace(second=0, microsecond=0, tzinfo=None)
+            if created_raw
+            else None
+        )
 
     @property
     def image_versions(self) -> frozenset[str]:
-        assert self._img_versions
+        assert self._image_versions, f"Image version of {self.name} not yet determined."
 
-        return self._img_versions
+        return self._image_versions
 
     @property
     def image_id(self) -> str:
-        assert self._img_id
+        assert self._image_id, f"Image ID of {self.name} not yet determined."
 
-        return self._img_id
+        return self._image_id
 
     @property
     def image_repo_digests(self) -> frozenset[str]:
-        assert self._img_repo_digests
+        assert (
+            self._image_repo_digests
+        ), f"Image repo digest of {self.name} not yet determined."
 
-        return self._img_repo_digests
+        return self._image_repo_digests
 
     @property
     def image_created(self) -> Optional[datetime]:
-        return self._img_created
+        return self._image_created
 
-    def img_metadata_json(self) -> ImgMetadataJson:
-        return ImgMetadataJson(
+    def img_metadata_json(self) -> JSONImageMetadata:
+        return JSONImageMetadata(
             image=self.image,
             id=self.image_id,
-            repo_digests=list(self.image_repo_digests),
-            versions=list(self.image_versions),
+            repo_digests=list(self.image_repo_digests)
+            if self._image_repo_digests
+            else [],
+            versions=list(self.image_versions) if self._image_versions else [],
             created=(
                 self.image_created.strftime("%Y-%m-%d %H:%M")
                 if self.image_created
