@@ -1,7 +1,7 @@
 """Some enums."""
 
-from enum import Enum, IntFlag, IntEnum
-from typing import Literal, Union
+from enum import Enum, IntEnum, IntFlag
+from typing import Iterator
 
 
 class TestResult(Enum):
@@ -17,11 +17,33 @@ class ImplementationRole(Enum):
 
     @property
     def is_client(self) -> bool:
-        return self in (ImplementationRole.CLIENT, ImplementationRole.BOTH)
+        return ImplementationRole.CLIENT in self
 
     @property
     def is_server(self) -> bool:
-        return self in (ImplementationRole.SERVER, ImplementationRole.BOTH)
+        return ImplementationRole.SERVER in self
+
+    def __or__(self, other: "ImplementationRole") -> "ImplementationRole":
+        if self.is_server and other.is_client or self.is_client and other.is_server:
+            return ImplementationRole.BOTH
+        elif self.is_server and other.is_server:
+            return ImplementationRole.SERVER
+        elif self.is_client and other.is_client:
+            return ImplementationRole.CLIENT
+        else:
+            assert False
+
+    def __iter__(self) -> Iterator["ImplementationRole"]:
+        if self == ImplementationRole.BOTH:
+            return iter(
+                [
+                    ImplementationRole.SERVER,
+                    ImplementationRole.CLIENT,
+                    ImplementationRole.BOTH,
+                ]
+            )
+        else:
+            return iter([self])
 
 
 class Perspective(Enum):
@@ -103,7 +125,7 @@ class PostProcessingMode(IntFlag):
     def from_str(cls, value: str) -> "PostProcessingMode":
         """Parse from string."""
         lookup: dict[str, PostProcessingMode] = {
-            flag.name.lower(): flag for flag in PostProcessingMode
+            flag.name.lower() if flag.name else "?": flag for flag in PostProcessingMode
         }
 
         return lookup[value.lower()]
