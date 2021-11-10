@@ -11,7 +11,7 @@ from termcolor import colored, cprint
 
 from enums import CacheMode, PlotMode, Side
 from plot_diagram import DEFAULT_TITLES, PlotCli
-from result_parser import ExtendedMeasurementResult, Result
+from result_parser import MeasurementResultInfo, Result
 from trace_analyzer2 import ParsingError
 from utils import TraceTriple, create_relpath, existing_file_path
 
@@ -110,7 +110,7 @@ class PlotAllCli:
 
     def plot_in_meas_run_dir(
         self,
-        measurement_result: ExtendedMeasurementResult,
+        measurement_result: MeasurementResultInfo,
         modes: list[PlotMode],
     ) -> list[str]:
         """Generate plot for for this test case."""
@@ -293,7 +293,7 @@ class PlotAllCli:
 
         for tmp1 in result.measurement_results.values():
             for tmp2 in tmp1.values():
-                measurement_results = list[ExtendedMeasurementResult]()
+                measurement_results = list[MeasurementResultInfo]()
 
                 if self.only_sat:
                     measurement_results = [tmp2["SAT"]]
@@ -334,6 +334,7 @@ class PlotAllCli:
     def run(self):
         for result_file in self.result_files:
             result = Result(result_file)
+            result.load_from_json()
             self.plot_in_log_dir(result)
 
 

@@ -445,7 +445,9 @@ class Result:
     @property
     def start_time(self) -> datetime:
         """The start time of the test run."""
-        assert self._start_time
+        assert (
+            self._start_time
+        ), "No start time set. Did you already call load_from_json()?"
         return self._start_time
 
     @start_time.setter
@@ -471,7 +473,9 @@ class Result:
     @property
     def quic_draft(self) -> int:
         """The quic draft version used in this test run."""
-        assert self._quic_draft is not None
+        assert (
+            self._quic_draft is not None
+        ), "No QUIC draft set. Did you already call load_from_json()?"
         return self._quic_draft
 
     @quic_draft.setter
@@ -481,7 +485,9 @@ class Result:
     @property
     def quic_version(self) -> int:
         """The hexadecimal quic version used in this test run."""
-        assert self._quic_version is not None
+        assert (
+            self._quic_version is not None
+        ), "No QUIC version set. Did you already call load_from_json()?"
         return self._quic_version
 
     @quic_version.setter
@@ -491,7 +497,9 @@ class Result:
     @property
     def log_dir(self) -> UrlOrPath:
         """The path to the detailed logs."""
-        assert self._log_dir is not None
+        assert (
+            self._log_dir is not None
+        ), "No log dir set. Did you already call load_from_json()?"
         return self._log_dir
 
     @log_dir.setter
