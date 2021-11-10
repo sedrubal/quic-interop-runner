@@ -296,6 +296,9 @@ class Result:
             created = parse_date(created_raw) if created_raw else None
             image_versions = img_metadata.get("versions")
             image_repo_digests = img_metadata.get("repo_digests")
+            image = img_metadata.get("image")
+            if not image:
+                image = IMPLEMENTATIONS[name].image
 
             if name in client_names and name in server_names:
                 role = ImplementationRole.BOTH
@@ -310,7 +313,7 @@ class Result:
                 name=name,
                 url=raw_data["urls"][name],
                 role=role,
-                image=img_metadata.get("image", IMPLEMENTATIONS[name].image),
+                image=image,
                 _image_id=img_metadata.get("id"),
                 _image_repo_digests=frozenset(image_repo_digests)
                 if image_repo_digests
