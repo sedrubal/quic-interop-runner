@@ -566,6 +566,7 @@ class InteropRunner:
                         server_implementation.name,
                         client_implementation.name,
                     )
+                    self._export_results()
 
                     continue
                 elif not self._check_impl_is_compliant(client_implementation):
@@ -575,8 +576,12 @@ class InteropRunner:
                         server_implementation.name,
                         client_implementation.name,
                     )
+                    self._export_results()
 
                     continue
+
+                # save compliance
+                self._export_results()
 
                 # run the test cases
 
