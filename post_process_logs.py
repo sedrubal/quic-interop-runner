@@ -12,6 +12,7 @@ This contains:
 import argparse
 import logging
 import os
+import pwd
 import shutil
 import subprocess
 import sys
@@ -282,6 +283,24 @@ class PostProcessor:
 
         result.load_from_json()
 
+        if PostProcessingMode.CHOWN in self.mode:
+            assert result.file_path
+            uid = os.getuid()
+            gid = os.getgid()
+
+            def check_owner(path: Path):
+                owner = path.owner()
+                struct = pwd.getpwnam(owner)
+
+                return struct.pw_uid == uid and struct.pw_gid == gid
+
+            if not check_owner(result.file_path.path) or not check_owner(
+                result.log_dir.path
+            ):
+                os.system(
+                    f"sudo chown -R {uid}:{gid} {result.file_path.path} {result.log_dir.path}"
+                )
+
         if PostProcessingMode.GATHER_RESULTS in self.mode:
             gather_results_tool = GatherResults(
                 debug=self.debug,
@@ -306,8 +325,22 @@ class PostProcessor:
     def post_process_log_dir(self, log_dir: Path):
         """Post process inside a log dir."""
 
+        if PostProcessingMode.CHOWN in self.mode:
+            uid = os.getuid()
+            gid = os.getgid()
+
+            def check_owner(path: Path):
+                owner = path.owner()
+                struct = pwd.getpwnam(owner)
+
+                return struct.pw_uid == uid and struct.pw_gid == gid
+
+            if not check_owner(log_dir):
+                os.system(f"sudo chown -R {uid}:{gid} {log_dir}")
+
         if PostProcessingMode.GATHER_RESULTS in self.mode:
             msg = "Gather mode requires Result specs."
+
             if self._spinner:
                 self._spinner.write(colored(msg, color="red"))
             else:

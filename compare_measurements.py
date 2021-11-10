@@ -51,14 +51,6 @@ def parse_args():
     return parser.parse_args()
 
 
-def fetch_result(url: str) -> Result:
-    result = requests.get(url)
-    result.raise_for_status()
-    data = result.json()
-
-    return Result(url, data)
-
-
 class CompareCli:
     def __init__(
         self,
@@ -288,6 +280,8 @@ class CompareCli:
                 plt.show()
 
     def run(self):
+        self.result.load_from_json()
+
         self.pretty_print_compare_result()
 
         if self.plot:
