@@ -4,11 +4,13 @@
 Post process interop runner logs.
 
 This contains:
+- gather results in a database
 - inject secrets
 - search and rename qlog files
 """
 
 import argparse
+import logging
 import os
 import shutil
 import subprocess
@@ -20,8 +22,11 @@ from typing import Optional, Union
 from termcolor import colored, cprint
 
 from enums import PostProcessingMode, TestResult
+from gather_results import GatherResults
 from result_parser import Result
 from utils import YaspinWrapper
+
+GATHER_RESULT_DB = "sqlite:///{path}/result.sql"
 
 
 def parse_args():
@@ -275,6 +280,16 @@ class PostProcessor:
     def post_process_result(self, result: Result):
         """Post process in result log dir."""
 
+        result.load_from_json()
+
+        if PostProcessingMode.GATHER_RESULTS in self.mode:
+            gather_results_tool = GatherResults(
+                debug=self.debug,
+                dburl=GATHER_RESULT_DB.format(path=result.log_dir),
+                skip_existing_reasons=True,
+            )
+            gather_results_tool.run([result])
+
         for test_result in result.all_test_results:
             if test_result.result == TestResult.UNSUPPORTED:
                 continue
@@ -290,6 +305,14 @@ class PostProcessor:
 
     def post_process_log_dir(self, log_dir: Path):
         """Post process inside a log dir."""
+
+        if PostProcessingMode.GATHER_RESULTS in self.mode:
+            msg = "Gather mode requires Result specs."
+            if self._spinner:
+                self._spinner.write(colored(msg, color="red"))
+            else:
+                cprint(msg, color="red")
+            sys.exit(1)
 
         for combination in log_dir.iterdir():
             if not combination.is_dir():
@@ -349,8 +372,10 @@ class PostProcessor:
 
     def run(self):
         """Run the post processor."""
+        self.redirect_log()
+
         with YaspinWrapper(
-            debug=self.debug, text="Injecting", color="green"
+            debug=self.debug, text="Post Processing...", color="green"
         ) as spinner:
             self._spinner = spinner
 
@@ -361,6 +386,29 @@ class PostProcessor:
                     self.post_process_log_dir(spec)
 
             spinner.ok("✔")
+
+    def redirect_log(self):
+        logger = logging.getLogger(name="quic-interop-runner")
+        logger.setLevel(logging.DEBUG)
+
+        class SpinnerLogger(logging.Handler):
+            def __init__(self, cli: "PostProcessor"):
+                super().__init__()
+                self.cli = cli
+
+            def emit(self, record: logging.LogRecord):
+                color = {
+                    logging.DEBUG: "white",
+                    logging.INFO: "cyan",
+                    logging.WARNING: "yellow",
+                    logging.ERROR: "red",
+                    logging.CRITICAL: "red",
+                }[record.levelno]
+                self.cli.log(record.getMessage().strip(), color=color)
+
+        spinner_log_handler = SpinnerLogger(self)
+        spinner_log_handler.setLevel(logging.DEBUG)
+        logger.addHandler(spinner_log_handler)
 
 
 def main():

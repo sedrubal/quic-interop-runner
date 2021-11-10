@@ -116,10 +116,11 @@ class Side(Enum):
 class PostProcessingMode(IntFlag):
     """The mode of post processing."""
 
-    INJECT_SECRETS = 0b01
-    RENAME_QLOGS = 0b10
-    ALL = 0b11
-    NONE = 0b00
+    INJECT_SECRETS = 0b001
+    RENAME_QLOGS = 0b010
+    GATHER_RESULTS = 0b100
+    ALL = 0b111
+    NONE = 0b000
 
     @classmethod
     def from_str(cls, value: str) -> "PostProcessingMode":

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import argparse
-import concurrent.futures
 import logging
 import os
 import re
@@ -9,17 +8,16 @@ import sys
 from enum import Enum
 from pathlib import Path
 from typing import Optional
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import sqlalchemy as sa
 from sqlalchemy import orm
 from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy.pool import SingletonThreadPool
 from sqlalchemy_utils import UUIDType
 
-from result_parser import ExtendedMeasurementResult, ExtendedTestResult, Result
-from utils import TerminalFormatter
 from enums import TestResult
+from result_parser import MeasurementResultInfo, Result, TestResultInfo
+from utils import TerminalFormatter
 
 Base = declarative_base()
 
@@ -148,15 +146,13 @@ def get_none_or_first(query_result):
     return query_result.first()
 
 
-class GatherResult:
+class GatherResults:
     def __init__(
         self,
-        results: list[Result],
         dburl: str,
         debug=False,
         skip_existing_reasons=False,
     ):
-        self.results = results
         self.debug = debug
         self.skip_existing_reasons = skip_existing_reasons
         engine = sa.create_engine(dburl)
@@ -166,9 +162,9 @@ class GatherResult:
         self.session = Session(bind=engine)
         Base.metadata.create_all(engine)
 
-    def run(self):
-        for i, result in enumerate(self.results):
-            LOGGER.info("Processing result file %d of %d", i + 1, len(self.results))
+    def run(self, results: list[Result]):
+        for i, result in enumerate(results):
+            LOGGER.info("Processing result file %d of %d", i + 1, len(results))
             self.process_result(result)
 
     def get_reason(self, output_file: Path) -> Optional[Reason]:
@@ -200,6 +196,7 @@ class GatherResult:
         return None
 
     def insert_test_run(self, result: Result) -> UUID:
+        assert result.file_path
         path = str(
             result.file_path.path.absolute()
             if result.file_path.is_path
@@ -227,7 +224,7 @@ class GatherResult:
         return test_run.id
 
     def insert_test_case_run(
-        self, test_result: ExtendedTestResult, test_run_id: UUID
+        self, test_result: TestResultInfo, test_run_id: UUID
     ) -> int:
         run = get_none_or_first(
             self.session.query(TestCaseRun).filter(
@@ -284,9 +281,7 @@ class GatherResult:
 
         return run.id
 
-    def insert_measurement_run(
-        self, meas_result: ExtendedMeasurementResult, test_run_id
-    ):
+    def insert_measurement_run(self, meas_result: MeasurementResultInfo, test_run_id):
         run = get_none_or_first(
             self.session.query(MeasurementRun).filter(
                 MeasurementRun.run == test_run_id,
@@ -372,13 +367,12 @@ def main():
     console_log_handler.setLevel(logging.DEBUG if args.debug else logging.INFO)
     console_log_handler.setFormatter(TerminalFormatter())
     LOGGER.addHandler(console_log_handler)
-    cli = GatherResult(
-        results=args.results,
+    cli = GatherResults(
         dburl=args.database,
         debug=args.debug,
         skip_existing_reasons=args.skip_existing_reasons,
     )
-    cli.run()
+    cli.run(results=args.results)
 
 
 if __name__ == "__main__":
