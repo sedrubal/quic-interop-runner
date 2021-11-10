@@ -10,6 +10,7 @@ SLICE=user.slice
 # --user \
 # --uid="$(id -u)" \
 # --gid="$(id -g)" \
+CPUQUOTA=$((($(nproc --all) - 1) * 100))
 
 exec systemd-run \
     --quiet \
@@ -19,6 +20,7 @@ exec systemd-run \
     --wait \
     --slice="${SLICE}" \
     --description="QUIC Interop Runner with constrained CPU and Memory usage" \
-    --property=CPUQuota=95% \
+    --property=CPUQuota="${CPUQUOTA}%" \
     --property=MemoryLimit=95% \
+    --property=OOMPolicy=kill \
     poetry run ./run.py $@
