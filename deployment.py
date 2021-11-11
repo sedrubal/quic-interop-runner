@@ -455,7 +455,7 @@ class Deployment:
                 for hook in hooks.get(stage, []):
                     hook()
 
-        # exit
+        # wait until containers exited
 
         for container, container_data_structure in data_structure.items():
             thread: threading.Thread = container_data_structure.monitor_thread
@@ -468,6 +468,7 @@ class Deployment:
                 LOGGER.warning("Stopping containers")
                 end_callback(force=True)
                 thread.join(timeout=1)
+                LOGGER.error("Abort")
                 sys.exit(1)
 
             if thread.is_alive():

@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 
-"""Run sat test for all implementation combinations that support it (that succeeded in a previous run)."""
+"""
+Run sat test for all implementation combinations that support it (that succeeded in a previous run).
+
+This script is deprecated and won't work anymore!
+"""
 
 import argparse
 import os

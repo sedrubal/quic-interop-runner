@@ -25,7 +25,7 @@ from result_json_types import (
     JSONTestDescr,
     JSONTestResult,
 )
-from utils import UrlOrPath
+from utils import UrlOrPath, compare_and_merge
 
 LOGGER = logging.getLogger(name="quic-interop-runner")
 
@@ -39,18 +39,16 @@ class TestDescription:
     abbr: str
     name: str
     desc: str
+    timeout: Optional[int]
 
     def to_json(self) -> JSONTestDescr:
         """Convert to a raw test description."""
 
-        return JSONTestDescr(
-            name=self.name,
-            desc=self.desc,
-        )
+        return JSONTestDescr(name=self.name, desc=self.desc, timeout=self.timeout)
 
 
 @dataclass(frozen=True)
-class MeasurmentDescription(TestDescription):
+class MeasurementDescription(TestDescription):
     """The description of a measurement."""
 
     theoretical_max_value: Optional[float]
@@ -62,16 +60,18 @@ class MeasurmentDescription(TestDescription):
         return JSONMeasurementDescr(
             name=self.name,
             desc=self.desc,
+            timeout=self.timeout,
             theoretical_max_value=self.theoretical_max_value,
             repetitions=self.repetitions,
         )
 
     @classmethod
-    def from_test_desc(cls, test_desc: TestDescription) -> "MeasurmentDescription":
+    def from_test_desc(cls, test_desc: TestDescription) -> "MeasurementDescription":
         return cls(
             abbr=test_desc.abbr,
             name=test_desc.name,
             desc=test_desc.desc,
+            timeout=test_desc.timeout,
             theoretical_max_value=None,
             repetitions=None,
         )
@@ -82,7 +82,7 @@ class _ResultInfoMixin(ABC):
     result: Optional[TestResult]
     server: Implementation
     client: Implementation
-    test: Union[TestDescription, MeasurmentDescription]
+    test: Union[TestDescription, MeasurementDescription]
     _base_log_dir: UrlOrPath
 
     @property
@@ -127,7 +127,7 @@ class TestResultInfo(_ResultInfoMixin):
 class MeasurementResultInfo(_ResultInfoMixin):
     """Information about a measurement result."""
 
-    test: MeasurmentDescription
+    test: MeasurementDescription
     details: str
 
     @cached_property
@@ -231,7 +231,7 @@ class Result:
         self._servers = dict[str, Implementation]()
         self._clients = dict[str, Implementation]()
         self._test_descriptions = dict[
-            str, Union[TestDescription, MeasurmentDescription]
+            str, Union[TestDescription, MeasurementDescription]
         ]()
         self._test_results = TestResults()
         self._meas_results = MeasurementResults()
@@ -325,22 +325,26 @@ class Result:
             self.add_implementation(implementation, implementation.role)
 
         # parse test (descriptions)
-        test_descriptions = dict[str, Union[TestDescription, MeasurmentDescription]]()
+        test_descriptions = dict[str, Union[TestDescription, MeasurementDescription]]()
 
         for abbr, test in raw_data["tests"].items():
             if "theoretical_max_value" in test.keys() or "repetitions" in test.keys():
                 json_meas_desc: JSONMeasurementDescr = cast(JSONMeasurementDescr, test)
-                meas_desc = MeasurmentDescription(
+                meas_desc = MeasurementDescription(
                     abbr=abbr,
                     name=test["name"],
                     desc=test["desc"],
+                    timeout=test.get("timeout"),
                     theoretical_max_value=json_meas_desc.get("theoretical_max_value"),
                     repetitions=json_meas_desc.get("repetitions"),
                 )
                 test_descriptions[abbr] = meas_desc
             else:
                 test_descriptions[abbr] = TestDescription(
-                    abbr=abbr, name=test["name"], desc=test["desc"]
+                    abbr=abbr,
+                    name=test["name"],
+                    desc=test["desc"],
+                    timeout=test.get("timeout"),
                 )
 
         self._test_descriptions = test_descriptions
@@ -351,27 +355,49 @@ class Result:
 
                 index = client_index * len(self.servers) + server_index
 
-                for test in raw_data["results"][index]:
-                    if not test["result"]:
-                        continue
+                if index < len(raw_data["results"]):
+                    for test in raw_data["results"][index]:
+                        if not test["result"]:
+                            continue
 
-                    self.add_test_result(
-                        server=server_name,
-                        client=client_name,
-                        test_abbr=test["abbr"],
-                        test_result=TestResult(test["result"]),
+                        self.add_test_result(
+                            server=server_name,
+                            client=client_name,
+                            test_abbr=test["abbr"],
+                            test_result=TestResult(test["result"]),
+                        )
+                else:
+                    LOGGER.warning(
+                        (
+                            "Malformed result.json: No test results for "
+                            "client=%s server=%s (index=%d out of range)."
+                        ),
+                        client_name,
+                        server_name,
+                        index,
                     )
 
-                for measurement in raw_data["measurements"][index]:
-                    if not measurement["result"]:
-                        continue
+                if index < len(raw_data["measurements"]):
+                    for measurement in raw_data["measurements"][index]:
+                        if not measurement["result"]:
+                            continue
 
-                    self.add_measurement_result(
-                        server=server_name,
-                        client=client_name,
-                        meas_abbr=measurement["abbr"],
-                        meas_result=TestResult(measurement["result"]),
-                        details=measurement["details"],
+                        self.add_measurement_result(
+                            server=server_name,
+                            client=client_name,
+                            meas_abbr=measurement["abbr"],
+                            meas_result=TestResult(measurement["result"]),
+                            details=measurement["details"],
+                        )
+                else:
+                    LOGGER.warning(
+                        (
+                            "Malformed result.json: No measurement results for "
+                            "client=%s server=%s (index=%d out of range)."
+                        ),
+                        client_name,
+                        server_name,
+                        index,
                     )
 
     def to_json(self) -> JSONResult:
@@ -537,41 +563,33 @@ class Result:
             assert impl.url == impl2.url
             assert impl.image == impl2.image
 
-            def compare(prop, val1, val2):
-                if val1 is not None and val2 is not None:
-                    if val1 != val2:
-                        raise ConflictError(
-                            f"Conflict while adding image {impl.name}:"
-                            f" Property {prop}: {val1} != {val2}"
-                        )
-                return val1 or val2
-
             # merge compliant
-            if impl.compliant is True and impl2.compliant is True:
-                compliant = True
-            elif impl.compliant is False or impl2.compliant is False:
-                compliant = False
+            if impl.compliant is not None and impl2.compliant is not None:
+                if impl.compliant is True and impl2.compliant is True:
+                    compliant = True
+                elif impl.compliant is False or impl2.compliant is False:
+                    compliant = False
+                else:
+                    compliant = None
+            elif impl.compliant is not None:
+                compliant = impl.compliant
             else:
-                compliant = None
+                compliant = impl2.compliant
             # merge / update
             impl.role = impl.role | impl2.role
             impl.compliant = compliant
             impl.image = impl.image
-            impl._image_id = compare("Image ID", impl.image_id, impl2.image_id)
-            impl._image_repo_digests = compare(
-                "repo digest",
-                impl.image_repo_digests,
-                impl2.image_repo_digests,
+
+            error_msg = f"Conflict while adding image {impl.name}"
+            impl._image_id = compare_and_merge("_image_id", impl, impl2, error_msg)
+            impl._image_repo_digests = compare_and_merge(
+                "_image_repo_digests", impl, impl2, error_msg
             )
-            impl._image_versions = compare(
-                "image_versions",
-                impl.image_versions,
-                impl2.image_versions,
+            impl._image_versions = compare_and_merge(
+                "_image_versions", impl, impl2, error_msg
             )
-            impl._image_created = compare(
-                "image_created",
-                impl.image_created,
-                impl2.image_created,
+            impl._image_created = compare_and_merge(
+                "_image_created", impl, impl2, error_msg
             )
 
         if role.is_server:
@@ -582,48 +600,70 @@ class Result:
     @property
     def test_descriptions(
         self,
-    ) -> dict[str, Union[TestDescription, MeasurmentDescription]]:
+    ) -> dict[str, Union[TestDescription, MeasurementDescription]]:
         """
         Return a dict of test and measurement abbr.s and description that ran during this run.
         """
         return self._test_descriptions
 
     @property
-    def measurement_descriptions(self) -> dict[str, MeasurmentDescription]:
-        """Return a dict of measurment abbrs and their descriptions."""
+    def measurement_descriptions(self) -> dict[str, MeasurementDescription]:
+        """Return a dict of measurement abbrs and their descriptions."""
         return {
             abbr: test_desc
             for abbr, test_desc in self.test_descriptions.items()
-            if isinstance(test_desc, MeasurmentDescription)
+            if isinstance(test_desc, MeasurementDescription)
         }
 
     def add_test_description(
-        self, test_desc: Union[TestDescription, MeasurmentDescription]
+        self, test_desc: Union[TestDescription, MeasurementDescription]
     ):
         if test_desc.abbr in self.test_descriptions.keys():
             test_desc2 = self.test_descriptions[test_desc.abbr]
 
-            def compare(name, val1, val2):
-                if val1 != val2:
-                    raise ConflictError(f"{name}: {val1} != {val2}")
-
-            compare("abbr", test_desc.abbr, test_desc2.abbr)
-            compare("name", test_desc.name, test_desc2.name)
-            compare("desc", test_desc.desc, test_desc2.desc)
-            if isinstance(test_desc2, MeasurmentDescription):
-                if isinstance(test_desc, MeasurmentDescription):
-                    compare(
-                        "theoretical_max_value",
-                        test_desc.theoretical_max_value,
-                        test_desc2.theoretical_max_value,
+            error_msg = (
+                f"Conflict while adding test description for test {test_desc.abbr}"
+            )
+            abbr = compare_and_merge("abbr", test_desc, test_desc2, error_msg)
+            name = compare_and_merge("name", test_desc, test_desc2, error_msg)
+            desc = compare_and_merge("desc", test_desc, test_desc2, error_msg)
+            assert isinstance(abbr, str)
+            assert isinstance(name, str)
+            assert isinstance(desc, str)
+            timeout: Optional[int] = compare_and_merge(
+                "timeout", test_desc, test_desc2, error_msg
+            )
+            if isinstance(test_desc2, MeasurementDescription):
+                if isinstance(test_desc, MeasurementDescription):
+                    theoretical_max_value = compare_and_merge(
+                        "theoretical_max_value", test_desc, test_desc2, error_msg
                     )
-                    compare(
-                        "repetitions", test_desc.repetitions, test_desc2.repetitions
+                    repetitions = compare_and_merge(
+                        "repetitions", test_desc, test_desc2, error_msg
                     )
                 else:
-                    test_desc = test_desc2
+                    theoretical_max_value = test_desc2.theoretical_max_value
+                    repetitions = test_desc2.repetitions
 
-        self._test_descriptions[test_desc.abbr] = test_desc
+                test_desc_merged = MeasurementDescription(
+                    abbr,
+                    name,
+                    desc,
+                    timeout,
+                    theoretical_max_value,
+                    repetitions,
+                )
+            else:
+                test_desc_merged = TestDescription(
+                    abbr,
+                    name,
+                    desc,
+                    timeout,
+                )
+        else:
+            test_desc_merged = test_desc
+
+        self._test_descriptions[test_desc.abbr] = test_desc_merged
 
     @property
     def test_results(self) -> TestResults:
@@ -863,10 +903,10 @@ class Result:
 
         test_desc = self.test_descriptions[meas_abbr]
 
-        if isinstance(test_desc, MeasurmentDescription):
+        if isinstance(test_desc, MeasurementDescription):
             meas_desc = test_desc
         else:
-            meas_desc = MeasurmentDescription.from_test_desc(test_desc)
+            meas_desc = MeasurementDescription.from_test_desc(test_desc)
             # update measurement description (as we know now that this belongs to a measurement and not to a test).
             self._test_descriptions[meas_abbr] = meas_desc
 

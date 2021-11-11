@@ -8,6 +8,7 @@ class JSONTestDescr(TypedDict):
 
     name: str
     desc: str
+    timeout: Optional[int]
 
 
 class JSONMeasurementDescr(TypedDict):
@@ -17,6 +18,7 @@ class JSONMeasurementDescr(TypedDict):
     desc: str
     theoretical_max_value: Optional[float]
     repetitions: Optional[int]
+    timeout: Optional[int]
 
 
 RawTestResultResult = Optional[str]

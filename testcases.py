@@ -8,7 +8,6 @@ import subprocess
 import sys
 import tempfile
 from datetime import timedelta
-from functools import cached_property
 from pathlib import Path
 from typing import ClassVar, Optional, Type, Union
 
@@ -17,7 +16,7 @@ from Crypto.Cipher import AES
 from custom_types import IPAddress
 from enums import ECN, Perspective
 from exceptions import TestFailed, TestUnsupported
-from result_parser import MeasurmentDescription, TestDescription
+from result_parser import MeasurementDescription, TestDescription
 from trace_analyzer import Direction, PacketType, TraceAnalyzer, get_packet_type
 from units import DataRate, FileSize, Time
 from utils import random_string
@@ -67,6 +66,8 @@ class TestCase(abc.ABC):
         self._client_server_addrs = set[IPAddress]()
         self._server_client_addrs = set[IPAddress]()
         self._server_server_addrs = set[IPAddress]()
+        self._server_trace: Optional[TraceAnalyzer] = None
+        self._client_trace: Optional[TraceAnalyzer] = None
 
     def set_ip_addrs(
         self,
@@ -137,6 +138,7 @@ class TestCase(abc.ABC):
             name=cls.name,
             abbr=cls.abbreviation,
             desc=cls.desc,
+            timeout=cls.timeout,
         )
 
     @classmethod
@@ -208,65 +210,71 @@ class TestCase(abc.ABC):
 
         return None
 
-    @cached_property
-    def _client_trace(self):
-        ipv4_client: Optional[str] = None
-        ipv6_client: Optional[str] = None
-        ipv4_server: Optional[str] = None
-        ipv6_server: Optional[str] = None
+    @property
+    def client_trace(self) -> TraceAnalyzer:
+        if not self._client_trace:
+            ipv4_client: Optional[str] = None
+            ipv6_client: Optional[str] = None
+            ipv4_server: Optional[str] = None
+            ipv6_server: Optional[str] = None
 
-        for ip_addr in self._client_client_addrs:
-            if ip_addr.version == 4:
-                ipv4_client = ip_addr.exploded
-            elif ip_addr.version == 6:
-                ipv6_client = ip_addr.exploded
+            for ip_addr in self._client_client_addrs:
+                if ip_addr.version == 4:
+                    ipv4_client = ip_addr.exploded
+                elif ip_addr.version == 6:
+                    ipv6_client = ip_addr.exploded
 
-        for ip_addr in self._client_server_addrs:
-            if ip_addr.version == 4:
-                ipv4_server = ip_addr.exploded
-            elif ip_addr.version == 6:
-                ipv6_server = ip_addr.exploded
+            for ip_addr in self._client_server_addrs:
+                if ip_addr.version == 4:
+                    ipv4_server = ip_addr.exploded
+                elif ip_addr.version == 6:
+                    ipv6_server = ip_addr.exploded
 
-        assert (ipv4_client or ipv6_client) and (ipv4_server or ipv6_server)
+            assert (ipv4_client or ipv6_client) and (ipv4_server or ipv6_server)
 
-        return TraceAnalyzer(
-            pcap_path=self._sim_log_dir / "trace_node_left.pcap",
-            keylog_file=self._keylog_file,
-            ip4_client=ipv4_client,
-            ip6_client=ipv6_client,
-            ip4_server=ipv4_server,
-            ip6_server=ipv6_server,
-        )
+            self._client_trace = TraceAnalyzer(
+                pcap_path=self._sim_log_dir / "trace_node_left.pcap",
+                keylog_file=self._keylog_file,
+                ip4_client=ipv4_client,
+                ip6_client=ipv6_client,
+                ip4_server=ipv4_server,
+                ip6_server=ipv6_server,
+            )
 
-    @cached_property
-    def _server_trace(self):
-        ipv4_client: Optional[str] = None
-        ipv6_client: Optional[str] = None
-        ipv4_server: Optional[str] = None
-        ipv6_server: Optional[str] = None
+        return self._client_trace
 
-        for ip_addr in self._server_client_addrs:
-            if ip_addr.version == 4:
-                ipv4_client = ip_addr.exploded
-            elif ip_addr.version == 6:
-                ipv6_client = ip_addr.exploded
+    @property
+    def server_trace(self) -> TraceAnalyzer:
+        if not self._server_trace:
+            ipv4_client: Optional[str] = None
+            ipv6_client: Optional[str] = None
+            ipv4_server: Optional[str] = None
+            ipv6_server: Optional[str] = None
 
-        for ip_addr in self._server_server_addrs:
-            if ip_addr.version == 4:
-                ipv4_server = ip_addr.exploded
-            elif ip_addr.version == 6:
-                ipv6_server = ip_addr.exploded
+            for ip_addr in self._server_client_addrs:
+                if ip_addr.version == 4:
+                    ipv4_client = ip_addr.exploded
+                elif ip_addr.version == 6:
+                    ipv6_client = ip_addr.exploded
 
-        assert (ipv4_client or ipv6_client) and (ipv4_server or ipv6_server)
+            for ip_addr in self._server_server_addrs:
+                if ip_addr.version == 4:
+                    ipv4_server = ip_addr.exploded
+                elif ip_addr.version == 6:
+                    ipv6_server = ip_addr.exploded
 
-        return TraceAnalyzer(
-            pcap_path=self._sim_log_dir / "trace_node_right.pcap",
-            keylog_file=self._keylog_file,
-            ip4_client=ipv4_client,
-            ip6_client=ipv6_client,
-            ip4_server=ipv4_server,
-            ip6_server=ipv6_server,
-        )
+            assert (ipv4_client or ipv6_client) and (ipv4_server or ipv6_server)
+
+            self._server_trace = TraceAnalyzer(
+                pcap_path=self._sim_log_dir / "trace_node_right.pcap",
+                keylog_file=self._keylog_file,
+                ip4_client=ipv4_client,
+                ip6_client=ipv6_client,
+                ip4_server=ipv4_server,
+                ip6_server=ipv6_server,
+            )
+
+        return self._server_trace
 
     def _generate_random_file(self, size: int, filename_len=10) -> str:
         """See https://www.stefanocappellini.it/generate-pseudorandom-bytes-with-python/ for benchmarks"""
@@ -279,7 +287,7 @@ class TestCase(abc.ABC):
         return filename
 
     def _retry_sent(self) -> bool:
-        return len(self._client_trace.get_retry()) > 0
+        return len(self.client_trace.get_retry()) > 0
 
     def _check_version_and_files(self):
         versions = [hex(int(v, 0)) for v in self._get_versions()]
@@ -342,7 +350,7 @@ class TestCase(abc.ABC):
         num_handshakes = len(
             {
                 packet.scid
-                for packet in self._server_trace.get_initial(Direction.FROM_SERVER)
+                for packet in self.server_trace.get_initial(Direction.FROM_SERVER)
             }
         )
 
@@ -357,7 +365,7 @@ class TestCase(abc.ABC):
 
         return {
             packet.version
-            for packet in self._server_trace.get_initial(Direction.FROM_SERVER)
+            for packet in self.server_trace.get_initial(Direction.FROM_SERVER)
         }
 
     def _payload_size(self, packets: list) -> int:
@@ -377,8 +385,8 @@ class TestCase(abc.ABC):
         return size
 
     def _check_traces(self):
-        self._server_trace.validate_pcap()
-        self._client_trace.validate_pcap()
+        self.server_trace.validate_pcap()
+        self.client_trace.validate_pcap()
 
     def _check_keylog(self):
         if not self._keylog_file:
@@ -393,15 +401,11 @@ class TestCase(abc.ABC):
             self._download_dir.cleanup()
             self._download_dir = None
 
-        # clear traces: https://stackoverflow.com/a/62662941/3077972
-        try:
-            del self._server_trace.value  # type: ignore
-        except AttributeError:
-            pass
-        try:
-            del self._client_trace.value  # type: ignore
-        except AttributeError:
-            pass
+        # clear traces
+        del self._server_trace
+        self._server_trace = None
+        del self._client_trace
+        self._client_trace = None
 
     def __del__(self):
         self.cleanup()
@@ -441,11 +445,12 @@ class Measurement(TestCase):
         pass
 
     @classmethod
-    def to_desc(cls) -> MeasurmentDescription:
-        return MeasurmentDescription(
+    def to_desc(cls) -> MeasurementDescription:
+        return MeasurementDescription(
             name=cls.name,
             abbr=cls.abbreviation,
             desc=cls.desc,
+            timeout=cls.timeout,
             theoretical_max_value=cls.theoretical_max_value,
             repetitions=cls.repetitions,
         )
@@ -474,7 +479,7 @@ class TestCaseVersionNegotiation(TestCase):
 
     def check(self):
         self._check_traces()
-        initials = self._client_trace.get_initial(Direction.FROM_CLIENT)
+        initials = self.client_trace.get_initial(Direction.FROM_CLIENT)
         dcid = ""
 
         for packet in initials:
@@ -485,7 +490,7 @@ class TestCaseVersionNegotiation(TestCase):
         if dcid == "":
             raise TestFailed("Didn't find an Initial / a DCID.")
 
-        vnps = self._client_trace.get_vnp()
+        vnps = self.client_trace.get_vnp()
 
         for packet in vnps:
             if packet.scid == dcid:
@@ -568,7 +573,7 @@ class TestCaseLongRTT(TestCaseHandshake):
 
         num_ch = 0
 
-        for packet in self._client_trace.get_initial(Direction.FROM_CLIENT):
+        for packet in self.client_trace.get_initial(Direction.FROM_CLIENT):
             if hasattr(packet, "tls_handshake_type"):
                 if packet.tls_handshake_type == "1":
                     num_ch += 1
@@ -639,7 +644,7 @@ class TestCaseChaCha20(TestCase):
 
         ciphersuites = set()
 
-        for packet in self._client_trace.get_initial(Direction.FROM_CLIENT):
+        for packet in self.client_trace.get_initial(Direction.FROM_CLIENT):
             if hasattr(packet, "tls_handshake_ciphersuite"):
                 ciphersuites.add(packet.tls_handshake_ciphersuite)
 
@@ -686,7 +691,7 @@ class TestCaseMultiplexing(TestCase):
         # Check that the server set a bidirectional stream limit <= 1000
         checked_stream_limit = False
 
-        for packet in self._client_trace.get_handshake(Direction.FROM_SERVER):
+        for packet in self.client_trace.get_handshake(Direction.FROM_SERVER):
             if hasattr(packet, "tls.quic.parameter.initial_max_streams_bidi"):
                 checked_stream_limit = True
                 stream_limit = int(
@@ -727,7 +732,7 @@ class TestCaseRetry(TestCase):
     def _check_trace(self):
         """Check that (at least) one Retry packet was actually sent."""
         tokens = []
-        retries = self._client_trace.get_retry(Direction.FROM_SERVER)
+        retries = self.client_trace.get_retry(Direction.FROM_SERVER)
 
         for packet in retries:
             if not hasattr(packet, "retry_token"):
@@ -741,7 +746,7 @@ class TestCaseRetry(TestCase):
         # check that an Initial packet uses a token sent in the Retry packet(s)
         highest_pn_before_retry = -1
 
-        for packet in self._client_trace.get_initial(Direction.FROM_CLIENT):
+        for packet in self.client_trace.get_initial(Direction.FROM_CLIENT):
             packet_number = int(packet.packet_number)
 
             if packet.token_length == "0":
@@ -799,7 +804,7 @@ class TestCaseResumption(TestCase):
         self._check_traces()
         self._check_handshakes(2)
 
-        handshake_packets = self._client_trace.get_handshake(Direction.FROM_SERVER)
+        handshake_packets = self.client_trace.get_handshake(Direction.FROM_SERVER)
         cids = [p.scid for p in handshake_packets]
         first_handshake_has_cert = False
 
@@ -859,9 +864,9 @@ class TestCaseZeroRTT(TestCase):
         self._check_handshakes(2)
         self._check_version_and_files()
 
-        zero_rtt_size = self._payload_size(self._client_trace.get_0rtt())
+        zero_rtt_size = self._payload_size(self.client_trace.get_0rtt())
         one_rtt_size = self._payload_size(
-            self._client_trace.get_1rtt(Direction.FROM_CLIENT)
+            self.client_trace.get_1rtt(Direction.FROM_CLIENT)
         )
         LOGGER.debug("0-RTT size: %d", zero_rtt_size)
         LOGGER.debug("1-RTT size: %d", one_rtt_size)
@@ -962,7 +967,7 @@ class TestCaseAmplificationLimit(TestCase):
         # This way we can make sure that it actually used the provided cert chain.
         max_handshake_offset = 0
 
-        for packet in self._server_trace.get_handshake(Direction.FROM_SERVER):
+        for packet in self.server_trace.get_handshake(Direction.FROM_SERVER):
             if hasattr(packet, "crypto_offset"):
                 max_handshake_offset = max(
                     max_handshake_offset,
@@ -986,8 +991,8 @@ class TestCaseAmplificationLimit(TestCase):
         failed = True
         log_output = []
 
-        for packet in self._server_trace.get_raw_packets():
-            direction = self._server_trace.get_direction(packet)
+        for packet in self.server_trace.get_raw_packets():
+            direction = self.server_trace.get_direction(packet)
             packet_type = get_packet_type(packet)
 
             if packet_type == PacketType.VERSIONNEGOTIATION:
@@ -1120,10 +1125,10 @@ class TestCaseKeyUpdate(TestCaseHandshake):
         client = {0: 0, 1: 0}
         server = {0: 0, 1: 0}
         try:
-            for packet in self._client_trace.get_1rtt(Direction.FROM_CLIENT):
+            for packet in self.client_trace.get_1rtt(Direction.FROM_CLIENT):
                 client[int(packet.key_phase)] += 1
 
-            for packet in self._server_trace.get_1rtt(Direction.FROM_SERVER):
+            for packet in self.server_trace.get_1rtt(Direction.FROM_SERVER):
                 server[int(packet.key_phase)] += 1
         except Exception as exc:
             raise TestFailed(
@@ -1365,16 +1370,16 @@ class TestCaseECN(TestCaseHandshake):
 
         super(TestCaseECN, self).check()
 
-        tr_client = self._client_trace._get_packets(
-            self._client_trace._get_direction_filter(Direction.FROM_CLIENT) + " quic"
+        tr_client = self.client_trace._get_packets(
+            self.client_trace._get_direction_filter(Direction.FROM_CLIENT) + " quic"
         )
         ecn = self._count_ecn(tr_client)
         ecn_client_any_marked = self._check_ecn_any(ecn)
         ecn_client_all_ok = self._check_ecn_marks(ecn)
         ack_ecn_client_ok = self._check_ack_ecn(tr_client)
 
-        tr_server = self._server_trace._get_packets(
-            self._server_trace._get_direction_filter(Direction.FROM_SERVER) + " quic"
+        tr_server = self.server_trace._get_packets(
+            self.server_trace._get_direction_filter(Direction.FROM_SERVER) + " quic"
         )
         ecn = self._count_ecn(tr_server)
         ecn_server_any_marked = self._check_ecn_any(ecn)
@@ -1460,8 +1465,8 @@ class TestCasePortRebinding(TestCaseTransfer):
         self._check_traces()
         super(TestCasePortRebinding, self).check()
 
-        tr_server = self._server_trace._get_packets(
-            self._server_trace._get_direction_filter(Direction.FROM_SERVER) + " quic"
+        tr_server = self.server_trace._get_packets(
+            self.server_trace._get_direction_filter(Direction.FROM_SERVER) + " quic"
         )
 
         ports = list(set(getattr(p["udp"], "dstport") for p in tr_server))
@@ -1501,8 +1506,8 @@ class TestCasePortRebinding(TestCaseTransfer):
                         f"{p['quic']}",
                     )
 
-        tr_client = self._client_trace._get_packets(
-            self._client_trace._get_direction_filter(Direction.FROM_CLIENT) + " quic"
+        tr_client = self.client_trace._get_packets(
+            self.client_trace._get_direction_filter(Direction.FROM_CLIENT) + " quic"
         )
 
         challenges = list(
@@ -1563,8 +1568,8 @@ class TestCaseAddressRebinding(TestCasePortRebinding):
         self._check_keylog()
         self._check_traces()
 
-        tr_server = self._server_trace._get_packets(
-            self._server_trace._get_direction_filter(Direction.FROM_SERVER) + " quic"
+        tr_server = self.server_trace._get_packets(
+            self.server_trace._get_direction_filter(Direction.FROM_SERVER) + " quic"
         )
 
         ips = set()
@@ -1621,8 +1626,8 @@ class TestCaseIPv6(TestCaseTransfer):
     def check(self):
         super().check()
 
-        tr_server = self._server_trace._get_packets(
-            self._server_trace._get_direction_filter(Direction.FROM_SERVER)
+        tr_server = self.server_trace._get_packets(
+            self.server_trace._get_direction_filter(Direction.FROM_SERVER)
             + " quic && ip"
         )
 
@@ -1670,8 +1675,8 @@ class TestCaseConnectionMigration(TestCaseAddressRebinding):
         # and that PATH_CHALLENGE/RESPONSE frames were sent and received
         super().check()
 
-        tr_client = self._client_trace._get_packets(
-            self._client_trace._get_direction_filter(Direction.FROM_CLIENT) + " quic"
+        tr_client = self.client_trace._get_packets(
+            self.client_trace._get_direction_filter(Direction.FROM_CLIENT) + " quic"
         )
 
         last = None
@@ -1756,7 +1761,7 @@ class MeasurementGoodput(Measurement):
         self._check_handshakes(1)
         self._check_version_and_files()
 
-        packets = self._client_trace.get_1rtt(Direction.FROM_SERVER)
+        packets = self.client_trace.get_1rtt(Direction.FROM_SERVER)
         packet_times: list[timedelta] = [packet.sniff_time for packet in packets]
         first = min(packet_times)
         last = max(packet_times)

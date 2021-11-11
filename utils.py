@@ -22,6 +22,8 @@ from termcolor import colored, cprint
 from urllib3.util.url import Url, parse_url
 from yaspin import yaspin
 
+from exceptions import ConflictError
+
 if typing.TYPE_CHECKING:
     from collections.abc import Iterable
 
@@ -37,6 +39,22 @@ def random_string(length: int):
     letters = string.ascii_lowercase
 
     return "".join(random.choice(letters) for i in range(length))
+
+
+def compare_and_merge(property: str, obj1, obj2, error_msg: str):
+    val1 = getattr(obj1, property, None)
+    val2 = getattr(obj2, property, None)
+    if val1 is not None and val2 is not None:
+        if val1 != val2:
+            raise ConflictError(
+                f"{error_msg}: {property.lstrip('_')}: {val1} != {val2}"
+            )
+        else:
+            return val1
+    elif val1 is None:
+        return val2
+    else:
+        return val1
 
 
 class Statistics(NamedTuple):

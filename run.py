@@ -152,7 +152,6 @@ def main():
     tests, measurements = get_tests_and_measurements(args.test)
 
     return InteropRunner(
-        implementations=IMPLEMENTATIONS,
         servers=args.server or server_implementations,
         clients=args.client or client_implementations,
         tests=tests,
