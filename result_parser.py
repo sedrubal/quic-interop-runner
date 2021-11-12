@@ -715,7 +715,9 @@ class Result:
 
         for server_name in self.servers.keys():
             for client_name in self.clients.keys():
-                test_results_for_combi = self.test_results[server_name][client_name]
+                test_results_for_combi = self.test_results.get(server_name, {}).get(
+                    client_name, {}
+                )
 
                 if test_abbr not in test_results_for_combi.keys():
                     continue
@@ -860,9 +862,9 @@ class Result:
 
         for server_name in self.servers.keys():
             for client_name in self.clients.keys():
-                measurement_results_for_combi = self.measurement_results[server_name][
-                    client_name
-                ]
+                measurement_results_for_combi = self.measurement_results.get(
+                    server_name, {}
+                ).get(client_name, {})
 
                 if measurement_abbr not in measurement_results_for_combi.keys():
                     continue
