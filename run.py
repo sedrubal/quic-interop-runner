@@ -18,7 +18,7 @@ server_implementations = [
 ]
 
 
-def get_args():
+def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "-d",
@@ -48,10 +48,12 @@ def get_args():
         nargs="+",
         action="extend",
         default=None,
-        choices=(
-            [x.name for x in TESTCASES + MEASUREMENTS]
-            + ["onlyTests", "onlyMeasurements"]
-        ),
+        choices=[
+            "onlyTests",
+            "onlyMeasurements",
+            *(x.name for x in TESTCASES),
+            *(x.name for x in MEASUREMENTS),
+        ],
         help="test cases.",
     )
     parser.add_argument(
@@ -90,12 +92,17 @@ def get_args():
         action="store_true",
         help="Retry failed tests and measurements when resuming a run.",
     )
+    parser.add_argument(
+        "--shuffle",
+        action="store_true",
+        help="Scramble the order of the test cases.",
+    )
 
     return parser.parse_args()
 
 
 def main():
-    args = get_args()
+    args = parse_args()
 
     for replace in args.replace:
         try:
@@ -162,6 +169,7 @@ def main():
         save_files=args.save_files,
         skip_compliance_check=args.skip_compliance_check,
         retry_failed=args.retry_failed,
+        shuffle=args.shuffle,
     ).run()
 
 

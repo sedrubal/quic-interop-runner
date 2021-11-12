@@ -2,6 +2,7 @@
 
 import concurrent.futures
 import logging
+import random
 import shutil
 import sys
 import tempfile
@@ -57,6 +58,7 @@ class InteropRunner:
         log_dir: Optional[Path] = None,
         skip_compliance_check: bool = False,
         retry_failed: bool = False,
+        shuffle: bool = False,
     ):
         LOGGER.setLevel(logging.DEBUG)
 
@@ -80,6 +82,7 @@ class InteropRunner:
         self._save_files = save_files
         self._skip_compliance_check = skip_compliance_check
         self._retry_failed = retry_failed
+        self._shuffle = shuffle
 
         self._deployment = Deployment()
 
@@ -643,6 +646,9 @@ class InteropRunner:
                         client_name,
                         measurement,
                     )
+
+        if self._shuffle:
+            random.shuffle(self._scheduled_tests)
 
         while True:
             try:
