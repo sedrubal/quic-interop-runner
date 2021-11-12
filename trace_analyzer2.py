@@ -130,6 +130,7 @@ class Trace:
         if CONFIG.pyshark_debug:
             self._cap.set_debug()
         self._facts = dict[str, Any]()
+        self._extended_facts: Optional[dict[str, Any]] = None
         self._response_stream_packets_first_tx = list[QuicStreamPacket]()
         self._response_stream_packets_retrans = list[QuicStreamPacket]()
         self._client_server_packets = list["Packet"]()
@@ -363,6 +364,16 @@ class Trace:
             )
             assert packet.norm_time >= 0
 
+            # set packet direction, when facts have already been loaded from facts cache
+            if self._facts:
+                self._set_packet_direction(
+                    packet,
+                    client_ip=self._facts["client_ip"],
+                    client_port=self._facts["client_port"],
+                    server_ip=self._facts["server_ip"],
+                    server_port=self._facts["server_port"],
+                )
+
             yield packet
 
             packets.append(packet)
@@ -455,7 +466,12 @@ class Trace:
         """Return a dict of findings / facts / infos."""
 
         if not self._facts:
+            self._load_facts_cache_if_exists(extended=False)
+
+        if not self._facts:
             self.parse()
+
+        self._store_facts_to_cache(extended=False)
 
         return self._facts
 
@@ -508,6 +524,34 @@ class Trace:
 
         return self._response_stream_packets_retrans
 
+    def _set_packet_direction(
+        self, packet: "Packet", client_ip, client_port, server_ip, server_port
+    ):
+        client_tuple = (client_ip, client_port)
+        server_tuple = (server_ip, server_port)
+
+        src_port = packet.udp.srcport
+        dst_port = packet.udp.dstport
+        src_ip = packet.ip.src
+        dst_ip = packet.ip.dst
+
+        src_tuple = (src_ip, src_port)
+        dst_tuple = (dst_ip, dst_port)
+
+        if src_tuple == client_tuple and dst_tuple == server_tuple:
+            packet.direction = Direction.TO_SERVER
+
+        elif src_tuple == server_tuple and dst_tuple == client_tuple:
+            packet.direction = Direction.TO_CLIENT
+        else:
+            raise ParsingError(
+                (
+                    f"Packet #{packet.quic.packet_number} has unknown source or destination: "
+                    f"{src_ip}:{src_port} -> {dst_ip}:{dst_port}"
+                ),
+                trace=self,
+            )
+
     def parse(self) -> None:
         """
         Analyze the packets and return a "fact" dict containing:
@@ -542,8 +586,6 @@ class Trace:
         client_port = first_packet.udp.srcport
         self._facts["client_port"] = client_port
         self._facts["server_port"] = server_port
-        client_tuple = (client_ip, client_port)
-        server_tuple = (server_ip, server_port)
 
         client_server_packets = list["Packet"]()
         server_client_packets = list["Packet"]()
@@ -551,34 +593,23 @@ class Trace:
         response_stream_packets = list[QuicStreamPacket]()
 
         for packet in self.packets:
-            src_port = packet.udp.srcport
-            dst_port = packet.udp.dstport
-            src_ip = packet.ip.src
-            dst_ip = packet.ip.dst
-
-            src_tuple = (src_ip, src_port)
-            dst_tuple = (dst_ip, dst_port)
-
-            if src_tuple == client_tuple and dst_tuple == server_tuple:
-                packet.direction = Direction.TO_SERVER
-                client_server_packets.append(packet)
-
-                for inner_packet in self.iter_stream_packets(packet):
-                    request_stream_packets.append(inner_packet)
-            elif src_tuple == server_tuple and dst_tuple == client_tuple:
-                packet.direction = Direction.TO_CLIENT
+            self._set_packet_direction(
+                packet,
+                client_ip=client_ip,
+                client_port=client_port,
+                server_ip=server_ip,
+                server_port=server_port,
+            )
+            if packet.direction == Direction.TO_CLIENT:
                 server_client_packets.append(packet)
 
                 for inner_packet in self.iter_stream_packets(packet):
                     response_stream_packets.append(inner_packet)
-            else:
-                raise ParsingError(
-                    (
-                        f"Packet #{packet.quic.packet_number} has unknown source or destination: "
-                        f"{src_ip}:{src_port} -> {dst_ip}:{dst_port}"
-                    ),
-                    trace=self,
-                )
+            elif packet.direction == Direction.TO_SERVER:
+                client_server_packets.append(packet)
+
+                for inner_packet in self.iter_stream_packets(packet):
+                    request_stream_packets.append(inner_packet)
 
         self._client_server_packets = client_server_packets
         self._server_client_packets = server_client_packets
@@ -682,16 +713,66 @@ class Trace:
         self._pair_trace = value
 
     @cached_property
-    def extended_facts(self):
-        """Return the extended facts, that use information of the left trace."""
+    def _facts_cache_file(self) -> Path:
+        return self.input_file.parent / f"facts.json"
 
+    def _load_facts_cache_if_exists(
+        self, extended: bool = False
+    ) -> Optional[dict[str, Any]]:
+        """Load facts or extended facts if cache file exists and cache loading is enabled."""
+        if (
+            not self._cache_mode.load
+            or not self._facts_cache_file.is_file()
+            or not self._facts_cache_file.stat().st_size > 0
+        ):
+            return None
+
+        with self._facts_cache_file.open("r") as file:
+            cached_facts = json.load(file)
+            is_extended = cached_facts.pop("_extended", False)
+            if not extended or is_extended:
+                self._facts = cached_facts
+                if extended:
+                    self._extended_facts = cached_facts
+                return self.facts
+            else:
+                return None
+
+    def _store_facts_to_cache(self, extended: bool = False):
+        """Write facts file (always - even if cache mode != store)."""
+        # prefer extended facts (do not overwrite cache, when extended facts are already parsed but we want to store only `facts`)
+        facts_to_cache = (
+            self._extended_facts if self._extended_facts or extended else self._facts
+        )
+        assert facts_to_cache
+        with self._facts_cache_file.open("w") as file:
+            json.dump(
+                {
+                    **facts_to_cache,
+                    "_extended": extended,
+                },
+                fp=file,
+            )
+
+    @property
+    def extended_facts(self) -> dict[str, Any]:
+        """Return the extended facts, that use information of the left trace."""
         if not self.pair_trace:
             raise AssertionError("Left trace was not yet set.")
 
-        if not self.side == Side.RIGHT or not self.pair_trace.side == Side.LEFT:
+        if self.side != Side.RIGHT or self.pair_trace.side != Side.LEFT:
+            breakpoint()
             raise AssertionError(
-                "Asserted that this is a right side trace and the other trace is a left side trace."
+                f"Asserted that this is a right side trace (was {self.side.value}) "
+                f"and the other trace is a left side trace (was {self.pair_trace.side.value})."
             )
+
+        if self._extended_facts:
+            return self._extended_facts
+
+        if self._load_facts_cache_if_exists(extended=True):
+            assert self._extended_facts
+            return self._extended_facts
 
         facts = self.facts
 
@@ -707,13 +788,11 @@ class Trace:
         facts["response_delay"] = resp_delay
         facts["plt"] = pglt
         facts["rtt"] = rtt
+        self._extended_facts = facts
 
-        # write facts file:
-        facts_file = self.input_file.parent / f"{self.input_file.stem}.facts.json"
-        with facts_file.open("w") as file:
-            json.dump(facts, fp=file)
+        self._store_facts_to_cache(extended=True)
 
-        return facts
+        return self._extended_facts
 
     def _get_rtt(self) -> float:
         def calc_rtt(
