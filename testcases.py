@@ -28,7 +28,7 @@ QUIC_DRAFT = 34  # draft-34
 QUIC_VERSION = hex(0x1)
 
 
-def generate_cert_chain(directory: str, length: int = 1):
+def generate_cert_chain(directory: Union[str, Path], length: int = 1):
     LOGGER.debug("Generating cert chain into directory %s...", directory)
     try:
         stdout = subprocess.check_output(

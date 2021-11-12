@@ -4,6 +4,7 @@
 import concurrent.futures
 import ipaddress
 import logging
+import shutil
 import sys
 import threading
 import time
@@ -11,7 +12,7 @@ from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable, Optional, Type
 
 import docker
 import paramiko
@@ -33,7 +34,14 @@ from docker_utils import (
 )
 from enums import ImplementationRole as Role
 from implementations import IMPLEMENTATIONS, Implementation
-from testcases import MeasurementRealLink, Perspective, TestCase
+from testcases import (
+    MEASUREMENTS,
+    TESTCASES,
+    MeasurementRealLink,
+    Perspective,
+    TestCase,
+    generate_cert_chain,
+)
 from utils import TerminalFormatter, random_string
 
 MEMLOCK_ULIMIT = docker.types.Ulimit(name="memlock", hard=67108864, soft=67108864)
@@ -54,6 +62,9 @@ TRACE_PATH = Path("/trace.pcap")
 
 
 REAL_LINK_SETUP_SCRIPT = Path(__file__).parent / "real_link_setup.sh"
+
+DEFAULT_SCENARIO = "simple-p2p --delay=15ms --bandwidth=10Mbps --queue=25"
+DEFAULT_REQUEST_URL = "https://server4:443/test"
 
 LOGGER = logging.getLogger(name="quic-interop-runner")
 
@@ -531,7 +542,7 @@ class Deployment:
         if role == Role.CLIENT:
             containers.append(
                 self._create_sim(
-                    scenario="simple-p2p --delay=15ms --bandwidth=10Mbps --queue=25",
+                    scenario=DEFAULT_SCENARIO,
                 )
             )
         containers.append(
@@ -541,7 +552,7 @@ class Deployment:
                 local_certs_path=local_certs_path,
                 testcase=testcase_name,
                 version=version,
-                request_urls="https://server4:443/",
+                request_urls=DEFAULT_REQUEST_URL,
                 local_www_path=local_www_path if role == Role.SERVER else None,
                 local_download_path=local_downloads_path
                 if role == Role.CLIENT
@@ -557,38 +568,56 @@ class Deployment:
         return result
 
     def run_debug_setup(
-        self,
-        client: Implementation = IMPLEMENTATIONS["quic-go"],
-        server: Implementation = IMPLEMENTATIONS["quic-go"],
+        self, client_name="quic-go", server_name="quic-go", testcase="transfer"
     ):
+        local_debug_path = Path("./.debug").absolute()
+        local_certs_path = local_debug_path / "certs"
+        local_www_path = local_debug_path / "www"
+        local_downloads_path = local_debug_path / "downloads"
+        local_debug_path.mkdir(parents=True, exist_ok=True)
+        local_certs_path.mkdir(parents=True, exist_ok=True)
+        local_www_path.mkdir(parents=True, exist_ok=True)
+        local_downloads_path.mkdir(parents=True, exist_ok=True)
+
+        generate_cert_chain(local_certs_path)
+        with (local_www_path / "test").open("w") as file:
+            print("Hai World!", file=file)
+
+        client = IMPLEMENTATIONS[client_name]
+        server = IMPLEMENTATIONS[server_name]
+
         timeout = 60 * 60 * 1  # 1h
         version = 0x1
-        testcase = "transfer"
+        testcase_lookup: dict[str, Type[TestCase]] = {
+            **{tc.name: tc for tc in TESTCASES},
+            **{tc.name: tc for tc in MEASUREMENTS},
+        }
+        testcase = testcase_lookup[testcase]
         LOGGER.debug("Creating sim container")
         sim_container = self._create_sim(
             waitforserver=False,
-            scenario="debug-scenario",
+            scenario=testcase.scenario,
             entrypoint=["sleep", str(timeout)],
         )
         LOGGER.debug("Creating server container")
         server_container = self._create_implementation_sim(
             image=server.image,
             role=Role.SERVER,
-            local_certs_path=Path("/dev/null"),
-            testcase=testcase,
+            local_certs_path=local_certs_path,
+            testcase=testcase.testname(Perspective.SERVER),
             version=version,
-            local_www_path=Path("/dev/null"),
+            local_www_path=local_www_path,
             entrypoint=["sleep", str(timeout)],
         )
         LOGGER.debug("Creating client container")
         client_container = self._create_implementation_sim(
             image=client.image,
             role=Role.CLIENT,
-            local_certs_path=Path("/dev/null"),
-            testcase=testcase,
+            local_certs_path=local_certs_path,
+            testcase=testcase.testname(Perspective.CLIENT),
             version=version,
-            request_urls="debug-request-url",
-            local_download_path=Path("/dev/null"),
+            request_urls=DEFAULT_REQUEST_URL,
+            local_download_path=local_downloads_path,
             entrypoint=["sleep", str(timeout)],
         )
         containers = [sim_container, client_container, server_container]
@@ -596,7 +625,10 @@ class Deployment:
         LOGGER.debug("Starting containers")
         result = self.run_and_wait(containers, timeout=timeout)
 
+        # TODO this code won't be executed, because the program ends on Ctrl+C
         remove_containers(containers)
+        input("Press [Enter] to delete ./.debug/")
+        shutil.rmtree(local_debug_path)
 
         return result
 
@@ -1370,12 +1402,43 @@ def main():
     CONSOLE_LOG_HANDLER = logging.StreamHandler(stream=sys.stderr)
     CONSOLE_LOG_HANDLER.setFormatter(TerminalFormatter())
     LOGGER.addHandler(CONSOLE_LOG_HANDLER)
+
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "-c",
+        "--client",
+        default="quic-go",
+        type=str,
+        help="The name of the client to use.",
+    )
+    parser.add_argument(
+        "-s",
+        "--server",
+        default="quic-go",
+        type=str,
+        help="The name of the client to use.",
+    )
+    parser.add_argument(
+        "-t",
+        "--test",
+        default="",
+        type=str,
+        help="The name of the test case or measurment test case to use.",
+    )
+    args = parser.parse_args()
+
     deployment = Deployment()
     LOGGER.info(
         "Starting dev setup. "
         "Use docker exec to execute a shell inside the containers as soon as they are running."
     )
-    result = deployment.run_debug_setup()
+    result = deployment.run_debug_setup(
+        client_name=args.client,
+        server_name=args.server,
+        testcase=args.test,
+    )
     LOGGER.info(str(result))
 
 
