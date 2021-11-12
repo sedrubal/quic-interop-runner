@@ -471,7 +471,7 @@ class Trace:
         if not self._facts:
             self.parse()
 
-        self._store_facts_to_cache(extended=False)
+        self._store_facts_to_cache()
 
         return self._facts
 
@@ -729,27 +729,33 @@ class Trace:
 
         with self._facts_cache_file.open("r") as file:
             cached_facts = json.load(file)
-            is_extended = cached_facts.pop("_extended", False)
-            if not extended or is_extended:
-                self._facts = cached_facts
-                if extended:
-                    self._extended_facts = cached_facts
-                return self.facts
+        is_extended = cached_facts.pop("_extended", False)
+        self._facts = cached_facts
+        if is_extended:
+            self._extended_facts = cached_facts
+
+        if extended:
+            if is_extended:
+                return self._extended_facts
             else:
                 return None
+        return self._facts
 
-    def _store_facts_to_cache(self, extended: bool = False):
+    def _store_facts_to_cache(self):
         """Write facts file (always - even if cache mode != store)."""
         # prefer extended facts (do not overwrite cache, when extended facts are already parsed but we want to store only `facts`)
-        facts_to_cache = (
-            self._extended_facts if self._extended_facts or extended else self._facts
-        )
+        if self._extended_facts:
+            facts_to_cache = self._extended_facts
+            is_extended = True
+        else:
+            facts_to_cache = self._facts
+            is_extended = False
         assert facts_to_cache
         with self._facts_cache_file.open("w") as file:
             json.dump(
                 {
                     **facts_to_cache,
-                    "_extended": extended,
+                    "_extended": is_extended,
                 },
                 fp=file,
             )
@@ -761,7 +767,6 @@ class Trace:
             raise AssertionError("Left trace was not yet set.")
 
         if self.side != Side.RIGHT or self.pair_trace.side != Side.LEFT:
-            breakpoint()
             raise AssertionError(
                 f"Asserted that this is a right side trace (was {self.side.value}) "
                 f"and the other trace is a left side trace (was {self.pair_trace.side.value})."
@@ -774,6 +779,7 @@ class Trace:
             assert self._extended_facts
             return self._extended_facts
 
+        self.parse()
         facts = self.facts
 
         # calculate times
@@ -790,7 +796,7 @@ class Trace:
         facts["rtt"] = rtt
         self._extended_facts = facts
 
-        self._store_facts_to_cache(extended=True)
+        self._store_facts_to_cache()
 
         return self._extended_facts
 
@@ -1142,7 +1148,8 @@ def main():
     )
 
     from ipdb import pm  # pylint: disable=import-outside-toplevel
-    from IPython import embed, get_ipython  # pylint: disable=import-outside-toplevel
+    from IPython import embed  # pylint: disable=import-outside-toplevel
+    from IPython import get_ipython
 
     # TODO launching ipdb on exception does not work, because ipython overwrites exception hook
     # -> configure ipython to launch ipdb
