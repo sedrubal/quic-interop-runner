@@ -73,8 +73,8 @@ class CompareCli:
         """
         Compare 2 results.
         """
-        measurements1 = self.result1.get_all_measuements_of_type(self.measurement)
-        measurements2 = self.result2.get_all_measuements_of_type(self.measurement)
+        measurements1 = self.result1.get_all_measurements_of_type(self.measurement)
+        measurements2 = self.result2.get_all_measurements_of_type(self.measurement)
 
         compare_result = {
             "missing in 1": list[str](),

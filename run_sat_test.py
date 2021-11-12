@@ -104,7 +104,7 @@ def find_succeeding(result: Result) -> set[tuple[str, str]]:
     if TEST_ABBR not in result.tests.keys():
         sys.exit("`SAT` testcase was not executed in this run")
 
-    for measurement_result in result.get_all_measuements_of_type(
+    for measurement_result in result.get_all_measurements_of_type(
         TEST_ABBR, succeeding=True
     ):
         combinations_succeeded.add(

@@ -88,8 +88,8 @@ class CompareCli:
         """
         Compare 2 results.
         """
-        measurements1 = self.result.get_all_measuements_of_type(self.measurement1)
-        measurements2 = self.result.get_all_measuements_of_type(self.measurement2)
+        measurements1 = self.result.get_all_measurements_of_type(self.measurement1)
+        measurements2 = self.result.get_all_measurements_of_type(self.measurement2)
 
         compare_result = {
             self.miss_in_1_txt: list[str](),

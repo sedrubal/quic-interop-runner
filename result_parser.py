@@ -850,7 +850,7 @@ class Result:
 
         return self.get_measurements_for_combination(server, client)[measurement_abbr]
 
-    def get_all_measuements_of_type(
+    def get_all_measurements_of_type(
         self,
         measurement_abbr: str,
         succeeding: Optional[bool] = None,
@@ -867,12 +867,15 @@ class Result:
                 if measurement_abbr not in measurement_results_for_combi.keys():
                     continue
 
-                measuement_result = measurement_results_for_combi[measurement_abbr]
+                measurement_result = measurement_results_for_combi[measurement_abbr]
 
-                if succeeding is not None and measuement_result.succeeded != succeeding:
+                if (
+                    succeeding is not None
+                    and measurement_result.succeeded != succeeding
+                ):
                     continue
 
-                measurement_results.append(measuement_result)
+                measurement_results.append(measurement_result)
 
         return measurement_results
 

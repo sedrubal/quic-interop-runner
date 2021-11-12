@@ -63,7 +63,7 @@ def collect_plots(
 
     collect_dir.mkdir(parents=True, exist_ok=True)
 
-    for meas in result.get_all_measuements_of_type("SAT", succeeding=True):
+    for meas in result.get_all_measurements_of_type("SAT", succeeding=True):
         files = [
             meas.log_dir_for_test.path / f"time_{mode.value}_plot.png"
             for mode in plot_modes
