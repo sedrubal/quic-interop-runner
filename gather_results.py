@@ -38,6 +38,7 @@ class Reason(Enum):
     NUM_CLIENT_HELLO_MISSMATCH = "amount of client hellos missmatch"
     CONTAINER_EXITED = "container exited"
     KNOWN_QUICLY_ISSUE = "known quicly issue"
+    SERVER_TIMEOUT = "timeout while waiting for server"
 
 
 LINE_REASON_MAPPING = {
@@ -62,6 +63,9 @@ LINE_REASON_MAPPING = {
     re.compile(
         r".*TShark seems to have crashed \(retcode: ([^2]|\d\d+)\).*"
     ): Reason.TSHARK_CRASHED,
+    re.compile(
+        r".*timeout occurred after waiting [\d\.]+s for server.*"
+    ): Reason.SERVER_TIMEOUT,
 }
 
 
