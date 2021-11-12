@@ -177,13 +177,24 @@ class InteropRunner:
                         except KeyError:
                             continue
 
-                        if meas_result.succeeded or not self._retry_failed:
+                        if meas_result.result is None:
+                            # if the test result is none but values are saved in results.json,
+                            # we can skip the some iterations:
+                            self._num_skip_runs += len(meas_result.values)
+                        elif meas_result.succeeded:
+                            # if it succeded before, we don't have to repeat them
                             assert meas_result.test.repetitions
+                            if meas_result.values:
+                                assert meas_result.test.repetitions == len(
+                                    meas_result.values
+                                )
                             self._num_skip_runs += meas_result.test.repetitions
                         elif (
                             self._retry_failed
                             and meas_result.result == TestResult.FAILED
                         ):
+                            # if it was failed before and if we retry failed ones, we have to ensure,
+                            # that the older results don't appear in self._result
                             self._result.remove_measurement_result(
                                 server, client, meas_case.abbreviation
                             )
@@ -375,12 +386,13 @@ class InteropRunner:
         server: str,
         client: str,
         measurement: Type[testcases.Measurement],
+        skip_iterations: int,
     ):
         """Schedule a measurement (with multiple iterations)."""
 
         repetitions: int = measurement.repetitions
 
-        for iteration in range(repetitions):
+        for iteration in range(skip_iterations, repetitions):
             self._scheduled_tests.append(
                 ScheduledTest(
                     server_name=server,
@@ -554,7 +566,7 @@ class InteropRunner:
                 server_implementation = self._result.implementations[server_name]
                 client_implementation = self._result.implementations[client_name]
                 LOGGER.debug(
-                    "Running with server %s (%s) and client %s (%s)",
+                    "Using server %s (%s) and client %s (%s)",
                     server_name,
                     self._result.implementations[server_name].image,
                     client_name,
@@ -627,24 +639,40 @@ class InteropRunner:
                     except KeyError:
                         existing_meas_result = None
 
-                    if existing_meas_result and existing_meas_result.result:
-                        LOGGER.info(
-                            (
-                                "Skipping measurement %s for server=%s and client=%s, "
-                                "because it was executed before. Result: %s"
-                            ),
-                            measurement.abbreviation,
-                            server_name,
-                            client_name,
-                            existing_meas_result.result.value,
-                        )
+                    skip_iterations = 0
 
-                        continue
+                    if existing_meas_result:
+                        if existing_meas_result.result:
+                            LOGGER.info(
+                                (
+                                    "Skipping measurement %s for server=%s and client=%s, "
+                                    "because it was executed before. Result: %s"
+                                ),
+                                measurement.abbreviation,
+                                server_name,
+                                client_name,
+                                existing_meas_result.result.value,
+                            )
+
+                            continue
+                        elif existing_meas_result.values:
+                            skip_iterations = len(existing_meas_result.values)
+                            LOGGER.info(
+                                (
+                                    "Skipping %d iterations of measurement %s for server=%s and client=%s, because it was executed before. Values: %s"
+                                ),
+                                skip_iterations,
+                                measurement.abbreviation,
+                                server_name,
+                                client_name,
+                                ", ".join(map(str, existing_meas_result.values)),
+                            )
 
                     self._schedule_measurement(
                         server_name,
                         client_name,
                         measurement,
+                        skip_iterations=skip_iterations,
                     )
 
         if self._shuffle:

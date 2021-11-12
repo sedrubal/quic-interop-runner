@@ -382,14 +382,13 @@ class Result:
 
                 if index < len(raw_data["measurements"]):
                     for measurement in raw_data["measurements"][index]:
-                        if not measurement["result"]:
-                            continue
+                        result = measurement["result"]
 
                         self.add_measurement_result(
                             server=server_name,
                             client=client_name,
                             meas_abbr=measurement["abbr"],
-                            meas_result=TestResult(measurement["result"]),
+                            meas_result=TestResult(result) if result else None,
                             details=measurement["details"],
                             values=measurement.get("values") or list[float](),
                         )
