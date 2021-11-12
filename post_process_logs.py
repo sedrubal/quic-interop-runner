@@ -272,19 +272,18 @@ class PostProcessor:
     def post_process_test_repetition_run_dir(self, test_run_dir: Path):
         """Inject secrets into a test repetition run log_dir."""
 
+        self.fix_chown(test_run_dir)
+
         if PostProcessingMode.INJECT_SECRETS in self.mode:
             self.inject_secrets_in_test_repetition_run_dir(test_run_dir)
 
         if PostProcessingMode.RENAME_QLOGS in self.mode:
             self.rename_qlogs_in_test_repetition_run_dir(test_run_dir)
 
-    def post_process_result(self, result: Result):
-        """Post process in result log dir."""
-
-        result.load_from_json()
+    def fix_chown(self, *pathes: Path):
+        """Fix owner of files and directories."""
 
         if PostProcessingMode.CHOWN in self.mode:
-            assert result.file_path
             uid = os.getuid()
             gid = os.getgid()
 
@@ -294,12 +293,26 @@ class PostProcessor:
 
                 return struct.pw_uid == uid and struct.pw_gid == gid
 
-            if not check_owner(result.file_path.path) or not check_owner(
-                result.log_dir.path
-            ):
-                os.system(
-                    f"sudo chown -R {uid}:{gid} {result.file_path.path} {result.log_dir.path}"
+            if not all(check_owner(path) for path in pathes):
+                pathes_str = " ".join(f"'{path}'" for path in pathes)
+
+                if self._spinner:
+                    self._spinner.hide()
+
+                subprocess.run(
+                    f"sudo chown -R {uid}:{gid} {pathes_str}", shell=True, check=True
                 )
+
+                if self._spinner:
+                    self._spinner.show()
+
+    def post_process_result(self, result: Result):
+        """Post process in result log dir."""
+
+        result.load_from_json()
+
+        assert result.file_path
+        self.fix_chown(result.file_path.path, result.log_dir.path)
 
         if PostProcessingMode.GATHER_RESULTS in self.mode:
             gather_results_tool = GatherResults(
@@ -325,18 +338,7 @@ class PostProcessor:
     def post_process_log_dir(self, log_dir: Path):
         """Post process inside a log dir."""
 
-        if PostProcessingMode.CHOWN in self.mode:
-            uid = os.getuid()
-            gid = os.getgid()
-
-            def check_owner(path: Path):
-                owner = path.owner()
-                struct = pwd.getpwnam(owner)
-
-                return struct.pw_uid == uid and struct.pw_gid == gid
-
-            if not check_owner(log_dir):
-                os.system(f"sudo chown -R {uid}:{gid} {log_dir}")
+        self.fix_chown(log_dir)
 
         if PostProcessingMode.GATHER_RESULTS in self.mode:
             msg = "Gather mode requires Result specs."

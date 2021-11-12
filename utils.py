@@ -186,6 +186,14 @@ class YaspinWrapper:
         else:
             return self.yaspin.hidden()
 
+    def hide(self):
+        if not self.debug:
+            return self.yaspin.hide()
+
+    def show(self):
+        if not self.debug:
+            return self.yaspin.show()
+
     def _update(self):
         if self.debug:
             cprint(f"⚒ {self.text}", color=self.color, end="\r", flush=True)
