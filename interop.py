@@ -3,14 +3,13 @@
 import concurrent.futures
 import logging
 import shutil
-import statistics
 import sys
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from itertools import chain
 from pathlib import Path
-from typing import Iterable, Optional, Type
+from typing import Iterable, Optional, Type, Union
 
 import prettytable  # type: ignore
 from termcolor import colored
@@ -21,7 +20,7 @@ from enums import ImplementationRole, TestResult
 from exceptions import ConflictError, TestFailed, TestUnsupported
 from implementations import IMPLEMENTATIONS, Implementation
 from result_parser import Result, TestResultInfo
-from testcases import Measurement
+from testcases import Measurement, TestCase
 from utils import LogFileFormatter, TerminalFormatter
 
 CONSOLE_LOG_HANDLER = logging.StreamHandler(stream=sys.stderr)
@@ -32,9 +31,17 @@ UNSUPPORTED_EXIT_CODE = 127
 
 
 @dataclass
-class MeasurementResult:
-    result: TestResult
-    details: str
+class ScheduledTest:
+    """A test or measurment that has to be executed."""
+
+    #: The name if the server to use.
+    server_name: str
+    #: The name if the client to use
+    client_name: str
+    #: The test case / measurement test case to execute.
+    test: Union[Type[TestCase], Type[Measurement]]
+    #: postfix(?) for the log dir (number of iteration for measurements)
+    log_dir_prefix: Optional[str] = field(default=None)
 
 
 class InteropRunner:
@@ -83,6 +90,7 @@ class InteropRunner:
             * (len(self._tests) + sum(meas.repetitions for meas in self._measurements))
         )
         self._nr_complete = 0
+        self._nr_failed = 0
 
         self._result = Result(
             file_path=output,
@@ -192,6 +200,8 @@ class InteropRunner:
             "Will run %d tests and measurement runs",
             self._nr_runs - self._num_skip_runs,
         )
+
+        self._scheduled_tests = list[ScheduledTest]()
 
     def _check_impl_is_compliant(self, implementation: Implementation) -> bool:
         """Check if an implementation return UNSUPPORTED for unknown test cases."""
@@ -346,15 +356,36 @@ class InteropRunner:
         self._result.end_time = datetime.now()
         self._result.save()
 
-    def _run_testcase(
+    def _schedule_testcase(
         self,
         server: str,
         client: str,
         test: Type[testcases.TestCase],
-    ) -> TestResult:
-        """Run a test case."""
+    ):
+        """Schedule a test case."""
+        self._scheduled_tests.append(
+            ScheduledTest(server_name=server, client_name=client, test=test)
+        )
 
-        return self._run_test(server, client, None, test)[0]
+    def _schedule_measurement(
+        self,
+        server: str,
+        client: str,
+        measurement: Type[testcases.Measurement],
+    ):
+        """Schedule a measurement (with multiple iterations)."""
+
+        repetitions: int = measurement.repetitions
+
+        for iteration in range(repetitions):
+            self._scheduled_tests.append(
+                ScheduledTest(
+                    server_name=server,
+                    client_name=client,
+                    log_dir_prefix=f"{iteration + 1}",
+                    test=measurement,
+                )
+            )
 
     def _run_test(
         self,
@@ -362,8 +393,6 @@ class InteropRunner:
         client: str,
         log_dir_prefix: Optional[str],
         test: Type[testcases.TestCase],
-        iteration: Optional[int] = None,
-        repetitions: Optional[int] = None,
     ) -> tuple[TestResult, Optional[float]]:
         """Run a test case or a single measurement iteration."""
         start_time = datetime.now()
@@ -406,19 +435,21 @@ class InteropRunner:
             colored(str(testcase), color="cyan", attrs=["bold"]),
         ]
 
-        if iteration is not None:
+        if issubclass(test, testcases.Measurement):
+            try:
+                meas_result = self._result.get_measurement_result(
+                    server=server, client=client, measurement_abbr=test.abbreviation
+                )
+                iteration = len(meas_result.values)
+            except KeyError:
+                iteration = 0
+
             msg_parts.extend(
                 (
                     colored("Iteration:", color="cyan"),
                     colored(str(iteration + 1), color="cyan", attrs=["bold"]),
-                )
-            )
-
-        if repetitions is not None:
-            msg_parts.extend(
-                (
                     colored("of", color="cyan"),
-                    colored(str(repetitions), color="cyan", attrs=["bold"]),
+                    colored(str(test.repetitions), color="cyan", attrs=["bold"]),
                 )
             )
 
@@ -505,54 +536,15 @@ class InteropRunner:
 
         return status, value
 
-    def _run_measurement(
-        self,
-        server: str,
-        client: str,
-        test: Type[testcases.Measurement],
-    ) -> MeasurementResult:
-        """Run a measurement (with multiple iterations)."""
-        values = list[float]()
-
-        repetitions: int = test.repetitions
-
-        for iteration in range(repetitions):
-            result, value = self._run_test(
-                server,
-                client,
-                f"{iteration + 1}",
-                test,
-                iteration=iteration,
-                repetitions=repetitions,
-            )
-            assert value is not None
-
-            if result != TestResult.SUCCEEDED:
-                res = MeasurementResult(
-                    result=result,
-                    details="",
-                )
-                self._num_skip_runs += repetitions - 1 - iteration
-
-                return res
-            values.append(value)
-
-        res = MeasurementResult(
-            result=TestResult.SUCCEEDED,
-            details=f"{statistics.mean(values):.0f} (± {statistics.stdev(values):.0f}) {test.unit}",
-        )
-
-        return res
-
     @property
     def progress(self) -> int:
         """Return the progress in percent."""
 
+        # TODO use len(self._scheduled_tests)
         return int((self._nr_complete + self._num_skip_runs) * 100 / self._nr_runs)
 
     def run(self):
         """run the interop test suite and output the table"""
-        nr_failed = 0
 
         for server_name in self._servers:
             for client_name in self._clients:
@@ -596,7 +588,7 @@ class InteropRunner:
                 # save compliance
                 self._export_results()
 
-                # run the test cases
+                # schedule the test cases
 
                 for testcase in self._tests:
                     try:
@@ -610,7 +602,7 @@ class InteropRunner:
                         LOGGER.info(
                             (
                                 "Skipping testcase %s for server=%s and client=%s, "
-                                "because it was executed before. Result: %s",
+                                "because it was executed before. Result: %s"
                             ),
                             testcase.abbreviation,
                             server_name,
@@ -620,22 +612,9 @@ class InteropRunner:
 
                         continue
 
-                    status = self._run_testcase(server_name, client_name, testcase)
-                    self._result.add_test_result(
-                        server_name,
-                        client_name,
-                        testcase.abbreviation,
-                        status,
-                        update_failed=self._retry_failed,
-                    )
+                    self._schedule_testcase(server_name, client_name, testcase)
 
-                    if status == TestResult.FAILED:
-                        nr_failed += 1
-
-                    # save results after each run
-                    self._export_results()
-
-                # run the measurements
+                # schedule the measurements
 
                 for measurement in self._measurements:
                     try:
@@ -659,23 +638,69 @@ class InteropRunner:
 
                         continue
 
-                    res = self._run_measurement(
+                    self._schedule_measurement(
                         server_name,
                         client_name,
                         measurement,
                     )
-                    self._result.add_measurement_result(
-                        server=server_name,
-                        client=client_name,
-                        meas_abbr=measurement.abbreviation,
-                        meas_result=res.result,
-                        details=res.details,
-                        update_failed=self._retry_failed,
-                    )
 
-                    # save results after each run
-                    self._export_results()
+        while True:
+            try:
+                scheduled_test = self._scheduled_tests.pop()
+            except IndexError:
+                break
+
+            result, value = self._run_test(
+                server=scheduled_test.server_name,
+                client=scheduled_test.client_name,
+                log_dir_prefix=scheduled_test.log_dir_prefix,
+                test=scheduled_test.test,
+            )
+
+            if result == TestResult.FAILED:
+                self._nr_failed += 1
+
+            if issubclass(scheduled_test.test, Measurement):
+                # a measurement
+                assert value is not None
+
+                self._result.add_single_measurement_result(
+                    server=scheduled_test.server_name,
+                    client=scheduled_test.client_name,
+                    meas_abbr=scheduled_test.test.abbreviation,
+                    meas_result=result,
+                    value=value,
+                    num_repetitions=scheduled_test.test.repetitions,
+                    values_unit=scheduled_test.test.unit,
+                    update_failed=self._retry_failed,
+                )
+
+                if result != TestResult.SUCCEEDED:
+                    # unschedule all further measurements of same type with same implementations
+                    for future_scheduled_test in self._scheduled_tests:
+                        if (
+                            future_scheduled_test.server_name
+                            == scheduled_test.server_name
+                            and future_scheduled_test.client_name
+                            == scheduled_test.client_name
+                            and future_scheduled_test.test == scheduled_test.test
+                        ):
+                            self._scheduled_tests.remove(future_scheduled_test)
+                            self._num_skip_runs += 1
+
+            else:
+                # a test case
+                self._result.add_test_result(
+                    server=scheduled_test.server_name,
+                    client=scheduled_test.client_name,
+                    test_abbr=scheduled_test.test.abbreviation,
+                    test_result=result,
+                    update_failed=self._retry_failed,
+                )
+
+            # save results after each run
+            self._export_results()
 
         self._print_results()
 
-        return nr_failed
+        return self._nr_failed

@@ -4,6 +4,7 @@
 import json
 import logging
 import re
+import statistics
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime, timedelta
@@ -19,8 +20,8 @@ from enums import ImplementationRole, TestResult
 from exceptions import ConflictError
 from implementations import IMPLEMENTATIONS, Implementation
 from result_json_types import (
-    JSONMeasurement,
     JSONMeasurementDescr,
+    JSONMeasurementResult,
     JSONResult,
     JSONTestDescr,
     JSONTestResult,
@@ -129,6 +130,7 @@ class MeasurementResultInfo(_ResultInfoMixin):
 
     test: MeasurementDescription
     details: str
+    values: list[float]
 
     @cached_property
     def repetition_log_dirs(self) -> list[Path]:
@@ -191,13 +193,14 @@ class MeasurementResultInfo(_ResultInfoMixin):
 
         return self._details_match.group("unit")
 
-    def to_json(self) -> JSONMeasurement:
+    def to_json(self) -> JSONMeasurementResult:
         """Return a raw measurement result."""
 
-        return JSONMeasurement(
+        return JSONMeasurementResult(
             abbr=self.test.abbr,
             result=self.result.value if self.result else None,
             details=self.details,
+            values=self.values,
         )
 
 
@@ -388,6 +391,7 @@ class Result:
                             meas_abbr=measurement["abbr"],
                             meas_result=TestResult(measurement["result"]),
                             details=measurement["details"],
+                            values=measurement.get("values") or list[float](),
                         )
                 else:
                     LOGGER.warning(
@@ -408,7 +412,7 @@ class Result:
 
         # linearize tests and measurements
         test_results_lin = list[list[JSONTestResult]]()
-        meas_results_lin = list[list[JSONMeasurement]]()
+        meas_results_lin = list[list[JSONMeasurementResult]]()
 
         for client in clients:
             for server in servers:
@@ -881,6 +885,19 @@ class Result:
 
         return measurement_results
 
+    def _get_meas_desc(self, meas_abbr: str) -> MeasurementDescription:
+        """Get the measurement description for a measurement abbreviation."""
+        test_desc = self.test_descriptions[meas_abbr]
+
+        if isinstance(test_desc, MeasurementDescription):
+            meas_desc = test_desc
+        else:
+            meas_desc = MeasurementDescription.from_test_desc(test_desc)
+            # update measurement description (as we know now that this belongs to a measurement and not to a test).
+            self._test_descriptions[meas_abbr] = meas_desc
+
+        return meas_desc
+
     def add_measurement_result(
         self,
         server: Union[str, Implementation],
@@ -888,6 +905,7 @@ class Result:
         meas_abbr: str,
         meas_result: Optional[TestResult],
         details: str,
+        values: list[float],
         update_failed=False,
     ):
         server_impl = (
@@ -906,14 +924,7 @@ class Result:
                 str, MeasurementResultInfo
             ]()
 
-        test_desc = self.test_descriptions[meas_abbr]
-
-        if isinstance(test_desc, MeasurementDescription):
-            meas_desc = test_desc
-        else:
-            meas_desc = MeasurementDescription.from_test_desc(test_desc)
-            # update measurement description (as we know now that this belongs to a measurement and not to a test).
-            self._test_descriptions[meas_abbr] = meas_desc
+        meas_desc = self._get_meas_desc(meas_abbr)
 
         meas_result_info = MeasurementResultInfo(
             result=meas_result,
@@ -922,6 +933,7 @@ class Result:
             test=meas_desc,
             _base_log_dir=self.log_dir,
             details=details,
+            values=values,
         )
         if meas_abbr in self._meas_results[server_impl.name][client_impl.name].keys():
             if update_failed:
@@ -936,6 +948,7 @@ class Result:
                     ] = meas_result_info
                 elif meas_result != TestResult.SUCCEEDED:
                     # do not overwrite with a failed measurement:
+                    breakpoint()
 
                     return
                 else:
@@ -953,6 +966,90 @@ class Result:
             self._meas_results[server_impl.name][client_impl.name][
                 meas_abbr
             ] = meas_result_info
+
+    def add_single_measurement_result(
+        self,
+        server: Union[str, Implementation],
+        client: Union[str, Implementation],
+        meas_abbr: str,
+        meas_result: Optional[TestResult],
+        value: float,
+        num_repetitions: int,
+        values_unit: str,
+        update_failed=False,
+    ):
+        server_impl = (
+            server if isinstance(server, Implementation) else self.servers[server]
+        )
+        client_impl = (
+            client if isinstance(client, Implementation) else self.clients[client]
+        )
+
+        if server_impl.name not in self._meas_results.keys():
+            self._meas_results[server_impl.name] = dict[
+                str, dict[str, MeasurementResultInfo]
+            ]()
+        if client_impl.name not in self._meas_results[server_impl.name].keys():
+            self._meas_results[server_impl.name][client_impl.name] = dict[
+                str, MeasurementResultInfo
+            ]()
+
+        meas_desc = self._get_meas_desc(meas_abbr)
+
+        if (
+            meas_abbr
+            not in self._meas_results[server_impl.name][client_impl.name].keys()
+        ):
+            values = [value]
+        else:
+            existing_meas_result_info = self._meas_results[server_impl.name][
+                client_impl.name
+            ][meas_abbr]
+            values = existing_meas_result_info.values
+            values.append(value)
+            if existing_meas_result_info.result:
+                if update_failed:
+                    if existing_meas_result_info.result == TestResult.SUCCEEDED:
+                        raise ConflictError(
+                            f"A result for measurement {meas_abbr} already exists and it succeeded before."
+                        )
+                else:
+                    raise ConflictError(
+                        f"A result for measurement {meas_abbr} already exists and we do not update failed results: "
+                        f"{existing_meas_result_info.result.value}"
+                    )
+            if len(values) > num_repetitions:
+                raise ConflictError(
+                    f"Too many values for measurement {meas_abbr} after adding the new one: "
+                    ", ".join(map(str, values))
+                )
+
+        if len(values) == num_repetitions or meas_result != TestResult.SUCCEEDED:
+            # measurement is completed
+            details = f"{statistics.mean(values):.0f} (± {statistics.stdev(values):.0f}) {values_unit}"
+            meas_result_info = MeasurementResultInfo(
+                result=meas_result,
+                server=server_impl,
+                client=client_impl,
+                test=meas_desc,
+                _base_log_dir=self.log_dir,
+                details=details,
+                values=values,
+            )
+        else:
+            meas_result_info = MeasurementResultInfo(
+                result=None,
+                server=server_impl,
+                client=client_impl,
+                test=meas_desc,
+                _base_log_dir=self.log_dir,
+                details="",
+                values=values,
+            )
+
+        self._meas_results[server_impl.name][client_impl.name][
+            meas_abbr
+        ] = meas_result_info
 
     def remove_measurement_result(
         self,
@@ -1070,12 +1167,13 @@ class Result:
                     meass_for_combi2.items(),
                 ):
                     ret.add_measurement_result(
-                        server_name,
-                        client_name,
-                        meas_abbr,
-                        meas.result,
-                        meas.details,
-                        update_failed,
+                        server=server_name,
+                        client=client_name,
+                        meas_abbr=meas_abbr,
+                        meas_result=meas.result,
+                        details=meas.details,
+                        values=meas.values,
+                        update_failed=update_failed,
                     )
 
         return ret
@@ -1083,7 +1181,7 @@ class Result:
     def save(self):
         """Save to file."""
         assert self.file_path and self.file_path.is_path
-        json_data = json.dumps(self.to_json(), indent=" " * 4)
+        json_data = json.dumps(self.to_json(), indent=" " * 4, ensure_ascii=False)
         with self.file_path.path.open("w") as file:
             file.write(json_data)
 

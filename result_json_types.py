@@ -31,12 +31,13 @@ class JSONTestResult(TypedDict):
     result: RawTestResultResult
 
 
-class JSONMeasurement(TypedDict):
+class JSONMeasurementResult(TypedDict):
     """A measurement result as parsed from result.json."""
 
     abbr: str
     result: RawTestResultResult
     details: str
+    values: Optional[list[float]]
 
 
 class JSONImageMetadata(TypedDict):
@@ -65,4 +66,4 @@ class JSONResult(TypedDict):
     quic_draft: int
     quic_version: str
     results: list[list[JSONTestResult]]
-    measurements: list[list[JSONMeasurement]]
+    measurements: list[list[JSONMeasurementResult]]
