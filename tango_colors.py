@@ -73,7 +73,7 @@ TANGO_HTML_COLORS["ScarletRed"] = TANGO_HTML_COLORS["scarletred2"]
 TANGO_HTML_COLORS["DarkScarletRed"] = TANGO_HTML_COLORS["scarletred3"]
 
 
-class Tango(object):
+class Tango:
     """
     This class store tango colors in different model.
     """
