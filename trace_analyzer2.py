@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, Iterator, Optional, TypedDict
 
 import nest_asyncio
-import pyshark
+import pyshark  # type: ignore
 from prompt_toolkit.formatted_text import HTML
 from prompt_toolkit.shortcuts import ProgressBar
 from termcolor import colored, cprint
@@ -24,7 +24,7 @@ from enums import CacheMode, Direction, Side
 from utils import TraceTriple, YaspinWrapper, clear_line, create_relpath
 
 if typing.TYPE_CHECKING:
-    from pyshark.packet.packet import Packet
+    from pyshark.packet.packet import Packet  # type: ignore
 
 
 # https://github.com/KimiNewt/pyshark/issues/434#issuecomment-691706873

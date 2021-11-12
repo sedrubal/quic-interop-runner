@@ -12,7 +12,7 @@ from itertools import chain
 from pathlib import Path
 from typing import Iterable, Optional, Type
 
-import prettytable
+import prettytable  # type: ignore
 from termcolor import colored
 
 import testcases

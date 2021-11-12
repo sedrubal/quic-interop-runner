@@ -223,7 +223,7 @@ def container_monitor_thread(
 
     try:
         result = container.wait()
-    except paramiko.ssh_exception.ChannelException as exc:
+    except paramiko.ssh_exception.ChannelException as exc:  # type: ignore
         LOGGER.error(str(exc))
 
         return

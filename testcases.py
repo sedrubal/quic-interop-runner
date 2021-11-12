@@ -11,7 +11,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import ClassVar, Optional, Type, Union
 
-from Crypto.Cipher import AES
+from Crypto.Cipher import AES  # type: ignore
 
 from custom_types import IPAddress
 from enums import ECN, Perspective
