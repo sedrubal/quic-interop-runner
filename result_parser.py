@@ -561,7 +561,7 @@ class Result:
     def add_implementation(self, impl: Implementation, role: ImplementationRole):
         assert role in impl.role
 
-        if impl.name in self.servers.keys():
+        if impl.name in self.implementations.keys():
             impl2 = self.implementations[impl.name]
             assert impl.name == impl2.name
             assert impl.url == impl2.url
