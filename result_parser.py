@@ -143,7 +143,7 @@ class MeasurementResultInfo(_ResultInfoMixin):
                 if iterdir.is_dir() and iterdir.name.isnumeric()
             )
         except FileNotFoundError as err:
-            if self.result == "success":
+            if self.result == TestResult.SUCCEEDED:
                 breakpoint()
                 raise err
             else:
