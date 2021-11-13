@@ -726,11 +726,39 @@ class Deployment:
                     local_download_path=local_downloads_path,
                 )
             )
-            sim_container = create_sim_t.result()
+
             server_container = create_server_t.result()
             client_container = create_client_t.result()
 
-        containers = [sim_container, client_container, server_container]
+            server_port = 443
+            create_right_tcpdump_t = executor.submit(
+                lambda: self._create_container(
+                    cli=self.get_docker_cli(),
+                    image=TCPDUMP_IMG,
+                    service_name="right_tcpdump",
+                    stage=Stage.SERVER_POST,
+                    entrypoint=[
+                        "tcpdump",
+                        "-q",
+                        "-w",
+                        str(TRACE_PATH),
+                        "udp",
+                        "port",
+                        str(server_port),
+                    ],
+                    network=f"container:{server_container.name}",
+                ),
+            )
+
+            sim_container = create_sim_t.result()
+            right_tcpdump_container = create_right_tcpdump_t.result()
+
+        containers = [
+            sim_container,
+            client_container,
+            server_container,
+            right_tcpdump_container,
+        ]
         # wait
         result = self.run_and_wait(containers, timeout=timeout)
         # set IP addresses
@@ -764,10 +792,24 @@ class Deployment:
                     client_container, LOGS_PATH, log_path / "client"
                 ),
             )
-            executor.submit(
+            tmp = executor.submit(
                 lambda: copy_tree_from_container(
                     sim_container, LOGS_PATH, log_path / "sim"
                 ),
+            )
+            tmp.result()
+            shutil.move(
+                log_path / "sim" / "trace_node_right.pcap",
+                log_path / "sim" / "trace_node_right_ns3.pcap",
+            )
+
+            # copy traces
+            executor.submit(
+                lambda: copy_file_from_container(
+                    right_tcpdump_container,
+                    TRACE_PATH,
+                    log_path / "sim" / "trace_node_right.pcap",
+                )
             )
 
         remove_containers(containers)
@@ -855,9 +897,7 @@ class Deployment:
                     "port",
                     str(server_port),
                 ],
-                #  extra_hosts: Optional[dict[str, str]] = None,
                 network=f"container:{server_container.name}",
-                #  volumes: Optional[dict] = None,
             )
             create_left_tcpdump_t = executor.submit(
                 self._create_container,
@@ -874,9 +914,7 @@ class Deployment:
                     "port",
                     str(server_port),
                 ],
-                #  extra_hosts: Optional[dict[str, str]] = None,
                 network=f"container:{client_container.name}",
-                #  volumes: Optional[dict] = None,
             )
 
             left_tcpdump_container = create_left_tcpdump_t.result()
