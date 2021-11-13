@@ -169,6 +169,7 @@ class GatherResults:
     def run(self, results: list[Result]):
         for i, result in enumerate(results):
             LOGGER.info("Processing result file %d of %d", i + 1, len(results))
+            result.load_from_json()
             self.process_result(result)
 
     def get_reason(self, output_file: Path) -> Optional[Reason]:
