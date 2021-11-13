@@ -46,7 +46,7 @@ from utils import TerminalFormatter, random_string
 
 MEMLOCK_ULIMIT = docker.types.Ulimit(name="memlock", hard=67108864, soft=67108864)
 IPERF_ENDPOINT_IMG = "martenseemann/quic-interop-iperf-endpoint"
-SIM_IMG = "therealsedrubal/quic-network-simulator"
+SIMULATOR_IMG = "therealsedrubal/quic-network-simulator"
 TCPDUMP_IMG = "therealsedrubal/tcpdump:main"
 
 VOID_NETWORK = "none"
@@ -1099,7 +1099,7 @@ class Deployment:
 
         container = self._create_container(
             cli=self.get_docker_cli(),
-            image=SIM_IMG,
+            image=SIMULATOR_IMG,
             entrypoint=entrypoint,
             environment=environment,
             extra_hosts={

@@ -5,9 +5,7 @@ import os
 import sys
 
 from implementations import IMPLEMENTATIONS
-
-SIMULATOR_IMAGE = "therealsedrubal/quic-network-simulator"
-IPERF_IMAGE = "martenseemann/quic-interop-iperf-endpoint"
+from deployment import IPERF_ENDPOINT_IMG, SIMULATOR_IMG
 
 
 def get_args():
@@ -40,8 +38,8 @@ def main():
     else:
         implementations = IMPLEMENTATIONS
 
-    docker_pull("the simulator", SIMULATOR_IMAGE)
-    docker_pull("the iperf endpoint", IPERF_IMAGE)
+    docker_pull("the simulator", SIMULATOR_IMG)
+    docker_pull("the iperf endpoint", IPERF_ENDPOINT_IMG)
 
     for name, value in implementations.items():
         docker_pull(name, value.image)
