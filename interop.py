@@ -707,7 +707,8 @@ class InteropRunner:
 
             if issubclass(scheduled_test.test, Measurement):
                 # a measurement
-                assert value is not None
+                if result == TestResult.SUCCEEDED:
+                    assert value is not None
 
                 self._result.add_single_measurement_result(
                     server=scheduled_test.server_name,
