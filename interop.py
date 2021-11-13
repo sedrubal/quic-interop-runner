@@ -540,12 +540,6 @@ class InteropRunner:
                     skip_iterations = 0
 
                     if existing_meas_result:
-                        assert existing_meas_result.test.repetitions
-                        if existing_meas_result.values:
-                            assert existing_meas_result.test.repetitions == len(
-                                existing_meas_result.values
-                            )
-
                         if existing_meas_result.result:
                             if not self._retry_failed or existing_meas_result.succeeded:
                                 LOGGER.info(
@@ -558,6 +552,14 @@ class InteropRunner:
                                     client_name,
                                     existing_meas_result.result.value,
                                 )
+
+                                if (
+                                    existing_meas_result.succeeded
+                                    and existing_meas_result.values
+                                ):
+                                    assert meas_case.repetitions == len(
+                                        existing_meas_result.values
+                                    )
 
                                 continue
                         elif existing_meas_result.values:
