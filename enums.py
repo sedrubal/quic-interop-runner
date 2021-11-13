@@ -130,4 +130,9 @@ class PostProcessingMode(IntFlag):
             flag.name.lower() if flag.name else "?": flag for flag in PostProcessingMode
         }
 
-        return lookup[value.lower()]
+        try:
+            return lookup[value.lower()]
+        except KeyError as err:
+            raise KeyError(
+                f"Invalid mode {value}. Valid ones are: {', '.join(lookup.keys())}"
+            ) from err
