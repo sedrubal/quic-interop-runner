@@ -1025,7 +1025,13 @@ class Result:
 
         if len(values) == num_repetitions or meas_result != TestResult.SUCCEEDED:
             # measurement is completed
-            details = f"{statistics.mean(values):.0f} (± {statistics.stdev(values):.0f}) {values_unit}"
+            if meas_result == TestResult.SUCCEEDED:
+                mean = statistics.mean(values)
+                stdev = statistics.stdev(values)
+                details = f"{mean:.0f} (± {stdev:.0f}) {values_unit}"
+            else:
+                details = ""
+
             meas_result_info = MeasurementResultInfo(
                 result=meas_result,
                 server=server_impl,
