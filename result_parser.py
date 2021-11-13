@@ -152,7 +152,8 @@ class MeasurementResultInfo(_ResultInfoMixin):
         for index, (cur_num, _path) in enumerate(repetitions):
             if index + 1 != cur_num:
                 raise AssertionError(
-                    f"Expected the {index}th repetition directory "
+                    f"Expected the {index}th repetition directory of test "
+                    f"{self.test.abbr} for server={self.server.name} and client={self.client.name} "
                     f"to be named {index} instead of {cur_num}."
                 )
 
@@ -999,13 +1000,12 @@ class Result:
             meas_abbr
             not in self._meas_results[server_impl.name][client_impl.name].keys()
         ):
-            values = [value]
+            values = []
         else:
             existing_meas_result_info = self._meas_results[server_impl.name][
                 client_impl.name
             ][meas_abbr]
             values = existing_meas_result_info.values
-            values.append(value)
             if existing_meas_result_info.result:
                 if update_failed:
                     if existing_meas_result_info.result == TestResult.SUCCEEDED:
@@ -1017,11 +1017,14 @@ class Result:
                         f"A result for measurement {meas_abbr} already exists and we do not update failed results: "
                         f"{existing_meas_result_info.result.value}"
                     )
-            if len(values) > num_repetitions:
+            if len(values) >= num_repetitions:
                 raise ConflictError(
                     f"Too many values for measurement {meas_abbr} after adding the new one: "
                     ", ".join(map(str, values))
                 )
+
+        if value is not None:
+            values.append(value)
 
         if len(values) == num_repetitions or meas_result != TestResult.SUCCEEDED:
             # measurement is completed
@@ -1194,10 +1197,15 @@ class Result:
 def main():
     import sys
 
+    from IPython import embed
+
     path = sys.argv[-1]
     result = Result(path)
+    assert result.file_path
+    if result.file_path.is_file():
+        result.load_from_json()
     print(result)
-    breakpoint()
+    embed()
 
 
 if __name__ == "__main__":

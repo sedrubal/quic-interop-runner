@@ -420,10 +420,10 @@ class TestCase(abc.ABC):
 
 
 class Measurement(TestCase):
-    _result = 0.0
+    _result: Optional[float] = None
 
     @property
-    def result(self) -> float:
+    def result(self) -> Optional[float]:
         return self._result
 
     @classmethod
@@ -1820,7 +1820,6 @@ class MeasurementSatellite(MeasurementGoodput):
     forward_data_rate = 20 * DataRate.MBPS
     return_data_rate = 2 * DataRate.MBPS
     queue_size = 25
-    _result = 0.0
 
     @classmethod
     @property
