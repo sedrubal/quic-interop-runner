@@ -973,7 +973,7 @@ class Result:
         client: Union[str, Implementation],
         meas_abbr: str,
         meas_result: Optional[TestResult],
-        value: float,
+        value: Optional[float],
         num_repetitions: int,
         values_unit: str,
         update_failed=False,

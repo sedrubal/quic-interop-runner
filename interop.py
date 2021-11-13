@@ -84,13 +84,11 @@ class InteropRunner:
 
         self._deployment = Deployment()
 
-        self._num_skip_runs = 0
         self._nr_runs = (
             len(self._servers)
             * len(self._clients)
             * (len(self._tests) + sum(meas.repetitions for meas in self._measurements))
         )
-        self._nr_complete = 0
         self._nr_failed = 0
 
         self._result = Result(
@@ -143,77 +141,15 @@ class InteropRunner:
                 # raise err
                 sys.exit(colored(str(err), color="red"))
 
-            for client in self._clients:
-                for server in self._servers:
-                    for test_case in self._tests:
-                        try:
-                            test_result = self._result.get_test_result(
-                                server,
-                                client,
-                                test_case.abbreviation,
-                            )
-                        except KeyError:
-                            continue
-
-                        if test_result.succeeded or not self._retry_failed:
-                            self._num_skip_runs += 1
-                        elif (
-                            self._retry_failed
-                            and test_result.result == TestResult.FAILED
-                        ):
-                            self._result.remove_test_result(
-                                server, client, test_case.abbreviation
-                            )
-
-                    for meas_case in self._measurements:
-                        try:
-                            meas_result = self._result.get_measurement_result(
-                                server,
-                                client,
-                                meas_case.abbreviation,
-                            )
-                        except KeyError:
-                            continue
-
-                        if meas_result.result is None:
-                            # if the test result is none but values are saved in results.json,
-                            # we can skip the some iterations:
-                            self._num_skip_runs += len(meas_result.values)
-                        elif meas_result.succeeded:
-                            # if it succeded before, we don't have to repeat them
-                            assert meas_result.test.repetitions
-                            if meas_result.values:
-                                assert meas_result.test.repetitions == len(
-                                    meas_result.values
-                                )
-                            self._num_skip_runs += meas_result.test.repetitions
-                        elif (
-                            self._retry_failed
-                            and meas_result.result == TestResult.FAILED
-                        ):
-                            # if it was failed before and if we retry failed ones, we have to ensure,
-                            # that the older results don't appear in self._result
-                            self._result.remove_measurement_result(
-                                server, client, meas_case.abbreviation
-                            )
-
-            LOGGER.info(
-                "Skipping %d tests and measurement runs from previous run",
-                self._num_skip_runs,
-            )
-
         elif self._result.log_dir.is_dir():
             sys.exit(f"Log dir {self._result.log_dir} already exists.")
+
+        self._scheduled_tests = list[ScheduledTest]()
 
         log_dir.mkdir(parents=True, exist_ok=True)
 
         LOGGER.info("Saving logs to %s.", self._result.log_dir)
-        LOGGER.info(
-            "Will run %d tests and measurement runs",
-            self._nr_runs - self._num_skip_runs,
-        )
-
-        self._scheduled_tests = list[ScheduledTest]()
+        self._schedule()
 
     def _check_impl_is_compliant(self, implementation: Implementation) -> bool:
         """Check if an implementation return UNSUPPORTED for unknown test cases."""
@@ -253,6 +189,7 @@ class InteropRunner:
                     role.value,
                 )
                 implementation.compliant = False
+                self._export_results()
 
                 return False
 
@@ -261,6 +198,7 @@ class InteropRunner:
                     "%s %s is not compliant ❌", implementation.name, role.value
                 )
                 implementation.compliant = False
+                self._export_results()
 
                 return False
 
@@ -268,6 +206,7 @@ class InteropRunner:
 
         # remember compliance test result
         implementation.compliant = True
+        self._export_results()
 
         return True
 
@@ -367,37 +306,6 @@ class InteropRunner:
             return
         self._result.end_time = datetime.now()
         self._result.save()
-
-    def _schedule_testcase(
-        self,
-        server: str,
-        client: str,
-        test: Type[testcases.TestCase],
-    ):
-        """Schedule a test case."""
-        self._scheduled_tests.append(
-            ScheduledTest(server_name=server, client_name=client, test=test)
-        )
-
-    def _schedule_measurement(
-        self,
-        server: str,
-        client: str,
-        measurement: Type[testcases.Measurement],
-        skip_iterations: int,
-    ):
-        """Schedule a measurement (with multiple iterations)."""
-
-        repetitions: int = measurement.repetitions
-
-        for iteration in range(skip_iterations, repetitions):
-            self._scheduled_tests.append(
-                ScheduledTest(
-                    server_name=server,
-                    client_name=client,
-                    test=measurement,
-                )
-            )
 
     def _run_test(
         self,
@@ -544,94 +452,87 @@ class InteropRunner:
             f" ({value})" if value else "",
         )
 
-        self._nr_complete += 1
-
         return status, value
 
     @property
     def progress(self) -> int:
         """Return the progress in percent."""
 
-        # TODO use len(self._scheduled_tests)
-        return int((self._nr_complete + self._num_skip_runs) * 100 / self._nr_runs)
+        return int((self._nr_runs - len(self._scheduled_tests)) * 100 / self._nr_runs)
 
-    def run(self):
-        """run the interop test suite and output the table"""
+    def _schedule_testcase(
+        self,
+        server: str,
+        client: str,
+        test: Type[testcases.TestCase],
+    ):
+        """Schedule a test case."""
+        self._scheduled_tests.append(
+            ScheduledTest(server_name=server, client_name=client, test=test)
+        )
+
+    def _schedule_measurement(
+        self,
+        server: str,
+        client: str,
+        measurement: Type[testcases.Measurement],
+        skip_iterations: int,
+    ):
+        """Schedule a measurement (with multiple iterations)."""
+
+        repetitions: int = measurement.repetitions
+
+        for _ in range(skip_iterations, repetitions):
+            self._scheduled_tests.append(
+                ScheduledTest(
+                    server_name=server,
+                    client_name=client,
+                    test=measurement,
+                )
+            )
+
+    def _schedule(self):
+        """Schedule all test and measurement runs."""
 
         for server_name in self._servers:
             for client_name in self._clients:
-                server_implementation = self._result.implementations[server_name]
-                client_implementation = self._result.implementations[client_name]
-                LOGGER.debug(
-                    "Using server %s (%s) and client %s (%s)",
-                    server_name,
-                    self._result.implementations[server_name].image,
-                    client_name,
-                    self._result.implementations[client_name].image,
-                )
-
-                if self._skip_compliance_check:
-                    LOGGER.info(
-                        "Skipping compliance check for %s and %s",
-                        server_name,
-                        client_name,
-                    )
-                elif not self._check_impl_is_compliant(server_implementation):
-                    LOGGER.info(
-                        "%s is not compliant, skipping %s-%s",
-                        server_implementation.name,
-                        server_implementation.name,
-                        client_implementation.name,
-                    )
-                    self._export_results()
-
-                    continue
-                elif not self._check_impl_is_compliant(client_implementation):
-                    LOGGER.info(
-                        "%s is not compliant, skipping %s-%s",
-                        client_implementation.name,
-                        server_implementation.name,
-                        client_implementation.name,
-                    )
-                    self._export_results()
-
-                    continue
-
-                # save compliance
-                self._export_results()
-
                 # schedule the test cases
 
-                for testcase in self._tests:
+                for test_case in self._tests:
                     try:
                         existing_test_result = self._result.get_test_result(
-                            server_name, client_name, testcase.abbreviation
+                            server=server_name,
+                            client=client_name,
+                            test_abbr=test_case.abbreviation,
                         )
                     except KeyError:
                         existing_test_result = None
 
                     if existing_test_result and existing_test_result.result:
-                        LOGGER.info(
-                            (
-                                "Skipping testcase %s for server=%s and client=%s, "
-                                "because it was executed before. Result: %s"
-                            ),
-                            testcase.abbreviation,
-                            server_name,
-                            client_name,
-                            existing_test_result.result.value,
-                        )
+                        if not self._retry_failed or existing_test_result.succeeded:
+                            LOGGER.info(
+                                (
+                                    "Skipping testcase %s for server=%s and client=%s, "
+                                    "because it was executed before. Result: %s"
+                                ),
+                                test_case.abbreviation,
+                                server_name,
+                                client_name,
+                                existing_test_result.result.value,
+                            )
 
-                        continue
+                            continue
 
-                    self._schedule_testcase(server_name, client_name, testcase)
+                    self._schedule_testcase(server_name, client_name, test_case)
 
                 # schedule the measurements
 
-                for measurement in self._measurements:
+                for meas_case in self._measurements:
                     try:
                         existing_meas_result = self._result.get_measurement_result(
-                            server_name, client_name, measurement.abbreviation
+                            server=server_name,
+                            client=client_name,
+                            measurement_abbr=meas_case.abbreviation,
                         )
                     except KeyError:
                         existing_meas_result = None
@@ -639,19 +540,26 @@ class InteropRunner:
                     skip_iterations = 0
 
                     if existing_meas_result:
-                        if existing_meas_result.result:
-                            LOGGER.info(
-                                (
-                                    "Skipping measurement %s for server=%s and client=%s, "
-                                    "because it was executed before. Result: %s"
-                                ),
-                                measurement.abbreviation,
-                                server_name,
-                                client_name,
-                                existing_meas_result.result.value,
+                        assert existing_meas_result.test.repetitions
+                        if existing_meas_result.values:
+                            assert existing_meas_result.test.repetitions == len(
+                                existing_meas_result.values
                             )
 
-                            continue
+                        if existing_meas_result.result:
+                            if not self._retry_failed or existing_meas_result.succeeded:
+                                LOGGER.info(
+                                    (
+                                        "Skipping measurement %s for server=%s and client=%s, "
+                                        "because it was executed before. Result: %s"
+                                    ),
+                                    meas_case.abbreviation,
+                                    server_name,
+                                    client_name,
+                                    existing_meas_result.result.value,
+                                )
+
+                                continue
                         elif existing_meas_result.values:
                             skip_iterations = len(existing_meas_result.values)
                             LOGGER.info(
@@ -659,7 +567,7 @@ class InteropRunner:
                                     "Skipping %d iterations of measurement %s for server=%s and client=%s, because it was executed before. Values: %s"
                                 ),
                                 skip_iterations,
-                                measurement.abbreviation,
+                                meas_case.abbreviation,
                                 server_name,
                                 client_name,
                                 ", ".join(map(str, existing_meas_result.values)),
@@ -668,19 +576,70 @@ class InteropRunner:
                     self._schedule_measurement(
                         server_name,
                         client_name,
-                        measurement,
+                        meas_case,
                         skip_iterations=skip_iterations,
                     )
 
         if self._shuffle:
             random.shuffle(self._scheduled_tests)
 
+        LOGGER.info(
+            "Will run %d tests and measurement runs (skip %d runs from previous run).",
+            len(self._scheduled_tests),
+            self._nr_runs - len(self._scheduled_tests),
+        )
+
+    def run(self):
+        """run the interop test suite and output the table"""
+
         while True:
             try:
                 scheduled_test = self._scheduled_tests.pop()
             except IndexError:
+                # end
                 break
 
+            # check compliance
+            server_implementation = self._result.implementations[
+                scheduled_test.server_name
+            ]
+            client_implementation = self._result.implementations[
+                scheduled_test.client_name
+            ]
+            LOGGER.debug(
+                "Using server %s (%s) and client %s (%s)",
+                scheduled_test.server_name,
+                self._result.implementations[scheduled_test.server_name].image,
+                scheduled_test.client_name,
+                self._result.implementations[scheduled_test.client_name].image,
+            )
+
+            if self._skip_compliance_check:
+                LOGGER.info(
+                    "Skipping compliance check for %s and %s",
+                    scheduled_test.server_name,
+                    scheduled_test.client_name,
+                )
+            elif not self._check_impl_is_compliant(server_implementation):
+                LOGGER.info(
+                    "%s is not compliant, skipping %s-%s",
+                    server_implementation.name,
+                    server_implementation.name,
+                    client_implementation.name,
+                )
+
+                continue
+            elif not self._check_impl_is_compliant(client_implementation):
+                LOGGER.info(
+                    "%s is not compliant, skipping %s-%s",
+                    client_implementation.name,
+                    server_implementation.name,
+                    client_implementation.name,
+                )
+
+                continue
+
+            # determine log_dir_prefix
             if issubclass(scheduled_test.test, Measurement):
                 # a measurement
                 try:
@@ -695,6 +654,7 @@ class InteropRunner:
             else:
                 log_dir_prefix = None
 
+            # run test
             result, value = self._run_test(
                 server=scheduled_test.server_name,
                 client=scheduled_test.client_name,
@@ -733,7 +693,6 @@ class InteropRunner:
                             == scheduled_test.test.abbreviation
                         ):
                             self._scheduled_tests.remove(future_scheduled_test)
-                            self._num_skip_runs += 1
 
             else:
                 # a test case
