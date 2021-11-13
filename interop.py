@@ -41,8 +41,6 @@ class ScheduledTest:
     client_name: str
     #: The test case / measurement test case to execute.
     test: Union[Type[TestCase], Type[Measurement]]
-    #: postfix(?) for the log dir (number of iteration for measurements)
-    log_dir_prefix: Optional[str] = field(default=None)
 
 
 class InteropRunner:
@@ -397,7 +395,6 @@ class InteropRunner:
                 ScheduledTest(
                     server_name=server,
                     client_name=client,
-                    log_dir_prefix=f"{iteration + 1}",
                     test=measurement,
                 )
             )
@@ -684,10 +681,24 @@ class InteropRunner:
             except IndexError:
                 break
 
+            if issubclass(scheduled_test.test, Measurement):
+                # a measurement
+                try:
+                    values = self._result.get_measurement_result(
+                        server=scheduled_test.server_name,
+                        client=scheduled_test.client_name,
+                        measurement_abbr=scheduled_test.test.abbreviation,
+                    ).values
+                except KeyError:
+                    values = []
+                log_dir_prefix: Optional[str] = str(len(values) + 1)
+            else:
+                log_dir_prefix = None
+
             result, value = self._run_test(
                 server=scheduled_test.server_name,
                 client=scheduled_test.client_name,
-                log_dir_prefix=scheduled_test.log_dir_prefix,
+                log_dir_prefix=log_dir_prefix,
                 test=scheduled_test.test,
             )
 
@@ -711,13 +722,14 @@ class InteropRunner:
 
                 if result != TestResult.SUCCEEDED:
                     # unschedule all further measurements of same type with same implementations
-                    for future_scheduled_test in self._scheduled_tests:
+                    for future_scheduled_test in self._scheduled_tests[::]:
                         if (
                             future_scheduled_test.server_name
                             == scheduled_test.server_name
                             and future_scheduled_test.client_name
                             == scheduled_test.client_name
-                            and future_scheduled_test.test == scheduled_test.test
+                            and future_scheduled_test.test.abbreviation
+                            == scheduled_test.test.abbreviation
                         ):
                             self._scheduled_tests.remove(future_scheduled_test)
                             self._num_skip_runs += 1
