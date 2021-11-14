@@ -5,6 +5,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
+from pathlib import Path
 
 import docker
 from dateutil.parser import parse as parse_date
@@ -16,6 +17,8 @@ if TYPE_CHECKING:
     from deployment import Deployment
 
 LOGGER = logging.getLogger(name="quic-interop-runner")
+
+IMPLEMENTATIONS_JSON_PATH = Path(__file__).parent / "implementations.json"
 
 
 @dataclass
@@ -85,9 +88,17 @@ class Implementation:
         return self._image_created
 
     def img_metadata_json(self) -> JSONImageMetadata:
+        if not self._image_id:
+            LOGGER.warning("image_id of %s not yet determined.", self.name)
+        if not self._image_repo_digests:
+            LOGGER.warning("image_repo_digests of %s not yet determined.", self.name)
+        if not self._image_versions:
+            LOGGER.warning("image_versions of %s not yet determined.", self.name)
+        if not self._image_created:
+            LOGGER.warning("image_created of %s not yet determined.", self.name)
         return JSONImageMetadata(
             image=self.image,
-            id=self.image_id,
+            id=self._image_id,
             repo_digests=list(self.image_repo_digests)
             if self._image_repo_digests
             else [],
@@ -119,15 +130,16 @@ class Implementation:
 IMPLEMENTATIONS = dict[str, Implementation]()
 
 
-with open("implementations.json", "r") as f:
-    data = json.load(f)
-    name: str
-    val: dict[str, str]
+with IMPLEMENTATIONS_JSON_PATH.open("r") as file:
+    data = json.load(file)
 
-    for name, val in data.items():
-        IMPLEMENTATIONS[name] = Implementation(
-            name=name,
-            image=val["image"],
-            url=val["url"],
-            role=ImplementationRole(val["role"]),
-        )
+name: str
+val: dict[str, str]
+
+for name, val in data.items():
+    IMPLEMENTATIONS[name] = Implementation(
+        name=name,
+        image=val["image"],
+        url=val["url"],
+        role=ImplementationRole(val["role"]),
+    )
