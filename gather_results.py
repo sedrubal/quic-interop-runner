@@ -153,6 +153,7 @@ def get_none_or_first(query_result):
 class GatherResults:
     def __init__(
         self,
+        results: list[Result],
         dburl: str,
         debug=False,
         skip_existing_reasons=False,
@@ -165,11 +166,13 @@ class GatherResults:
         Session = orm.scoped_session(session_factory)
         self.session = Session(bind=engine)
         Base.metadata.create_all(engine)
-
-    def run(self, results: list[Result]):
-        for i, result in enumerate(results):
-            LOGGER.info("Processing result file %d of %d", i + 1, len(results))
+        self.results = results
+        for result in self.results:
             result.load_from_json()
+
+    def run(self):
+        for i, result in enumerate(self.results):
+            LOGGER.info("Processing result file %d of %d", i + 1, len(self.results))
             self.process_result(result)
 
     def get_reason(self, output_file: Path) -> Optional[Reason]:
@@ -284,6 +287,8 @@ class GatherResults:
         self.session.add(run)
         self.session.commit()
 
+        LOGGER.info(f"Inserted/Updated measurement repetition run id {run.id}")
+
         return run.id
 
     def insert_measurement_run(self, meas_result: MeasurementResultInfo, test_run_id):
@@ -373,11 +378,12 @@ def main():
     console_log_handler.setFormatter(TerminalFormatter())
     LOGGER.addHandler(console_log_handler)
     cli = GatherResults(
+        results=args.results,
         dburl=args.database,
         debug=args.debug,
         skip_existing_reasons=args.skip_existing_reasons,
     )
-    cli.run(results=args.results)
+    cli.run()
 
 
 if __name__ == "__main__":

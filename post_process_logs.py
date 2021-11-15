@@ -316,11 +316,14 @@ class PostProcessor:
 
         if PostProcessingMode.GATHER_RESULTS in self.mode:
             gather_results_tool = GatherResults(
+                results=[],
                 debug=self.debug,
                 dburl=GATHER_RESULT_DB.format(path=result.log_dir),
                 skip_existing_reasons=True,
             )
-            gather_results_tool.run([result])
+            # avoid loading twice - oops
+            gather_results_tool.results.append(result)
+            gather_results_tool.run()
 
         for test_result in result.all_test_results:
             if test_result.result == TestResult.UNSUPPORTED:
