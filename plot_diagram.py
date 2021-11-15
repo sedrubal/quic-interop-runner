@@ -287,7 +287,10 @@ class PlotCli:
             right_trace.pair_trace = left_trace
             self.traces.append(right_trace)
 
+        self.print_trace_table()
+
         self._analyze_results = list[TraceAnalyzeResult]()
+        self._median_duration_index: int = 0
 
     def analyze_traces(self):
         """Analyze the traces."""
@@ -308,7 +311,12 @@ class PlotCli:
                 self._analyze_results.append(result)
                 del trace
 
-        self._analyzed = True
+        # find index of trace with median plt
+        plts = sorted(
+            (r.max_timestamp - r.min_timestamp, i)
+            for i, r in enumerate(self._analyze_results)
+        )
+        self._median_duration_index = plts[len(plts) // 2][1]
 
     def analyze_trace(self, trace: Trace, spinner):
 
@@ -509,7 +517,7 @@ class PlotCli:
             calc_goodput=False,
         )
 
-        spinner.write(colored(f"Saving cache file {cache_file}", color="grey"))
+        spinner.write(colored(f"⚒ Saving cache file {cache_file}", color="grey"))
         with cache_file.open("w") as file:
             json.dump(
                 {
@@ -538,6 +546,22 @@ class PlotCli:
 
         if mode is not None:
             self.mode = mode
+
+    @property
+    def _main_analyze_result(self) -> TraceAnalyzeResult:
+        """Return the analyze result with median maximum timestamp."""
+
+        return self._analyze_results[self._median_duration_index]
+
+    @property
+    def _shadow_analyze_results(self) -> list[TraceAnalyzeResult]:
+        """Return a list of analyze results that does not include `_main_analyze_result`."""
+
+        return [
+            r
+            for i, r in enumerate(self._analyze_results)
+            if i != self._median_duration_index
+        ]
 
     def _vline_annotate(
         self,
@@ -619,7 +643,7 @@ class PlotCli:
         if not self.annotate:
             return
 
-        if not self._analyze_results[0].extended_facts["is_http09"]:
+        if not self._main_analyze_result.extended_facts["is_http09"]:
             spinner.write(
                 colored(
                     f"⨯ Can't annotate plot, because HTTP could not be parsed.",
@@ -629,14 +653,14 @@ class PlotCli:
 
             return
 
-        ttfb = self._analyze_results[0].extended_facts["ttfb"]
-        req_start = self._analyze_results[0].extended_facts["request_start"]
-        pglt = self._analyze_results[0].extended_facts["plt"]
-        resp_delay = self._analyze_results[0].extended_facts["response_delay"]
-        first_resp_tx_time = self._analyze_results[0].extended_facts[
+        ttfb = self._main_analyze_result.extended_facts["ttfb"]
+        req_start = self._main_analyze_result.extended_facts["request_start"]
+        pglt = self._main_analyze_result.extended_facts["plt"]
+        resp_delay = self._main_analyze_result.extended_facts["response_delay"]
+        first_resp_tx_time = self._main_analyze_result.extended_facts[
             "first_response_send_time"
         ]
-        last_resp_tx_time = self._analyze_results[0].extended_facts[
+        last_resp_tx_time = self._main_analyze_result.extended_facts[
             "last_response_send_time"
         ]
 
@@ -687,8 +711,8 @@ class PlotCli:
 
         self._vdim_annotate(
             ax=ax,
-            left=self._analyze_results[0].extended_facts["request_start"],
-            right=self._analyze_results[0].extended_facts["ttfb"],
+            left=self._main_analyze_result.extended_facts["request_start"],
+            right=self._main_analyze_result.extended_facts["ttfb"],
             y=height * 3 / 4,
             text=f"{resp_delay * 1000:.0f} ms",
         )
@@ -722,13 +746,13 @@ class PlotCli:
         ax.set_yticks(np.arange(0, max_offset * 1.1, 1024 * 1024))
 
         for trace_timestamps, trace_offsets in zip(
-            (r.request_stream_packet_timestamps for r in self._analyze_results[1:]),
-            (r.request_offsets for r in self._analyze_results[1:]),
+            (r.request_stream_packet_timestamps for r in self._shadow_analyze_results),
+            (r.request_offsets for r in self._shadow_analyze_results),
         ):
             ax.plot(
                 trace_timestamps,
                 trace_offsets,
-                marker="o",
+                marker=".",
                 linestyle="",
                 color=self._colors.aluminium4,
                 markersize=self._markersize,
@@ -742,19 +766,19 @@ class PlotCli:
         ) in zip(
             (
                 r.response_stream_layers_first_timestamps
-                for r in self._analyze_results[1:]
+                for r in self._shadow_analyze_results
             ),
-            (r.response_first_offsets for r in self._analyze_results[1:]),
+            (r.response_first_offsets for r in self._shadow_analyze_results),
             (
                 r.response_stream_layers_retrans_timestamps
-                for r in self._analyze_results[1:]
+                for r in self._shadow_analyze_results
             ),
-            (r.response_retrans_offsets for r in self._analyze_results[1:]),
+            (r.response_retrans_offsets for r in self._shadow_analyze_results),
         ):
             ax.plot(
                 (*trace_first_timestamps, *trace_retrans_timestamps),
                 (*trace_first_offsets, *trace_retrans_offsets),
-                marker="o",
+                marker=".",
                 linestyle="",
                 color=self._colors.aluminium4,
                 markersize=self._markersize,
@@ -763,24 +787,24 @@ class PlotCli:
         # plot main trace (request and response separated)
 
         ax.plot(
-            self._analyze_results[0].request_stream_packet_timestamps,
-            self._analyze_results[0].request_offsets,
+            self._main_analyze_result.request_stream_packet_timestamps,
+            self._main_analyze_result.request_offsets,
             marker="o",
             linestyle="",
             color=self._colors.Chameleon,
             markersize=self._markersize,
         )
         ax.plot(
-            self._analyze_results[0].response_stream_layers_first_timestamps,
-            self._analyze_results[0].response_first_offsets,
+            self._main_analyze_result.response_stream_layers_first_timestamps,
+            self._main_analyze_result.response_first_offsets,
             marker="o",
             linestyle="",
             color=self._colors.SkyBlue,
             markersize=self._markersize,
         )
         ax.plot(
-            self._analyze_results[0].response_stream_layers_retrans_timestamps,
-            self._analyze_results[0].response_retrans_offsets,
+            self._main_analyze_result.response_stream_layers_retrans_timestamps,
+            self._main_analyze_result.response_retrans_offsets,
             marker="o",
             linestyle="",
             color=self._colors.Orange,
@@ -813,8 +837,8 @@ class PlotCli:
         # plot shadow traces (request and response separated)
 
         for trace_timestamps, trace_goodput in zip(
-            (r.data_rate_timestamps for r in self._analyze_results[1:]),
-            (r.forward_goodput_data_rates for r in self._analyze_results[1:]),
+            (r.data_rate_timestamps for r in self._shadow_analyze_results),
+            (r.forward_goodput_data_rates for r in self._shadow_analyze_results),
         ):
             ax.plot(
                 trace_timestamps,
@@ -828,8 +852,8 @@ class PlotCli:
         # plot main trace
 
         ax.plot(
-            self._analyze_results[0].data_rate_timestamps,
-            self._analyze_results[0].forward_goodput_data_rates,
+            self._main_analyze_result.data_rate_timestamps,
+            self._main_analyze_result.forward_goodput_data_rates,
             label=r"Goodput (recv'd payload rate delayed by $\frac{-RTT}{2}$)",
             #  marker="o",
             linestyle="--",
@@ -837,8 +861,8 @@ class PlotCli:
             markersize=self._markersize,
         )
         ax.plot(
-            self._analyze_results[0].data_rate_timestamps,
-            self._analyze_results[0].forward_tx_data_rates,
+            self._main_analyze_result.data_rate_timestamps,
+            self._main_analyze_result.forward_tx_data_rates,
             label="Data Rate of Transmitted Packets",
             #  marker="o",
             linestyle="--",
@@ -871,8 +895,8 @@ class PlotCli:
         # plot shadow traces (request and response separated)
 
         for trace_timestamps, trace_goodput in zip(
-            (r.data_rate_timestamps for r in self._analyze_results[1:]),
-            (r.return_data_rates for r in self._analyze_results[1:]),
+            (r.data_rate_timestamps for r in self._shadow_analyze_results),
+            (r.return_data_rates for r in self._shadow_analyze_results),
         ):
             ax.plot(
                 trace_timestamps,
@@ -886,8 +910,8 @@ class PlotCli:
         # plot main trace
 
         ax.plot(
-            self._analyze_results[0].data_rate_timestamps,
-            self._analyze_results[0].return_data_rates,
+            self._main_analyze_result.data_rate_timestamps,
+            self._main_analyze_result.return_data_rates,
             label=r"Data Rate in Return Path",
             #  marker="o",
             linestyle="--",
@@ -917,26 +941,26 @@ class PlotCli:
         # plot shadow traces (request and response separated)
 
         for trace_timestamps, trace_packet_numbers in zip(
-            (r.request_stream_packet_timestamps for r in self._analyze_results[1:]),
-            (r.request_packet_numbers for r in self._analyze_results[1:]),
+            (r.request_stream_packet_timestamps for r in self._shadow_analyze_results),
+            (r.request_packet_numbers for r in self._shadow_analyze_results),
         ):
             ax.plot(
                 trace_timestamps,
                 trace_packet_numbers,
-                marker="o",
+                marker=".",
                 linestyle="",
                 color=self._colors.aluminium4,
                 markersize=self._markersize,
             )
 
         for trace_timestamps, trace_packet_numbers in zip(
-            (r.response_stream_packet_timestamps for r in self._analyze_results[1:]),
-            (r.response_packet_numbers for r in self._analyze_results[1:]),
+            (r.response_stream_packet_timestamps for r in self._shadow_analyze_results),
+            (r.response_packet_numbers for r in self._shadow_analyze_results),
         ):
             ax.plot(
                 trace_timestamps,
                 trace_packet_numbers,
-                marker="o",
+                marker=".",
                 linestyle="",
                 color=self._colors.aluminium4,
                 markersize=self._markersize,
@@ -945,16 +969,16 @@ class PlotCli:
         # plot main trace (request and response separated)
 
         ax.plot(
-            self._analyze_results[0].request_stream_packet_timestamps,
-            self._analyze_results[0].request_packet_numbers,
+            self._main_analyze_result.request_stream_packet_timestamps,
+            self._main_analyze_result.request_packet_numbers,
             marker="o",
             linestyle="",
             color=self._colors.Plum,
             markersize=self._markersize,
         )
         ax.plot(
-            self._analyze_results[0].response_stream_packet_timestamps,
-            self._analyze_results[0].response_packet_numbers,
+            self._main_analyze_result.response_stream_packet_timestamps,
+            self._main_analyze_result.response_packet_numbers,
             marker="o",
             linestyle="",
             color=self._colors.SkyBlue,
@@ -962,7 +986,7 @@ class PlotCli:
         )
 
         self._annotate_time_plot(ax, height=max_packet_number, spinner=spinner)
-        spinner.write(f"rtt: {self._analyze_results[0].extended_facts.get('rtt')}")
+        spinner.write(f"rtt: {self._main_analyze_result.extended_facts.get('rtt')}")
 
     def plot_file_size(self, fig, ax, spinner):
         """Plot the file size diagram."""
@@ -994,16 +1018,16 @@ class PlotCli:
         # plot shadow traces
 
         for trace_timestamps, trace_file_sizes in zip(
-            (r.server_client_packet_timestamps for r in self._analyze_results[1:]),
+            (r.server_client_packet_timestamps for r in self._shadow_analyze_results),
             (
                 r.response_accumulated_transmitted_file_sizes
-                for r in self._analyze_results[1:]
+                for r in self._shadow_analyze_results
             ),
         ):
             ax.plot(
                 trace_timestamps,
                 trace_file_sizes,
-                marker="o",
+                marker=".",
                 linestyle="",
                 color=self._colors.aluminium4,
                 markersize=self._markersize,
@@ -1012,8 +1036,8 @@ class PlotCli:
         # plot main trace
 
         ax.plot(
-            self._analyze_results[0].server_client_packet_timestamps,
-            self._analyze_results[0].response_accumulated_transmitted_file_sizes,
+            self._main_analyze_result.server_client_packet_timestamps,
+            self._main_analyze_result.response_accumulated_transmitted_file_sizes,
             marker="o",
             linestyle="",
             color=self._colors.SkyBlue,
@@ -1031,8 +1055,8 @@ class PlotCli:
         ax.set_title(self.title)
         ax.yaxis.set_major_formatter(lambda val, _pos: naturalsize(val, binary=True))
 
-        min_timestamp = min(self._analyze_results[0].response_stream_packet_timestamps)
-        max_timestamp = max(self._analyze_results[0].response_stream_packet_timestamps)
+        min_timestamp = min(self._main_analyze_result.response_stream_packet_timestamps)
+        max_timestamp = max(self._main_analyze_result.response_stream_packet_timestamps)
 
         ax.set_xlim(left=min(0, min_timestamp), right=max_timestamp)
         #  ax.set_ylim(bottom=0, top=packet_stats.max)
@@ -1041,10 +1065,10 @@ class PlotCli:
         # no shadow traces here
         # plot main trace
         ax.stackplot(
-            self._analyze_results[0].response_stream_packet_timestamps,
+            self._main_analyze_result.response_stream_packet_timestamps,
             (
-                self._analyze_results[0].response_stream_data_sizes,
-                self._analyze_results[0].response_overhead_sizes,
+                self._main_analyze_result.response_stream_data_sizes,
+                self._main_analyze_result.response_overhead_sizes,
             ),
             colors=(
                 self._colors.skyblue1,
@@ -1063,9 +1087,9 @@ class PlotCli:
         )
         ax.legend(loc="upper left")
 
-        assert self._analyze_results[0].response_packet_stats
-        assert self._analyze_results[0].response_stream_data_stats
-        assert self._analyze_results[0].response_overhead_stats
+        assert self._main_analyze_result.response_packet_stats
+        assert self._main_analyze_result.response_stream_data_stats
+        assert self._main_analyze_result.response_overhead_stats
 
         ax.text(
             0.95,
@@ -1073,15 +1097,15 @@ class PlotCli:
             "\n".join(
                 (
                     "Packet Statistics",
-                    self._analyze_results[0].response_packet_stats.mpl_label_short(
+                    self._main_analyze_result.response_packet_stats.mpl_label_short(
                         naturalsize
                     ),
                     "\n Stream Data Statistics",
-                    self._analyze_results[0].response_stream_data_stats.mpl_label_short(
+                    self._main_analyze_result.response_stream_data_stats.mpl_label_short(
                         naturalsize
                     ),
                     "\n Overhead Statistics",
-                    self._analyze_results[0].response_overhead_stats.mpl_label_short(
+                    self._main_analyze_result.response_overhead_stats.mpl_label_short(
                         naturalsize
                     ),
                 )
@@ -1100,7 +1124,7 @@ class PlotCli:
 
         self._annotate_time_plot(
             ax,
-            height=self._analyze_results[0].response_packet_stats.max,
+            height=self._main_analyze_result.response_packet_stats.max,
             spinner=spinner,
         )
 
@@ -1356,10 +1380,7 @@ class PlotCli:
             spinner.ok("✔")
             plt.show()
 
-    def run(self):
-        """Run command line interface."""
-
-        cprint(f"Plotting {len(self.traces)} traces", color="cyan", attrs=["bold"])
+    def print_trace_table(self):
         table = prettytable.PrettyTable()
         table.hrules = prettytable.FRAME
         table.vrules = prettytable.ALL
@@ -1373,14 +1394,8 @@ class PlotCli:
             assert right_trace.pair_trace
             table.add_row(
                 [
-                    colored(
-                        str(create_relpath(right_trace.pair_trace.input_file)),
-                        attrs=["bold"] if i == 0 else None,
-                    ),
-                    colored(
-                        str(create_relpath(right_trace.input_file)),
-                        attrs=["bold"] if i == 0 else None,
-                    ),
+                    create_relpath(right_trace.pair_trace.input_file),
+                    create_relpath(right_trace.input_file),
                     create_relpath(right_trace.keylog_file)
                     if right_trace.keylog_file
                     else colored("-", color="grey"),
@@ -1388,6 +1403,11 @@ class PlotCli:
             )
 
         print(table)
+
+    def run(self):
+        """Run command line interface."""
+
+        cprint(f"Plotting {len(self.traces)} traces", color="cyan", attrs=["bold"])
 
         mapping = {
             PlotMode.OFFSET_NUMBER: {
