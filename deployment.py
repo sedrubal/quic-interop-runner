@@ -798,17 +798,17 @@ class Deployment:
                 ),
             )
             tmp.result()
-            shutil.move(
-                log_path / "sim" / "trace_node_right.pcap",
-                log_path / "sim" / "trace_node_right_ns3.pcap",
-            )
+            pcap_file = log_path / "sim" / "trace_node_right.pcap"
+            pcap_ns3_file = log_path / "sim" / "trace_node_right_ns3.pcap"
+            if pcap_file.is_file():
+                shutil.move(pcap_file, pcap_ns3_file)
 
             # copy traces
             executor.submit(
                 lambda: copy_file_from_container(
                     right_tcpdump_container,
                     TRACE_PATH,
-                    log_path / "sim" / "trace_node_right.pcap",
+                    pcap_file,
                 )
             )
 
