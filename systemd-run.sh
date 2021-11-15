@@ -2,7 +2,7 @@
 set -eu
 
 #
-# Script to run interop runner while telling systemd / linux through cgroups to controll memory and CPU usage.
+# Wrapper script to run scripts while telling systemd / linux through cgroups to controll memory and CPU usage.
 #
 
 SLICE=user.slice
@@ -23,4 +23,4 @@ exec systemd-run \
     --property=CPUQuota="${CPUQUOTA}%" \
     --property=MemoryLimit=95% \
     --property=OOMPolicy=kill \
-    poetry run ./run.py $@
+    poetry run $@
