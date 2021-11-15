@@ -549,7 +549,7 @@ class PlotCli:
 
     @property
     def _main_analyze_result(self) -> TraceAnalyzeResult:
-        """Return the analyze result with median maximum timestamp."""
+        """Return the analyze result with median duration (max timestamp - min timestamp)."""
 
         return self._analyze_results[self._median_duration_index]
 

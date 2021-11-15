@@ -9,6 +9,7 @@ import testcases
 from implementations import IMPLEMENTATIONS
 from interop import InteropRunner
 from testcases import MEASUREMENTS, TESTCASES
+from utils import time_range
 
 client_implementations = [
     name for name, value in IMPLEMENTATIONS.items() if value.role.is_client
@@ -97,6 +98,12 @@ def parse_args():
         action="store_true",
         help="Scramble the order of the test cases.",
     )
+    parser.add_argument(
+        "--pause-between",
+        action="store",
+        type=time_range,
+        help="Pause between a specific time of the day (for real links). Format: HH:MM-HH:MM.",
+    )
 
     return parser.parse_args()
 
@@ -170,6 +177,7 @@ def main():
         skip_compliance_check=args.skip_compliance_check,
         retry_failed=args.retry_failed,
         shuffle=args.shuffle,
+        pause_between=args.pause_between,
     ).run()
 
 

@@ -6,8 +6,8 @@ import random
 import shutil
 import sys
 import tempfile
-from dataclasses import dataclass, field
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import datetime, time
 from itertools import chain
 from pathlib import Path
 from typing import Iterable, Optional, Type, Union
@@ -22,7 +22,7 @@ from exceptions import ConflictError, TestFailed, TestUnsupported
 from implementations import IMPLEMENTATIONS, Implementation
 from result_parser import Result, TestResultInfo
 from testcases import Measurement, TestCase
-from utils import LogFileFormatter, TerminalFormatter
+from utils import LogFileFormatter, TerminalFormatter, sleep_between
 
 CONSOLE_LOG_HANDLER = logging.StreamHandler(stream=sys.stderr)
 
@@ -57,6 +57,7 @@ class InteropRunner:
         skip_compliance_check: bool = False,
         retry_failed: bool = False,
         shuffle: bool = False,
+        pause_between: Optional[tuple[time, time]] = None,
     ):
         LOGGER.setLevel(logging.DEBUG)
 
@@ -81,6 +82,7 @@ class InteropRunner:
         self._skip_compliance_check = skip_compliance_check
         self._retry_failed = retry_failed
         self._shuffle = shuffle
+        self._pause_between = pause_between
 
         self._deployment = Deployment()
 
@@ -600,6 +602,9 @@ class InteropRunner:
             except IndexError:
                 # end
                 break
+
+            if self._pause_between:
+                sleep_between(self._pause_between[0], self._pause_between[1])
 
             # check compliance
             server_implementation = self._result.implementations[

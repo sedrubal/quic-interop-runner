@@ -9,8 +9,9 @@ import string
 import sys
 import typing
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from pathlib import Path
+from time import sleep
 from typing import Callable, NamedTuple, Optional, TypeVar, Union
 
 import humanize
@@ -32,6 +33,8 @@ if typing.TYPE_CHECKING:
 termcolor.ATTRIBUTES["italic"] = 3
 
 T = TypeVar("T")
+
+LOGGER = logging.getLogger(name="quic-interop-runner")
 
 
 def random_string(length: int):
@@ -285,6 +288,74 @@ def existing_file_path(value: str, allow_none=False) -> Optional[Path]:
         raise argparse.ArgumentTypeError(f"{value} does not exist.")
 
     return path
+
+
+def time_range(value: str) -> tuple[time, time]:
+    """Parse two time values in the format HH:MM separated by `-`."""
+    values = value.strip().split("-")
+    if len(values) != 2:
+        raise argparse.ArgumentTypeError(
+            f"{value} is not a valid time range. It must be separated by -"
+        )
+
+    start_str, end_str = values
+    start_bits = start_str.split(":")
+    if len(start_bits) != 2:
+        raise argparse.ArgumentTypeError(
+            f"{start_str} is not a valid time. It must be in HH:MM format."
+        )
+
+    start_hour_str, start_minute_str = start_bits
+    try:
+        start_hour = int(start_hour_str)
+        start_minute = int(start_minute_str)
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(
+            f"{start_str} is not a valid time. Hour and minutes must be integer."
+        ) from err
+
+    end_bits = end_str.split(":")
+    if len(end_bits) != 2:
+        raise argparse.ArgumentTypeError(
+            f"{end_str} is not a valid time. It must be in HH:MM format."
+        )
+
+    end_hour_str, end_minute_str = end_bits
+    try:
+        end_hour = int(end_hour_str)
+        end_minute = int(end_minute_str)
+    except ValueError as err:
+        raise argparse.ArgumentTypeError(
+            f"{end_str} is not a valid time. Hour and minutes must be integer."
+        ) from err
+
+    start = time(hour=start_hour, minute=start_minute)
+    end = time(hour=end_hour, minute=end_minute)
+    return start, end
+
+
+def time_total_seconds(value: time) -> int:
+    """Return the total number of seconds in a time object."""
+    return value.hour * 3600 + value.minute * 60 + value.second
+
+
+def sleep_between(start: time, end: time) -> None:
+    """Sleep if the current time is between start and end."""
+    while True:
+        now = datetime.now()
+        if start <= now.time() <= end:
+            until_seconds = time_total_seconds(end)
+            now_total_seconds = time_total_seconds(now.time())
+            pause_for = until_seconds - now_total_seconds
+            pause_until = now + timedelta(seconds=pause_for)
+            LOGGER.info(
+                "=== Pausing until %s (for %s sec) ===",
+                pause_until.strftime("%Y-%m-%d %H:%M"),
+                pause_for,
+            )
+            sleep(pause_for)
+        else:
+            break
 
 
 class UrlOrPath:
