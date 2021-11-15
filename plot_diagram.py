@@ -3,20 +3,21 @@
 """Plot time packet-number plots and more."""
 
 import argparse
+import json
 import sys
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Any, Optional, Sequence, Union
 
 import numpy as np
 import prettytable
 from humanize.filesize import naturalsize
-from matplotlib import colors
 from matplotlib import pyplot as plt
 from termcolor import colored, cprint
 
-from enums import CacheMode, Direction, PlotMode, Side
+from enums import CacheMode, PlotMode, Side
 from tango_colors import Tango
 from trace_analyzer2 import ParsingError, Trace
 from utils import (
@@ -25,8 +26,6 @@ from utils import (
     TraceTriple,
     YaspinWrapper,
     create_relpath,
-    map2d,
-    map3d,
     natural_data_rate,
 )
 
@@ -107,6 +106,140 @@ def parse_args():
     return args
 
 
+@dataclass
+class TraceAnalyzeResult:
+    """The result of analyzing for one trace pair."""
+
+    __FORMAT_VERSION__ = 0
+
+    # the extended facts of each trace (pair)
+    extended_facts: dict[str, Any] = field(default_factory=dict)
+
+    # the offset numbers of each request packet
+    request_offsets: list[Optional[int]] = field(default_factory=list[Optional[int]])
+    # the offset numbers of each response packet that is transmitted the first time
+    response_first_offsets: list[Optional[int]] = field(
+        default_factory=list[Optional[int]]
+    )
+    # the offset numbers of each response packet that is a retransmission
+    response_retrans_offsets: list[Optional[int]] = field(
+        default_factory=list[Optional[int]]
+    )
+
+    # The maximum offset value (offset + payload size).
+    max_offset: int = field(default=0)
+
+    # The timestamps of packets in `trace.request_stream_packets`
+    request_stream_packet_timestamps: list[float] = field(default_factory=list[float])
+    # The timestamps of packets in `trace.response_stream_packets`
+    response_stream_packet_timestamps: list[float] = field(default_factory=list[float])
+    # The timestamps of packets in `trace.response_stream_packets_first_tx`
+    response_stream_layers_first_timestamps: list[float] = field(
+        default_factory=list[float]
+    )
+    # The timestamps of packets in `trace.response_stream_packets_retrans`
+    response_stream_layers_retrans_timestamps: list[float] = field(
+        default_factory=list[float]
+    )
+    # The timestamps of packets in `trace.server_client_packets`
+    server_client_packet_timestamps: list[float] = field(default_factory=list[float])
+
+    # the timestamps of data rate lists
+    data_rate_timestamps: Sequence[float] = field(default_factory=list[float])
+    # the goodput data rates by trace
+    forward_goodput_data_rates: list[float] = field(default_factory=list[float])
+    # the transmission data rates by trace
+    forward_tx_data_rates: list[float] = field(default_factory=list[float])
+    # the return path data rates
+    return_data_rates: list[float] = field(default_factory=list[float])
+
+    # the packet numbers of packets in the return direction
+    request_packet_numbers: list[int] = field(default_factory=list[int])
+    # the packet numbers of packets in the forward direction
+    response_packet_numbers: list[int] = field(default_factory=list[int])
+
+    # The payload sizes of the transmitted packets in response direction
+    response_transmitted_file_sizes: list[int] = field(default_factory=list[int])
+    # The accumulated payload size of the transmitted packets in response direction
+    response_accumulated_transmitted_file_sizes: list[int] = field(
+        default_factory=list[int]
+    )
+
+    # The packet sizes of the packets in response direction
+    response_packet_sizes: list[int] = field(default_factory=list[int])
+    # The overhead (headers) sizes of the packets in response direction
+    response_overhead_sizes: list[int] = field(default_factory=list[int])
+    # TODO
+    response_stream_data_sizes: list[int] = field(default_factory=list[int])
+
+    @classmethod
+    def from_json(cls, data: dict[str, Any]) -> "TraceAnalyzeResult":
+        format_version = data.pop("__FORMAT_VERSION__")
+        assert cls.__FORMAT_VERSION__ == format_version
+        ret = cls()
+        ret.__dict__ = data
+        return ret
+
+    def to_json(self) -> dict[str, Any]:
+        return self.__dict__
+
+    @cached_property
+    def min_timestamp(self) -> float:
+        """The minimal packet timestamp we have ever seen."""
+        return 0
+
+    @cached_property
+    def max_timestamp(self) -> float:
+        """The maximum packet timestamp we have ever seen."""
+        assert self.extended_facts
+        return self.extended_facts["plt"]
+
+    @cached_property
+    def max_forward_data_rate(self) -> float:
+        """The maximum forward path data rate."""
+        return max(*self.forward_tx_data_rates, *self.forward_goodput_data_rates)
+
+    @cached_property
+    def max_return_data_rate(self) -> float:
+        """The maximum return path data rate."""
+        return max(self.return_data_rates)
+
+    @cached_property
+    def min_packet_number(self) -> int:
+        """The minimum packet number."""
+        return min(*self.request_packet_numbers, *self.response_packet_numbers)
+
+    @cached_property
+    def max_packet_number(self) -> int:
+        """The maximum packet number."""
+        return max(*self.request_packet_numbers, *self.response_packet_numbers)
+
+    @cached_property
+    def min_response_acc_file_size(self) -> int:
+        """The minimum file size."""
+        return min(self.response_accumulated_transmitted_file_sizes)
+
+    @cached_property
+    def max_response_acc_file_size(self) -> int:
+        """The maximum file size."""
+        return max(self.response_accumulated_transmitted_file_sizes)
+
+    @cached_property
+    def response_packet_stats(self) -> Statistics:
+        """Some stats about response packets."""
+        return Statistics.calc(self.response_packet_sizes)  # type: ignore
+
+    @cached_property
+    def response_overhead_stats(self) -> Statistics:
+        """Some stats about overhead data."""
+        return Statistics.calc(self.response_overhead_sizes)  # type: ignore
+
+    @cached_property
+    def response_stream_data_stats(self) -> Statistics:
+        """Some stats about stream data."""
+        return Statistics.calc(self.response_stream_data_sizes)  # type: ignore
+
+
 class PlotCli:
     """Cli for plotting."""
 
@@ -153,6 +286,240 @@ class PlotCli:
             )
             right_trace.pair_trace = left_trace
             self.traces.append(right_trace)
+
+        self._analyze_results = list[TraceAnalyzeResult]()
+
+    def analyze_traces(self):
+        """Analyze the traces."""
+        if self._analyze_results:
+            # LOGGER.debug("already analyzed")
+            return
+
+        with YaspinWrapper(
+            debug=self.debug, text="analyzing...", color="cyan"
+        ) as spinner:
+            while True:
+                try:
+                    trace = self.traces.pop()
+                except IndexError:
+                    break
+
+                result = self.analyze_trace(trace, spinner)
+                self._analyze_results.append(result)
+                del trace
+
+        self._analyzed = True
+
+    def analyze_trace(self, trace: Trace, spinner):
+
+        cache_file = (
+            trace.input_file.parent / f".{trace.input_file.stem}_analyze_cache.json"
+        )
+        if cache_file.is_file() and cache_file.stat().st_size > 0:
+            spinner.write(colored(f"⚒ Loading cache from {cache_file}", color="grey"))
+            with cache_file.open() as file:
+                try:
+                    data = json.load(file)
+                    return TraceAnalyzeResult.from_json(data)
+                except json.JSONDecodeError as err:
+                    spinner.write(f"Could not load cache: {err}")
+
+        with spinner.hidden():
+            assert trace.pair_trace
+            trace.parse()
+            trace.pair_trace.parse()
+
+        DATA_RATE_WINDOW = 1  # 1s
+
+        @dataclass
+        class DataRateBufEntry:
+            timestamp: float
+            raw_data: int
+            _successful_stream_data: Optional[int] = None
+
+            @property
+            def successful_stream_data(self) -> int:
+                assert self._successful_stream_data is not None
+                return self._successful_stream_data
+
+        result = TraceAnalyzeResult()
+
+        result.extended_facts = trace.extended_facts
+
+        data_rate_timestamps = np.arange(0, trace.extended_facts["plt"], 0.1).tolist()
+        result.data_rate_timestamps = data_rate_timestamps
+
+        # -- offset number --
+
+        for layer in trace.request_stream_packets:
+            result.request_stream_packet_timestamps.append(layer.norm_time)
+
+            # packet numbers
+            packet_number = int(layer.packet_number)
+            result.request_packet_numbers.append(packet_number)
+
+            # offset numbers
+            offset = trace.get_stream_offset(layer)
+            result.request_offsets.append(offset)
+
+            if offset is not None:
+                result.max_offset = max(
+                    result.max_offset, offset + trace.get_stream_length(layer)
+                )
+
+        for layer in trace.response_stream_packets:
+            result.response_stream_packet_timestamps.append(layer.norm_time)
+
+            # packet number
+
+            packet_number = int(layer.packet_number)
+            result.response_packet_numbers.append(packet_number)
+
+            # packet sizes (only in direction of response)
+
+            packet_size = int(layer.packet_length)
+            result.response_packet_sizes.append(packet_size)
+            stream_data_size = trace.get_stream_length(layer)
+            result.response_stream_data_sizes.append(stream_data_size)
+            result.response_overhead_sizes.append(packet_size - stream_data_size)
+
+        for layer in trace.response_stream_packets_first_tx:
+            result.response_stream_layers_first_timestamps.append(layer.norm_time)
+
+            # offset number
+
+            offset = trace.get_stream_offset(layer)
+            result.response_first_offsets.append(offset)
+
+            if offset is not None:
+                result.max_offset = max(
+                    result.max_offset, offset + trace.get_stream_length(layer)
+                )
+
+        for layer in trace.response_stream_packets_retrans:
+            result.response_stream_layers_retrans_timestamps.append(layer.norm_time)
+
+            # offset number
+
+            offset = trace.get_stream_offset(layer)
+            result.response_retrans_offsets.append(offset)
+            # Do not calculate result.max_offsets in assertion that retransmitted packets are
+            # not larger than previously transmitted packets
+
+        def calc_data_rates(
+            data_rate_buf: Sequence[DataRateBufEntry],
+            data_rate_timestamps: Sequence[float],
+            calc_goodput: bool = True,
+        ):
+            """Calculate data rates for data_rate_buf."""
+
+            # rate of transmitted data
+            tx_data_rates = list[float]()
+            # rate of goodput data
+            goodput_data_rates = list[float]()
+
+            # marker_start is inclusive, marker_end is exclusive
+            marker_start = marker_end = 0
+
+            for timestamp in data_rate_timestamps:
+                while data_rate_buf[marker_end].timestamp < timestamp:
+                    if marker_end == len(data_rate_buf) - 1:
+                        break
+                    marker_end += 1
+
+                while (
+                    data_rate_buf[marker_start].timestamp < timestamp - DATA_RATE_WINDOW
+                ):
+                    if marker_start == len(data_rate_buf) - 1:
+                        break
+                    marker_start += 1
+
+                buf_slice = list(data_rate_buf)[marker_start:marker_end]
+                tx_data_rate = (
+                    sum(entry.raw_data for entry in buf_slice) / DATA_RATE_WINDOW
+                )
+                tx_data_rates.append(tx_data_rate)
+
+                if calc_goodput:
+                    goodput_data_rate = (
+                        sum(entry.successful_stream_data for entry in buf_slice)
+                        / DATA_RATE_WINDOW
+                    )
+                    goodput_data_rates.append(goodput_data_rate)
+
+            return tx_data_rates, goodput_data_rates
+
+        # -- forward data rate --
+
+        data_rate_buf = deque[DataRateBufEntry]()
+
+        for packet in trace.server_client_packets:
+            result.server_client_packet_timestamps.append(packet.norm_time)
+
+            # file size (only in response direction)
+            file_size = trace.get_quic_payload_size(packet)
+            result.response_transmitted_file_sizes.append(file_size)
+            acc_file_size = sum(result.response_transmitted_file_sizes)
+            result.response_accumulated_transmitted_file_sizes.append(acc_file_size)
+
+            # data rates
+
+            raw_data_len = len(packet.udp.payload.binary_value)
+            # goodput
+            right_packet = trace.get_pair_packet(packet)
+
+            if not right_packet:
+                stream_data_len = 0
+            else:
+                stream_data_len = trace.pair_trace.get_quic_payload_size(right_packet)
+
+            # *8: convert from byte to bit
+            data_rate_buf.append(
+                DataRateBufEntry(
+                    timestamp=packet.norm_time,
+                    raw_data=raw_data_len * 8,
+                    _successful_stream_data=stream_data_len * 8,
+                )
+            )
+
+        (
+            result.forward_tx_data_rates,
+            result.forward_goodput_data_rates,
+        ) = calc_data_rates(data_rate_buf, data_rate_timestamps)
+
+        # -- return path data rates --
+
+        data_rate_buf = deque[DataRateBufEntry]()
+
+        for packet in trace.pair_trace.client_server_packets:
+            raw_data_len = len(packet.udp.payload.binary_value)
+
+            # *8: convert from byte to bit
+            data_rate_buf.append(
+                DataRateBufEntry(
+                    timestamp=packet.norm_time,
+                    raw_data=raw_data_len * 8,
+                )
+            )
+
+        # calculate data rates in direction of return path
+        result.return_data_rates, _return_goodput_rates = calc_data_rates(
+            data_rate_buf,
+            data_rate_timestamps,
+            calc_goodput=False,
+        )
+
+        spinner.write(colored(f"Saving cache file {cache_file}", color="grey"))
+        with cache_file.open("w") as file:
+            json.dump(
+                {
+                    **result.__dict__,
+                    "__FORMAT_VERSION__": result.__FORMAT_VERSION__,
+                },
+                file,
+            )
+
+        return result
 
     def set_params(
         self,
@@ -252,21 +619,26 @@ class PlotCli:
         if not self.annotate:
             return
 
-        if not self.traces[0].extended_facts["is_http09"]:
+        if not self._analyze_results[0].extended_facts["is_http09"]:
             spinner.write(
                 colored(
-                    f"⨯ Can't annotate plot, because facts are missing.", color="red"
+                    f"⨯ Can't annotate plot, because HTTP could not be parsed.",
+                    color="red",
                 )
             )
 
             return
 
-        ttfb = self.traces[0].extended_facts["ttfb"]
-        req_start = self.traces[0].extended_facts["request_start"]
-        pglt = self.traces[0].extended_facts["plt"]
-        resp_delay = self.traces[0].extended_facts["response_delay"]
-        first_resp_tx_time = self.traces[0].extended_facts["first_response_send_time"]
-        last_resp_tx_time = self.traces[0].extended_facts["last_response_send_time"]
+        ttfb = self._analyze_results[0].extended_facts["ttfb"]
+        req_start = self._analyze_results[0].extended_facts["request_start"]
+        pglt = self._analyze_results[0].extended_facts["plt"]
+        resp_delay = self._analyze_results[0].extended_facts["response_delay"]
+        first_resp_tx_time = self._analyze_results[0].extended_facts[
+            "first_response_send_time"
+        ]
+        last_resp_tx_time = self._analyze_results[0].extended_facts[
+            "last_response_send_time"
+        ]
 
         for label, value, label_side in (
             (
@@ -298,7 +670,7 @@ class PlotCli:
                 label_side=label_side,
             )
 
-        ax.annotate(
+        ax.annotate(  # type: ignore
             f"1st Resp. TX = {first_resp_tx_time:.3f} s",
             xy=(first_resp_tx_time, 0),
             xytext=(-30, -20),
@@ -315,8 +687,8 @@ class PlotCli:
 
         self._vdim_annotate(
             ax=ax,
-            left=self.traces[0].extended_facts["request_start"],
-            right=self.traces[0].extended_facts["ttfb"],
+            left=self._analyze_results[0].extended_facts["request_start"],
+            right=self._analyze_results[0].extended_facts["ttfb"],
             y=height * 3 / 4,
             text=f"{resp_delay * 1000:.0f} ms",
         )
@@ -329,715 +701,408 @@ class PlotCli:
             text=f"{end_ts * 1000:.0f} ms",
         )
 
-    def plot_offset_number(self, output_file: Optional[Path]):
+    def plot_offset_number(self, fig, ax, spinner):
         """Plot the offset number diagram."""
-        with Subplot(nrows=1, ncols=1) as (fig, ax):
-            ax.grid(True)
-            ax.set_xlabel("Time (s)")
-            ax.set_ylabel("Offset")
-            assert self.title
-            ax.set_title(self.title)
-            ax.yaxis.set_major_formatter(
-                lambda val, _pos: naturalsize(val, binary=True)
+        ax.grid(True)
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Offset")
+        assert self.title
+        ax.set_title(self.title)
+        ax.yaxis.set_major_formatter(lambda val, _pos: naturalsize(val, binary=True))
+
+        # plot shadow traces (request and response separated)
+        min_offset: int = 0
+        max_offset: int = max(r.max_offset for r in self._analyze_results)
+
+        ax.set_xlim(
+            left=min(0, *(r.min_timestamp for r in self._analyze_results)),
+            right=max(r.max_timestamp for r in self._analyze_results),
+        )
+        ax.set_ylim(bottom=min_offset, top=max_offset)
+        ax.set_yticks(np.arange(0, max_offset * 1.1, 1024 * 1024))
+
+        for trace_timestamps, trace_offsets in zip(
+            (r.request_stream_packet_timestamps for r in self._analyze_results[1:]),
+            (r.request_offsets for r in self._analyze_results[1:]),
+        ):
+            ax.plot(
+                trace_timestamps,
+                trace_offsets,
+                marker="o",
+                linestyle="",
+                color=self._colors.aluminium4,
+                markersize=self._markersize,
             )
 
-            assert self.traces[0].pair_trace
-
-            with YaspinWrapper(
-                debug=self.debug, text="processing...", color="cyan"
-            ) as spinner:
-                request_offsets = list[list[int]]()
-                response_first_offsets = list[list[int]]()
-                response_retrans_offsets = list[list[int]]()
-                request_timestamps = list[list[float]]()
-                response_first_timestamps = list[list[float]]()
-                response_retrans_timestamps = list[list[float]]()
-                max_offsets = list[int]()
-
-                for trace in self.traces:
-
-                    request_offsets.append(list[int]())
-                    response_first_offsets.append(list[int]())
-                    response_retrans_offsets.append(list[int]())
-                    request_timestamps.append(list[float]())
-                    response_first_timestamps.append(list[float]())
-                    response_retrans_timestamps.append(list[float]())
-                    max_offsets.append(0)
-
-                    for layer in trace.request_stream_packets:
-                        offset = trace.get_stream_offset(layer)
-
-                        if offset is None:
-                            continue
-
-                        request_offsets[-1].append(offset)
-                        request_timestamps[-1].append(layer.norm_time)
-
-                        if offset > max_offsets[-1]:
-                            # assert that we transmit without overlapping
-                            max_offsets[-1] = offset + trace.get_stream_length(layer)
-
-                    for layer in trace.response_stream_packets_first_tx:
-                        offset = trace.get_stream_offset(layer)
-
-                        if offset is None:
-                            continue
-                        response_first_offsets[-1].append(offset)
-                        response_first_timestamps[-1].append(layer.norm_time)
-
-                        if offset > max_offsets[-1]:
-                            # assert that we transmit without overlapping
-                            max_offsets[-1] = offset + trace.get_stream_length(layer)
-
-                    for layer in trace.response_stream_packets_retrans:
-                        offset = trace.get_stream_offset(layer)
-
-                        if offset is None:
-                            continue
-                        response_retrans_offsets[-1].append(offset)
-                        response_retrans_timestamps[-1].append(layer.norm_time)
-                        # Do not calculate max_offsets in assertion that retransmitted packets are
-                        # not larger than previously transmitted packets
-
-                all_offsets = (
-                    *request_offsets,
-                    *response_first_offsets,
-                    *(lst for lst in response_retrans_offsets if lst),
-                )
-                min_offset: int = map2d(min, all_offsets)
-                max_offset: int = max(max_offsets)
-                all_timestamps = (
-                    *request_timestamps,
-                    *response_first_timestamps,
-                    *(lst for lst in response_retrans_timestamps if lst),
-                )
-                min_timestamp: float = map2d(min, all_timestamps)
-                max_timestamp: float = max(
-                    trace.extended_facts["plt"] for trace in self.traces
-                )
-
-                ax.set_xlim(left=min(0, min_timestamp), right=max_timestamp)
-                ax.set_ylim(bottom=min(0, min_offset), top=max_offset)
-                ax.set_yticks(np.arange(0, max_offset * 1.1, 1024 * 1024))
-
-            with YaspinWrapper(
-                debug=self.debug, text="plotting...", color="cyan"
-            ) as spinner:
-                # plot shadow traces (request and response separated)
-
-                for trace_timestamps, trace_offsets in zip(
-                    request_timestamps[1:], request_offsets[1:]
-                ):
-                    ax.plot(
-                        trace_timestamps,
-                        trace_offsets,
-                        marker="o",
-                        linestyle="",
-                        color=self._colors.aluminium4,
-                        markersize=self._markersize,
-                    )
-
-                for (
-                    trace_first_timestamps,
-                    trace_first_offsets,
-                    trace_retrans_timestamps,
-                    trace_retrans_offsets,
-                ) in zip(
-                    response_first_timestamps[1:],
-                    response_first_offsets[1:],
-                    response_retrans_timestamps[1:],
-                    response_retrans_offsets[1:],
-                ):
-                    ax.plot(
-                        (*trace_first_timestamps, *trace_retrans_timestamps),
-                        (*trace_first_offsets, *trace_retrans_offsets),
-                        marker="o",
-                        linestyle="",
-                        color=self._colors.aluminium4,
-                        markersize=self._markersize,
-                    )
-
-                # plot main trace (request and response separated)
-
-                ax.plot(
-                    request_timestamps[0],
-                    request_offsets[0],
-                    marker="o",
-                    linestyle="",
-                    color=self._colors.Chameleon,
-                    markersize=self._markersize,
-                )
-                ax.plot(
-                    response_first_timestamps[0],
-                    response_first_offsets[0],
-                    marker="o",
-                    linestyle="",
-                    color=self._colors.SkyBlue,
-                    markersize=self._markersize,
-                )
-                ax.plot(
-                    response_retrans_timestamps[0],
-                    response_retrans_offsets[0],
-                    marker="o",
-                    linestyle="",
-                    color=self._colors.Orange,
-                    markersize=self._markersize,
-                )
-
-                self._annotate_time_plot(ax, height=max_offset, spinner=spinner)
-                self._save(fig, output_file, spinner)
-
-    def plot_data_rate(self, output_file: Optional[Path]):
-        """Plot the data rate plot."""
-
-        with Subplot(nrows=1, ncols=1) as (fig, ax):
-            ax.grid(True)
-            ax.set_xlabel("Time (s)")
-            ax.set_ylabel("Data Rate")
-            assert self.title
-            ax.set_title(self.title)
-            ax.yaxis.set_major_formatter(lambda val, _pos: natural_data_rate(val))
-            DATA_RATE_WINDOW = 1  # 1s
-
-            with YaspinWrapper(
-                debug=self.debug, text="processing...", color="cyan"
-            ) as spinner:
-                timestamps = []
-                goodput_data_rates = list[list[float]]()
-                tx_data_rates = list[list[float]]()
-                min_timestamp: float = 0
-                max_timestamp: float = 0
-
-                @dataclass
-                class DataRateBufEntry:
-                    timestamp: float
-                    raw_data: int
-                    successful_stream_data: int
-
-                for trace in self.traces:
-
-                    goodput_data_rates.append(list[float]())
-                    tx_data_rates.append(list[float]())
-                    trace_max_timestamp = trace.extended_facts["plt"]
-                    trace_timestamps = np.arange(
-                        min_timestamp, trace_max_timestamp, 0.1
-                    )
-                    timestamps.append(trace_timestamps)
-                    max_timestamp = max(max_timestamp, trace_max_timestamp)
-
-                    data_rate_buf = deque[DataRateBufEntry]()
-
-                    assert trace.pair_trace
-                    with spinner.hidden():
-                        trace.pair_trace.parse()
-
-                    for packet in trace.server_client_packets:
-                        raw_data_len = len(packet.udp.payload.binary_value)
-                        # goodput
-                        right_packet = trace.get_pair_packet(packet)
-
-                        if not right_packet:
-                            stream_data_len = 0
-                        else:
-                            stream_data_len = trace.pair_trace.get_quic_payload_size(
-                                right_packet
-                            )
-
-                        # *8: convert from byte to bit
-                        data_rate_buf.append(
-                            DataRateBufEntry(
-                                timestamp=packet.norm_time,
-                                raw_data=raw_data_len * 8,
-                                successful_stream_data=stream_data_len * 8,
-                            )
-                        )
-
-                    # calculate data rates
-
-                    # marker_start is inclusive, marker_end is exclusive
-                    marker_start = marker_end = 0
-
-                    for timestamp in trace_timestamps:
-                        while data_rate_buf[marker_end].timestamp < timestamp:
-                            if marker_end == len(data_rate_buf) - 1:
-                                break
-                            marker_end += 1
-
-                        while (
-                            data_rate_buf[marker_start].timestamp
-                            < timestamp - DATA_RATE_WINDOW
-                        ):
-                            if marker_start == len(data_rate_buf) - 1:
-                                break
-                            marker_start += 1
-
-                        buf_slice = list(data_rate_buf)[marker_start:marker_end]
-                        tx_data_rates[-1].append(
-                            sum(entry.raw_data for entry in buf_slice)
-                            / DATA_RATE_WINDOW
-                        )
-                        goodput_data_rates[-1].append(
-                            sum(entry.successful_stream_data for entry in buf_slice)
-                            / DATA_RATE_WINDOW
-                        )
-
-                max_data_rate: float = map3d(max, (tx_data_rates, goodput_data_rates))
-
-                ax.set_xlim(left=min(0, min_timestamp), right=max_timestamp)
-                ax.set_ylim(bottom=0, top=max_data_rate)
-                #  ax.set_yticks(np.arange(0, max_offset * 1.1, 1024 * 1024))
-
-            with YaspinWrapper(
-                debug=self.debug, text="plotting...", color="cyan"
-            ) as spinner:
-                # plot shadow traces (request and response separated)
-
-                for trace_timestamps, trace_goodput in zip(
-                    timestamps[1:], goodput_data_rates[1:]
-                ):
-                    ax.plot(
-                        trace_timestamps,
-                        trace_goodput,
-                        #  marker="o",
-                        linestyle="--",
-                        color=self._colors.aluminium4,
-                        markersize=self._markersize,
-                    )
-
-                # plot main trace
-
-                ax.plot(
-                    timestamps[0],
-                    goodput_data_rates[0],
-                    label=r"Goodput (recv'd payload rate delayed by $\frac{-RTT}{2}$)",
-                    #  marker="o",
-                    linestyle="--",
-                    color=self._colors.orange1,
-                    markersize=self._markersize,
-                )
-                ax.plot(
-                    timestamps[0],
-                    tx_data_rates[0],
-                    label="Data Rate of Transmitted Packets",
-                    #  marker="o",
-                    linestyle="--",
-                    color=self._colors.orange3,
-                    markersize=self._markersize,
-                )
-                ax.legend(loc="upper left", fontsize=8)
-
-                self._annotate_time_plot(ax, height=max_data_rate, spinner=spinner)
-                self._save(fig, output_file, spinner)
-
-    def plot_return_path(self, output_file: Optional[Path]):
-        """Plot the return path utilization."""
-
-        with Subplot(nrows=1, ncols=1) as (fig, ax):
-            ax.grid(True)
-            ax.set_xlabel("Time (s)")
-            ax.set_ylabel("Data Rate (Return Path)")
-            assert self.title
-            ax.set_title(self.title)
-            ax.yaxis.set_major_formatter(lambda val, _pos: natural_data_rate(val))
-            DATA_RATE_WINDOW = 1  # 1s
-
-            with YaspinWrapper(
-                debug=self.debug, text="processing...", color="cyan"
-            ) as spinner:
-                timestamps = []
-                data_rates = list[list[float]]()
-                min_timestamp: float = 0
-                max_timestamp: float = 0
-
-                @dataclass
-                class DataRateBufEntry:
-                    timestamp: float
-                    raw_data: int
-
-                for trace in self.traces:
-                    data_rates.append(list[float]())
-                    trace_max_timestamp = trace.extended_facts["plt"]
-                    trace_timestamps = np.arange(
-                        min_timestamp, trace_max_timestamp, 0.1
-                    )
-                    timestamps.append(trace_timestamps)
-                    max_timestamp = max(max_timestamp, trace_max_timestamp)
-
-                    data_rate_buf = deque[DataRateBufEntry]()
-
-                    assert trace.pair_trace
-                    with spinner.hidden():
-                        trace.pair_trace.parse()
-
-                    for packet in trace.pair_trace.client_server_packets:
-                        raw_data_len = len(packet.udp.payload.binary_value)
-
-                        # *8: convert from byte to bit
-                        data_rate_buf.append(
-                            DataRateBufEntry(
-                                timestamp=packet.norm_time,
-                                raw_data=raw_data_len * 8,
-                            )
-                        )
-
-                    # calculate data rates
-
-                    # marker_start is inclusive, marker_end is exclusive
-                    marker_start = marker_end = 0
-
-                    for timestamp in trace_timestamps:
-                        while data_rate_buf[marker_end].timestamp < timestamp:
-                            if marker_end == len(data_rate_buf) - 1:
-                                break
-                            marker_end += 1
-
-                        while (
-                            data_rate_buf[marker_start].timestamp
-                            < timestamp - DATA_RATE_WINDOW
-                        ):
-                            if marker_start == len(data_rate_buf) - 1:
-                                break
-                            marker_start += 1
-
-                        buf_slice = list(data_rate_buf)[marker_start:marker_end]
-                        data_rates[-1].append(
-                            sum(entry.raw_data for entry in buf_slice)
-                            / DATA_RATE_WINDOW
-                        )
-
-                max_data_rate: float = map2d(max, data_rates)
-
-                ax.set_xlim(left=min(0, min_timestamp), right=max_timestamp)
-                ax.set_ylim(bottom=0, top=max_data_rate)
-                #  ax.set_yticks(np.arange(0, max_offset * 1.1, 1024 * 1024))
-
-            with YaspinWrapper(
-                debug=self.debug, text="plotting...", color="cyan"
-            ) as spinner:
-                # plot shadow traces (request and response separated)
-
-                for trace_timestamps, trace_goodput in zip(
-                    timestamps[1:], data_rates[1:]
-                ):
-                    ax.plot(
-                        trace_timestamps,
-                        trace_goodput,
-                        #  marker="o",
-                        linestyle="--",
-                        color=self._colors.aluminium4,
-                        markersize=self._markersize,
-                    )
-
-                # plot main trace
-
-                ax.plot(
-                    timestamps[0],
-                    data_rates[0],
-                    label=r"Data Rate in Return Path",
-                    #  marker="o",
-                    linestyle="--",
-                    color=self._colors.orange1,
-                    markersize=self._markersize,
-                )
-
-                self._annotate_time_plot(ax, height=max_data_rate, spinner=spinner)
-                self._save(fig, output_file, spinner)
-
-    def plot_packet_number(self, output_file: Optional[Path]):
-        """Plot the packet number diagram."""
-        with Subplot(nrows=1, ncols=1) as (fig, ax):
-            ax.grid(True)
-            ax.set_xlabel("Time (s)")
-            ax.set_ylabel("Packet Number")
-            assert self.title
-            ax.set_title(self.title)
-
-            with YaspinWrapper(
-                debug=self.debug, text="processing...", color="cyan"
-            ) as spinner:
-                request_timestamps = [
-                    [layer.norm_time for layer in trace.request_stream_packets]
-                    for trace in self.traces
-                ]
-                response_timestamps = [
-                    [layer.norm_time for layer in trace.response_stream_packets]
-                    for trace in self.traces
-                ]
-                request_packet_numbers = [
-                    [int(layer.packet_number) for layer in trace.request_stream_packets]
-                    for trace in self.traces
-                ]
-                response_packet_numbers = [
-                    [
-                        int(layer.packet_number)
-                        for layer in trace.response_stream_packets
-                    ]
-                    for trace in self.traces
-                ]
-                all_packet_numbers = [request_packet_numbers, response_packet_numbers]
-                min_packet_number: int = map3d(min, all_packet_numbers)
-                max_packet_number: int = map3d(max, all_packet_numbers)
-                all_timestamps = [request_timestamps, response_timestamps]
-                min_timestamp: float = map3d(min, all_timestamps)
-                max_timestamp: float = max(
-                    trace.extended_facts["plt"] for trace in self.traces
-                )
-
-                ax.set_xlim(left=min(0, min_timestamp), right=max_timestamp)
-                ax.set_ylim(bottom=min(0, min_packet_number), top=max_packet_number)
-
-            with YaspinWrapper(
-                debug=self.debug, text="plotting...", color="cyan"
-            ) as spinner:
-                # plot shadow traces (request and response separated)
-
-                for trace_timestamps, trace_packet_numbers in zip(
-                    request_timestamps[1:], request_packet_numbers[1:]
-                ):
-                    ax.plot(
-                        trace_timestamps,
-                        trace_packet_numbers,
-                        marker="o",
-                        linestyle="",
-                        color=self._colors.aluminium4,
-                        markersize=self._markersize,
-                    )
-
-                for trace_timestamps, trace_packet_numbers in zip(
-                    response_timestamps[1:], response_packet_numbers[1:]
-                ):
-                    ax.plot(
-                        trace_timestamps,
-                        trace_packet_numbers,
-                        marker="o",
-                        linestyle="",
-                        color=self._colors.aluminium4,
-                        markersize=self._markersize,
-                    )
-
-                # plot main trace (request and response separated)
-
-                ax.plot(
-                    request_timestamps[0],
-                    request_packet_numbers[0],
-                    marker="o",
-                    linestyle="",
-                    color=self._colors.Plum,
-                    markersize=self._markersize,
-                )
-                ax.plot(
-                    response_timestamps[0],
-                    response_packet_numbers[0],
-                    marker="o",
-                    linestyle="",
-                    color=self._colors.SkyBlue,
-                    markersize=self._markersize,
-                )
-
-                self._annotate_time_plot(ax, height=max_packet_number, spinner=spinner)
-                spinner.write(f"rtt: {self.traces[0].extended_facts.get('rtt')}")
-                self._save(fig, output_file, spinner)
-
-    def plot_file_size(self, output_file: Optional[Path]):
-        """Plot the file size diagram."""
-        with Subplot() as (fig, ax):
-            ax.grid(True)
-            ax.set_xlabel("Time (s)")
-            ax.set_ylabel("Transmitted File Size")
-            assert self.title
-            ax.set_title(self.title)
-            ax.yaxis.set_major_formatter(
-                lambda val, _pos: naturalsize(val, binary=True)
+        for (
+            trace_first_timestamps,
+            trace_first_offsets,
+            trace_retrans_timestamps,
+            trace_retrans_offsets,
+        ) in zip(
+            (
+                r.response_stream_layers_first_timestamps
+                for r in self._analyze_results[1:]
+            ),
+            (r.response_first_offsets for r in self._analyze_results[1:]),
+            (
+                r.response_stream_layers_retrans_timestamps
+                for r in self._analyze_results[1:]
+            ),
+            (r.response_retrans_offsets for r in self._analyze_results[1:]),
+        ):
+            ax.plot(
+                (*trace_first_timestamps, *trace_retrans_timestamps),
+                (*trace_first_offsets, *trace_retrans_offsets),
+                marker="o",
+                linestyle="",
+                color=self._colors.aluminium4,
+                markersize=self._markersize,
             )
 
-            with YaspinWrapper(
-                debug=self.debug, text="processing...", color="cyan"
-            ) as spinner:
-                # only response
-                timestamps = [
-                    np.array(
-                        [packet.norm_time for packet in trace.server_client_packets]
-                    )
-                    for trace in self.traces
-                ]
-                file_sizes = [
-                    np.array(
-                        [
-                            trace.get_quic_payload_size(packet)
-                            for packet in trace.server_client_packets
-                        ]
-                    )
-                    for trace in self.traces
-                ]
-                accumulated_transmitted_file_size = [
-                    np.cumsum(trace_file_sizes) for trace_file_sizes in file_sizes
-                ]
-                min_file_size: int = map2d(min, accumulated_transmitted_file_size)
-                max_file_size: int = map2d(max, accumulated_transmitted_file_size)
-                min_timestamp = map2d(min, timestamps)
-                max_timestamp = max(
-                    trace.extended_facts["plt"] for trace in self.traces
-                )
+        # plot main trace (request and response separated)
 
-                ax.set_xlim(left=min(0, min_timestamp), right=max_timestamp)
-                ax.set_ylim(bottom=min(0, min_file_size), top=max_file_size)
-                ax.set_yticks(np.arange(0, max_file_size * 1.1, 1024 * 1024))
-
-            with YaspinWrapper(
-                debug=self.debug, text="plotting...", color="cyan"
-            ) as spinner:
-                # plot shadow traces
-
-                for trace_timestamps, trace_file_sizes in zip(
-                    timestamps[1:], accumulated_transmitted_file_size[1:]
-                ):
-                    ax.plot(
-                        trace_timestamps,
-                        trace_file_sizes,
-                        marker="o",
-                        linestyle="",
-                        color=self._colors.aluminium4,
-                        markersize=self._markersize,
-                    )
-
-                # plot main trace
-
-                ax.plot(
-                    timestamps[0],
-                    accumulated_transmitted_file_size[0],
-                    marker="o",
-                    linestyle="",
-                    color=self._colors.SkyBlue,
-                    markersize=self._markersize,
-                )
-
-                self._annotate_time_plot(ax, height=max_file_size, spinner=spinner)
-                self._save(fig, output_file, spinner)
-
-    def _process_packet_sizes(self):
-        """Helper function."""
-        # only response
-        # only the first trace
-        packet_sizes = list[int]()
-        overhead_sizes = list[int]()
-        stream_data_sizes = list[int]()
-        timestamps = list[float]()
-        min_timestamp = float("inf")
-
-        for packet in self.traces[0].response_stream_packets:
-            packet_size = int(packet.packet_length)
-            packet_sizes.append(packet_size)
-            stream_data_size = self.traces[0].get_stream_length(packet)
-            stream_data_sizes.append(stream_data_size)
-            overhead_sizes.append(packet_size - stream_data_size)
-            timestamps.append(packet.norm_time)
-            min_timestamp = max(min_timestamp, packet.norm_time)
-
-        max_timestamp: float = self.traces[0].extended_facts["plt"]
-
-        packet_stats = Statistics.calc(packet_sizes)
-        overhead_stats = Statistics.calc(overhead_sizes)
-        stream_data_stats = Statistics.calc(stream_data_sizes)
-
-        return (
-            packet_sizes,
-            overhead_sizes,
-            stream_data_sizes,
-            timestamps,
-            max_timestamp,
-            min_timestamp,
-            packet_stats,
-            overhead_stats,
-            stream_data_stats,
+        ax.plot(
+            self._analyze_results[0].request_stream_packet_timestamps,
+            self._analyze_results[0].request_offsets,
+            marker="o",
+            linestyle="",
+            color=self._colors.Chameleon,
+            markersize=self._markersize,
+        )
+        ax.plot(
+            self._analyze_results[0].response_stream_layers_first_timestamps,
+            self._analyze_results[0].response_first_offsets,
+            marker="o",
+            linestyle="",
+            color=self._colors.SkyBlue,
+            markersize=self._markersize,
+        )
+        ax.plot(
+            self._analyze_results[0].response_stream_layers_retrans_timestamps,
+            self._analyze_results[0].response_retrans_offsets,
+            marker="o",
+            linestyle="",
+            color=self._colors.Orange,
+            markersize=self._markersize,
         )
 
-    def plot_packet_size(self, output_file: Optional[Path]):
-        """Plot the packet size diagram."""
-        with Subplot() as (fig, ax):
-            ax.grid(True)
-            ax.set_xlabel("Time (s)")
-            ax.set_ylabel("Packet Size")
-            assert self.title
-            ax.set_title(self.title)
-            ax.yaxis.set_major_formatter(
-                lambda val, _pos: naturalsize(val, binary=True)
+        self._annotate_time_plot(ax, height=max_offset, spinner=spinner)
+
+    def plot_data_rate(self, fig, ax, spinner):
+        """Plot the data rate plot."""
+
+        ax.grid(True)
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Data Rate")
+        assert self.title
+        ax.set_title(self.title)
+        ax.yaxis.set_major_formatter(lambda val, _pos: natural_data_rate(val))
+
+        max_forward_data_rate = max(
+            r.max_forward_data_rate for r in self._analyze_results
+        )
+
+        ax.set_xlim(
+            left=min(0, *(r.min_timestamp for r in self._analyze_results)),
+            right=max(r.max_timestamp for r in self._analyze_results),
+        )
+        ax.set_ylim(bottom=0, top=max_forward_data_rate)
+        #  ax.set_yticks(np.arange(0, max_offset * 1.1, 1024 * 1024))
+
+        # plot shadow traces (request and response separated)
+
+        for trace_timestamps, trace_goodput in zip(
+            (r.data_rate_timestamps for r in self._analyze_results[1:]),
+            (r.forward_goodput_data_rates for r in self._analyze_results[1:]),
+        ):
+            ax.plot(
+                trace_timestamps,
+                trace_goodput,
+                #  marker="o",
+                linestyle="--",
+                color=self._colors.aluminium4,
+                markersize=self._markersize,
             )
 
-            with YaspinWrapper(
-                debug=self.debug, text="processing...", color="cyan"
-            ) as spinner:
+        # plot main trace
+
+        ax.plot(
+            self._analyze_results[0].data_rate_timestamps,
+            self._analyze_results[0].forward_goodput_data_rates,
+            label=r"Goodput (recv'd payload rate delayed by $\frac{-RTT}{2}$)",
+            #  marker="o",
+            linestyle="--",
+            color=self._colors.orange1,
+            markersize=self._markersize,
+        )
+        ax.plot(
+            self._analyze_results[0].data_rate_timestamps,
+            self._analyze_results[0].forward_tx_data_rates,
+            label="Data Rate of Transmitted Packets",
+            #  marker="o",
+            linestyle="--",
+            color=self._colors.orange3,
+            markersize=self._markersize,
+        )
+        ax.legend(loc="upper left", fontsize=8)
+
+        self._annotate_time_plot(ax, height=max_forward_data_rate, spinner=spinner)
+
+    def plot_return_path(self, fig, ax, spinner):
+        """Plot the return path utilization."""
+
+        ax.grid(True)
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Data Rate (Return Path)")
+        assert self.title
+        ax.set_title(self.title)
+        ax.yaxis.set_major_formatter(lambda val, _pos: natural_data_rate(val))
+        ax.set_xlim(
+            left=min(0, *(r.min_timestamp for r in self._analyze_results)),
+            right=max(r.max_timestamp for r in self._analyze_results),
+        )
+        max_return_data_rate = max(
+            r.max_return_data_rate for r in self._analyze_results
+        )
+        ax.set_ylim(bottom=0, top=max_return_data_rate)
+        #  ax.set_yticks(np.arange(0, max_offset * 1.1, 1024 * 1024))
+
+        # plot shadow traces (request and response separated)
+
+        for trace_timestamps, trace_goodput in zip(
+            (r.data_rate_timestamps for r in self._analyze_results[1:]),
+            (r.return_data_rates for r in self._analyze_results[1:]),
+        ):
+            ax.plot(
+                trace_timestamps,
+                trace_goodput,
+                #  marker="o",
+                linestyle="--",
+                color=self._colors.aluminium4,
+                markersize=self._markersize,
+            )
+
+        # plot main trace
+
+        ax.plot(
+            self._analyze_results[0].data_rate_timestamps,
+            self._analyze_results[0].return_data_rates,
+            label=r"Data Rate in Return Path",
+            #  marker="o",
+            linestyle="--",
+            color=self._colors.orange1,
+            markersize=self._markersize,
+        )
+
+        self._annotate_time_plot(ax, height=max_return_data_rate, spinner=spinner)
+
+    def plot_packet_number(self, fig, ax, spinner):
+        """Plot the packet number diagram."""
+        ax.grid(True)
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Packet Number")
+        assert self.title
+        ax.set_title(self.title)
+
+        min_packet_number = min(r.min_packet_number for r in self._analyze_results)
+        max_packet_number = max(r.max_packet_number for r in self._analyze_results)
+
+        ax.set_xlim(
+            left=min(0, *(r.min_timestamp for r in self._analyze_results)),
+            right=max(r.max_timestamp for r in self._analyze_results),
+        )
+        ax.set_ylim(bottom=min(0, min_packet_number), top=max_packet_number)
+
+        # plot shadow traces (request and response separated)
+
+        for trace_timestamps, trace_packet_numbers in zip(
+            (r.request_stream_packet_timestamps for r in self._analyze_results[1:]),
+            (r.request_packet_numbers for r in self._analyze_results[1:]),
+        ):
+            ax.plot(
+                trace_timestamps,
+                trace_packet_numbers,
+                marker="o",
+                linestyle="",
+                color=self._colors.aluminium4,
+                markersize=self._markersize,
+            )
+
+        for trace_timestamps, trace_packet_numbers in zip(
+            (r.response_stream_packet_timestamps for r in self._analyze_results[1:]),
+            (r.response_packet_numbers for r in self._analyze_results[1:]),
+        ):
+            ax.plot(
+                trace_timestamps,
+                trace_packet_numbers,
+                marker="o",
+                linestyle="",
+                color=self._colors.aluminium4,
+                markersize=self._markersize,
+            )
+
+        # plot main trace (request and response separated)
+
+        ax.plot(
+            self._analyze_results[0].request_stream_packet_timestamps,
+            self._analyze_results[0].request_packet_numbers,
+            marker="o",
+            linestyle="",
+            color=self._colors.Plum,
+            markersize=self._markersize,
+        )
+        ax.plot(
+            self._analyze_results[0].response_stream_packet_timestamps,
+            self._analyze_results[0].response_packet_numbers,
+            marker="o",
+            linestyle="",
+            color=self._colors.SkyBlue,
+            markersize=self._markersize,
+        )
+
+        self._annotate_time_plot(ax, height=max_packet_number, spinner=spinner)
+        spinner.write(f"rtt: {self._analyze_results[0].extended_facts.get('rtt')}")
+
+    def plot_file_size(self, fig, ax, spinner):
+        """Plot the file size diagram."""
+
+        ax.grid(True)
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Transmitted File Size")
+        assert self.title
+        ax.set_title(self.title)
+        ax.yaxis.set_major_formatter(lambda val, _pos: naturalsize(val, binary=True))
+
+        min_response_acc_file_size = min(
+            r.min_response_acc_file_size for r in self._analyze_results
+        )
+        max_response_acc_file_size = max(
+            r.max_response_acc_file_size for r in self._analyze_results
+        )
+
+        ax.set_xlim(
+            left=min(0, *(r.min_timestamp for r in self._analyze_results)),
+            right=max(r.max_timestamp for r in self._analyze_results),
+        )
+        ax.set_ylim(
+            bottom=min(0, min_response_acc_file_size),
+            top=max_response_acc_file_size,
+        )
+        ax.set_yticks(np.arange(0, max_response_acc_file_size * 1.1, 1024 * 1024))
+
+        # plot shadow traces
+
+        for trace_timestamps, trace_file_sizes in zip(
+            (r.server_client_packet_timestamps for r in self._analyze_results[1:]),
+            (
+                r.response_accumulated_transmitted_file_sizes
+                for r in self._analyze_results[1:]
+            ),
+        ):
+            ax.plot(
+                trace_timestamps,
+                trace_file_sizes,
+                marker="o",
+                linestyle="",
+                color=self._colors.aluminium4,
+                markersize=self._markersize,
+            )
+
+        # plot main trace
+
+        ax.plot(
+            self._analyze_results[0].server_client_packet_timestamps,
+            self._analyze_results[0].response_accumulated_transmitted_file_sizes,
+            marker="o",
+            linestyle="",
+            color=self._colors.SkyBlue,
+            markersize=self._markersize,
+        )
+
+        self._annotate_time_plot(ax, height=max_response_acc_file_size, spinner=spinner)
+
+    def plot_packet_size(self, fig, ax, spinner):
+        """Plot the packet size diagram."""
+        ax.grid(True)
+        ax.set_xlabel("Time (s)")
+        ax.set_ylabel("Packet Size")
+        assert self.title
+        ax.set_title(self.title)
+        ax.yaxis.set_major_formatter(lambda val, _pos: naturalsize(val, binary=True))
+
+        min_timestamp = min(self._analyze_results[0].response_stream_packet_timestamps)
+        max_timestamp = max(self._analyze_results[0].response_stream_packet_timestamps)
+
+        ax.set_xlim(left=min(0, min_timestamp), right=max_timestamp)
+        #  ax.set_ylim(bottom=0, top=packet_stats.max)
+        #  ax.set_yticks(np.arange(0, packet_stats.max * 1.1, 1024))
+
+        # no shadow traces here
+        # plot main trace
+        ax.stackplot(
+            self._analyze_results[0].response_stream_packet_timestamps,
+            (
+                self._analyze_results[0].response_stream_data_sizes,
+                self._analyze_results[0].response_overhead_sizes,
+            ),
+            colors=(
+                self._colors.skyblue1,
+                self._colors.plum1,
+            ),
+            edgecolor=(
+                self._colors.skyblue3,
+                self._colors.plum3,
+            ),
+            labels=(
+                "Stream Data Size",
+                "Overhead Size",
+            ),
+            baseline="zero",
+            step="pre",
+        )
+        ax.legend(loc="upper left")
+
+        assert self._analyze_results[0].response_packet_stats
+        assert self._analyze_results[0].response_stream_data_stats
+        assert self._analyze_results[0].response_overhead_stats
+
+        ax.text(
+            0.95,
+            0.05,
+            "\n".join(
                 (
-                    _packet_sizes,
-                    overhead_sizes,
-                    stream_data_sizes,
-                    timestamps,
-                    max_timestamp,
-                    min_timestamp,
-                    packet_stats,
-                    overhead_stats,
-                    stream_data_stats,
-                ) = self._process_packet_sizes()
-
-                ax.set_xlim(left=min(0, min_timestamp), right=max_timestamp)
-                #  ax.set_ylim(bottom=0, top=packet_stats.max)
-                #  ax.set_yticks(np.arange(0, packet_stats.max * 1.1, 1024))
-
-            with YaspinWrapper(
-                debug=self.debug, text="plotting...", color="cyan"
-            ) as spinner:
-                # no shadow traces here
-                # plot main trace
-                ax.stackplot(
-                    timestamps,
-                    (
-                        stream_data_sizes,
-                        overhead_sizes,
+                    "Packet Statistics",
+                    self._analyze_results[0].response_packet_stats.mpl_label_short(
+                        naturalsize
                     ),
-                    colors=(
-                        self._colors.skyblue1,
-                        self._colors.plum1,
+                    "\n Stream Data Statistics",
+                    self._analyze_results[0].response_stream_data_stats.mpl_label_short(
+                        naturalsize
                     ),
-                    edgecolor=(
-                        self._colors.skyblue3,
-                        self._colors.plum3,
-                    ),
-                    labels=(
-                        "Stream Data Size",
-                        "Overhead Size",
-                    ),
-                    baseline="zero",
-                    step="pre",
-                )
-                ax.legend(loc="upper left")
-
-                ax.text(
-                    0.95,
-                    0.05,
-                    "\n".join(
-                        (
-                            "Packet Statistics",
-                            packet_stats.mpl_label_short(naturalsize),
-                            "\n Stream Data Statistics",
-                            stream_data_stats.mpl_label_short(naturalsize),
-                            "\n Overhead Statistics",
-                            overhead_stats.mpl_label_short(naturalsize),
-                        )
-                    ),
-                    transform=ax.transAxes,
-                    fontsize=12,
-                    verticalalignment="bottom",
-                    horizontalalignment="right",
-                    bbox=dict(
-                        boxstyle="round",
-                        facecolor=self._colors.chocolate1,
-                        edgecolor=self._colors.chocolate3,
-                        alpha=0.75,
+                    "\n Overhead Statistics",
+                    self._analyze_results[0].response_overhead_stats.mpl_label_short(
+                        naturalsize
                     ),
                 )
+            ),
+            transform=ax.transAxes,
+            fontsize=12,
+            verticalalignment="bottom",
+            horizontalalignment="right",
+            bbox=dict(
+                boxstyle="round",
+                facecolor=self._colors.chocolate1,
+                edgecolor=self._colors.chocolate3,
+                alpha=0.75,
+            ),
+        )
 
-                self._annotate_time_plot(ax, height=packet_stats.max, spinner=spinner)
-
-                self._save(fig, output_file, spinner)
+        self._annotate_time_plot(
+            ax,
+            height=self._analyze_results[0].response_packet_stats.max,
+            spinner=spinner,
+        )
 
     #  def plot_packet_hist(self, output_file: Optional[Path]):
     #      """Plot the packet size histogram."""
@@ -1158,7 +1223,7 @@ class PlotCli:
     #              for trace in self.traces:
     #                  trace.parse()
     #
-    #              request_timestamps = [
+    #              self._request_timestamps = [
     #                  [packet.norm_time for packet in trace.request_stream_packets]
     #                  for trace in self.traces
     #              ]
@@ -1187,13 +1252,13 @@ class PlotCli:
     #                  for trace in self.traces
     #              ]
     #              min_timestamp: float = map3d(
-    #                  min, [request_timestamps, response_timestamps]
+    #                  min, [self._request_timestamps, response_timestamps]
     #              )
     #              max_timestamp: float = max(
     #                  trace.extended_facts["plt"] for trace in self.traces
     #              )
     #
-    #              request_timestamps = list[list[float]]()
+    #              self._request_timestamps = list[list[float]]()
     #              response_timestamps = list[list[float]]()
     #              request_spin_bits = list[list[int]]()
     #              response_spin_bits = list[list[int]]()
@@ -1201,7 +1266,7 @@ class PlotCli:
     #              max_timestamp = -float("inf")
     #
     #              for trace in self.traces:
-    #                  request_timestamps.append(list[float]())
+    #                  self._request_timestamps.append(list[float]())
     #                  response_timestamps.append(list[float]())
     #                  request_spin_bits.append(list[int]())
     #                  response_spin_bits.append(list[int]())
@@ -1218,7 +1283,7 @@ class PlotCli:
     #
     #                      if packet_direction == Direction.TO_SERVER:
     #                          request_spin_bits[-1].append(spin_bit)
-    #                          request_timestamps[-1].append(timestamp)
+    #                          self._request_timestamps[-1].append(timestamp)
     #                      else:
     #                          response_spin_bits[-1].append(spin_bit)
     #                          response_timestamps[-1].append(timestamp)
@@ -1229,18 +1294,18 @@ class PlotCli:
     #              debug=self.debug, text="plotting...", color="cyan"
     #          ) as spinner:
     #              for (
-    #                  trace_request_timestamps,
+    #                  self._trace_request_timestamps,
     #                  trace_response_timestamps,
     #                  trace_request_spin_bits,
     #                  trace_response_spin_bits,
     #              ) in zip(
-    #                  request_timestamps[1:],
+    #                  self._request_timestamps[1:],
     #                  response_timestamps[1:],
     #                  request_spin_bits[1:],
     #                  response_spin_bits[1:],
     #              ):
     #                  ax.plot(
-    #                      (*trace_request_timestamps, *trace_response_timestamps),
+    #                      (*self._trace_request_timestamps, *trace_response_timestamps),
     #                      (*trace_request_spin_bits, *trace_response_spin_bits),
     #                      marker="o",
     #                      linestyle="",
@@ -1250,7 +1315,7 @@ class PlotCli:
     #
     #              # plot main trace (request and response separated)
     #              ax.plot(
-    #                  request_timestamps[0],
+    #                  self._request_timestamps[0],
     #                  request_spin_bits[0],
     #                  marker="o",
     #                  linestyle="",
@@ -1354,21 +1419,28 @@ class PlotCli:
         }
 
         cfg = mapping[self.mode]
-        single: Optional[bool] = cfg.get("single")
+        # single: Optional[bool] = cfg.get("single")
         callback = cfg["callback"]
         desc = DEFAULT_TITLES[self.mode]
-        num_traces = 1 if single else len(self.traces)
+        # num_traces = 1 if single else len(self.traces)
 
         # avoid lazy result parsing:
 
-        if single:
-            self.traces[0].parse()
-        else:
-            for trace in self.traces:
-                trace.parse()
+        # if single:
+        #     self.traces[0].parse()
+        # else:
+        # for trace in self.traces:
+        #     trace.parse()
+        self.analyze_traces()
 
-        cprint(f"⚒ Plotting {num_traces} traces into a {desc} plot...", color="cyan")
-        callback(self.output_file)
+        cprint(f"⚒ Plotting into a {desc} plot...", color="cyan")
+
+        with YaspinWrapper(
+            debug=self.debug, text="plotting...", color="cyan"
+        ) as spinner:
+            with Subplot() as (fig, ax):
+                callback(fig, ax, spinner)
+                self._save(fig, self.output_file, spinner)
 
 
 def main():
