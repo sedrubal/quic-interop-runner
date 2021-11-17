@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 
-import sys
+"""Script to compare two result.json files to see, if the results are (almost) the same."""
+
 import argparse
+import sys
 from functools import cached_property
 from pathlib import Path
 
-import requests
 from matplotlib import pyplot as plt
 from termcolor import colored, cprint
 
 from enums import TestResult
-from result_parser import Result
+from result_parser import MeasurementResultInfo, Result
 from utils import Subplot
 
 SAME_AVG_THRESH_PERC = 0.05
@@ -45,9 +46,9 @@ def parse_args():
         help="Result.",
     )
     parser.add_argument(
-        "measurement",
+        "test_abbr",
         type=str,
-        help="The measurement abbr to compare.",
+        help="The test / measurement abbr to compare.",
     )
 
     return parser.parse_args()
@@ -58,13 +59,13 @@ class CompareCli:
         self,
         result1: Result,
         result2: Result,
-        measurement: str,
+        test_abbr: str,
         plot=False,
         output=None,
     ):
         self.result1 = result1
         self.result2 = result2
-        self.measurement = measurement
+        self.test_abbr = test_abbr
         self.plot = plot
         self.output = output
         self._unit = ""
@@ -74,22 +75,26 @@ class CompareCli:
         """
         Compare 2 results.
         """
-        measurements1 = self.result1.get_all_measurements_of_type(self.measurement)
-        measurements2 = self.result2.get_all_measurements_of_type(self.measurement)
 
-        if not measurements1:
-            existing_meas_abbrs = ", ".join(
-                meas.abbr for meas in self.result1.measurement_descriptions.values()
+        results1 = self.result1.get_all_measurements_of_type(self.test_abbr)
+        results2 = self.result2.get_all_measurements_of_type(self.test_abbr)
+        if not results1 and not results2:
+            results1 = self.result1.get_all_tests_of_type(self.test_abbr)
+            results2 = self.result2.get_all_tests_of_type(self.test_abbr)
+
+        if not results1:
+            existing_test_abbrs = ", ".join(
+                meas.abbr for meas in self.result1.test_descriptions.values()
             )
             sys.exit(
-                f"Found no measurements of type {self.measurement} in first result. Existing measurements are {existing_meas_abbrs}"
+                f"Found no test results of type {self.test_abbr} in first result. Existing test abbreviations are {existing_test_abbrs}"
             )
-        if not measurements2:
-            existing_meas_abbrs = ", ".join(
-                meas.abbr for meas in self.result2.measurement_descriptions.values()
+        if not results2:
+            existing_test_abbrs = ", ".join(
+                meas.abbr for meas in self.result2.test_descriptions.values()
             )
             sys.exit(
-                f"Found no measurements of type {self.measurement} in second result. Existing measurements are {existing_meas_abbrs}"
+                f"Found no test results of type {self.test_abbr} in second result. Existing test abbreviations are {existing_test_abbrs}"
             )
 
         compare_result = {
@@ -97,6 +102,7 @@ class CompareCli:
             "missing in 2": list[str](),
             "failed in 1": list[str](),
             "failed in 2": list[str](),
+            "succeeded in both": list[str](),
             "same avg and var": list[tuple[str, float, float, float]](),
             "same avg different var": list[
                 tuple[str, tuple[float, float, float], tuple[float, float, float], bool]
@@ -110,16 +116,15 @@ class CompareCli:
             "tldr": "",
         }
 
-        lookup1 = {
-            meas_result.combination: meas_result for meas_result in measurements1
-        }
+        lookup1 = {meas_result.combination: meas_result for meas_result in results1}
         num_missing_or_failed = 0
         num_almost_equal = 0
         num_different_meas_results = 0
+        num_succeeded = 0
         avgs1 = list[float]()
         avgs2 = list[float]()
 
-        for meas_result2 in measurements2:
+        for meas_result2 in results2:
             combi: str = meas_result2.combination
             meas_result1 = lookup1.pop(combi, None)
 
@@ -136,74 +141,91 @@ class CompareCli:
                 compare_result["failed in 2"].append(combi)
                 num_missing_or_failed += 1
             elif meas_result1.succeeded and meas_result2.succeeded:
-                assert meas_result1.unit == meas_result2.unit
-                self._unit = meas_result1.unit
-                # compare avg
-                assert meas_result2.avg and meas_result1.avg
-                avg_dev = meas_result2.avg / meas_result1.avg - 1
-                same_avg = abs(avg_dev) < SAME_AVG_THRESH_PERC
-                high_avg_dev = abs(avg_dev) > HIGH_AVG_DEVIATION_PERC
-                # compare var
-                diff_var = meas_result1.var - meas_result2.var
-                var_dev = diff_var / meas_result1.avg
-                same_var = abs(var_dev) < SAME_VAR_THRESH_PERC
-                high_var_dev = abs(var_dev) > HIGH_VAR_DEVIATION_PERC
-                data: tuple[
-                    str, tuple[float, float, float], tuple[float, float, float], bool
-                ] = (
-                    combi,
-                    (meas_result1.avg, meas_result2.avg, avg_dev),
-                    (meas_result1.var, meas_result2.var, var_dev),
-                    high_avg_dev or high_var_dev,
-                )
+                num_succeeded += 1
+                compare_result["succeeded in both"].append(combi)
+                if isinstance(meas_result1, MeasurementResultInfo) and isinstance(
+                    meas_result2, MeasurementResultInfo
+                ):
+                    assert meas_result1.unit == meas_result2.unit
+                    self._unit = meas_result1.unit
+                    # compare avg
+                    assert meas_result2.avg and meas_result1.avg
+                    avg_dev = meas_result2.avg / meas_result1.avg - 1
+                    same_avg = abs(avg_dev) < SAME_AVG_THRESH_PERC
+                    high_avg_dev = abs(avg_dev) > HIGH_AVG_DEVIATION_PERC
+                    # compare var
+                    diff_var = meas_result1.var - meas_result2.var
+                    var_dev = diff_var / meas_result1.avg
+                    same_var = abs(var_dev) < SAME_VAR_THRESH_PERC
+                    high_var_dev = abs(var_dev) > HIGH_VAR_DEVIATION_PERC
+                    data: tuple[
+                        str,
+                        tuple[float, float, float],
+                        tuple[float, float, float],
+                        bool,
+                    ] = (
+                        combi,
+                        (meas_result1.avg, meas_result2.avg, avg_dev),
+                        (meas_result1.var, meas_result2.var, var_dev),
+                        high_avg_dev or high_var_dev,
+                    )
 
-                if same_avg and same_var:
-                    key = "same avg and var"
-                    num_almost_equal += 1
-                elif same_avg and not same_var:
-                    key = "same avg different var"
-                    num_different_meas_results += 1
-                elif not same_avg and same_var:
-                    key = "different avg same var"
-                    num_different_meas_results += 1
-                else:
-                    key = "different avg and var"
-                    num_different_meas_results += 1
-                compare_result[key].append(data)
-                avgs1.append(meas_result1.avg)
-                avgs2.append(meas_result2.avg)
+                    if same_avg and same_var:
+                        key = "same avg and var"
+                        num_almost_equal += 1
+                    elif same_avg and not same_var:
+                        key = "same avg different var"
+                        num_different_meas_results += 1
+                    elif not same_avg and same_var:
+                        key = "different avg same var"
+                        num_different_meas_results += 1
+                    else:
+                        key = "different avg and var"
+                        num_different_meas_results += 1
+                    compare_result[key].append(data)
+                    avgs1.append(meas_result1.avg)
+                    avgs2.append(meas_result2.avg)
 
         compare_result["missing in 2"].extend(
             meas_result1.combination for meas_result1 in lookup1.values()
         )
         num_missing_or_failed += len(lookup1)
 
-        compare_result["tldr"] = "\n".join(
-            (
-                "There are "
-                + colored(
-                    f"{num_missing_or_failed or 'no'} missing or failing results",
-                    color="red",
-                )
-                + " in either of the two result files.",
-                colored(
-                    f"{num_almost_equal} have (almost) equal results.",
-                    color="green",
-                ),
-                colored(
-                    f"{num_different_meas_results} have different results.",
-                    color="yellow",
-                ),
-                colored(
-                    f"The average of the average values of result1 is {sum(avgs1) / len(avgs1):.0f}.",
-                    color="cyan",
-                ),
-                colored(
-                    f"The average of the average values of result2 is {sum(avgs2) / len(avgs2):.0f}.",
-                    color="cyan",
-                ),
+        tldr_lines = [
+            "There are "
+            + colored(
+                f"{num_missing_or_failed or 'no'} missing or failing results",
+                color="red",
             )
-        )
+            + " in either of the two result files.",
+            colored(f"{num_succeeded or 'No'} succeeded", color="green")
+            + " in both results.",
+        ]
+
+        if avgs1 and avgs2:
+            # measurement
+            tldr_lines.extend(
+                [
+                    colored(
+                        f"{num_almost_equal} have (almost) equal results.",
+                        color="green",
+                    ),
+                    colored(
+                        f"{num_different_meas_results} have different results.",
+                        color="yellow",
+                    ),
+                    colored(
+                        f"The average of the average values of result1 is {sum(avgs1) / len(avgs1):.0f}.",
+                        color="cyan",
+                    ),
+                    colored(
+                        f"The average of the average values of result2 is {sum(avgs2) / len(avgs2):.0f}.",
+                        color="cyan",
+                    ),
+                ]
+            )
+
+        compare_result["tldr"] = "\n".join(tldr_lines)
 
         return compare_result
 
@@ -212,20 +234,24 @@ class CompareCli:
         Pretty print it.
         """
 
-        def error_helper(prop: str):
+        def short_helper(prop: str, color: str = "red"):
             lst = self.result_comparison[prop]
-            cprint(f"{prop} ({len(lst)}):", color="red", attrs=["bold"])
+            cprint(f"{prop} ({len(lst)}):", color=color, attrs=["bold"])
 
-            for entry in lst:
-                cprint(f"  - {entry}", color="red")
+            for entry in sorted(lst):
+                cprint(f"  - {entry}", color=color)
 
             print()
 
         def detailed_helper(prop: str, color: str):
-            lst = self.result_comparison[prop]
+            lst = self.result_comparison.get(prop)
+            if not lst:
+                # it is a test and not a measurement
+                return
+
             cprint(f"{prop} ({len(lst)}):", color=color, attrs=["bold"])
 
-            for entry in lst:
+            for entry in sorted(lst):
                 cprint(
                     f"  - {entry[0]}\t ({entry[1][0]} / {entry[1][1]} ± {entry[2][0]} / {entry[2][1]} | deviation: {entry[1][2] * 100:.0f} % ± {entry[2][2] * 100:.0f} %)",
                     color=color,
@@ -234,10 +260,11 @@ class CompareCli:
 
             print()
 
-        error_helper("missing in 1")
-        error_helper("missing in 2")
-        error_helper("failed in 1")
-        error_helper("failed in 2")
+        short_helper("missing in 1")
+        short_helper("missing in 2")
+        short_helper("failed in 1")
+        short_helper("failed in 2")
+        short_helper("succeeded in both", color="green")
         detailed_helper("different avg and var", color="yellow")
         detailed_helper("different avg same var", color="yellow")
         detailed_helper("same avg different var", color="green")
@@ -288,7 +315,7 @@ class CompareCli:
         with Subplot() as (fig, ax):
             ax.set_ylabel("Average Data Rate of Implementation Combination")
             ax.set_title(
-                f"Comparison of Results of Measurement {self.measurement}"
+                f"Comparison of Results of Measurement {self.test_abbr}"
                 f"\n({len(avgs1)} combinations)"
             )
             ax.yaxis.set_major_formatter(lambda val, _pos: f"{int(val)} {self._unit}")
@@ -320,7 +347,7 @@ def main():
     cli = CompareCli(
         result1=args.result1,
         result2=args.result2,
-        measurement=args.measurement,
+        test_abbr=args.test_abbr,
         plot=args.plot,
         output=args.output,
     )
