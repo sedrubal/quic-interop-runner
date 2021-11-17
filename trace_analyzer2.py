@@ -784,10 +784,16 @@ class Trace:
 
         # calculate times
         rtt = self._get_rtt()
-        req_start = self._request_stream_packets[0].norm_time - rtt / 2
-        ttfb = self._response_stream_packets[0].norm_time + rtt / 2
-        pglt = self._response_stream_packets[-1].norm_time + rtt / 2
-        resp_delay = ttfb - req_start
+        if rtt is None:
+            req_start = None
+            ttfb = None
+            pglt = None
+            resp_delay = None
+        else:
+            req_start = self._request_stream_packets[0].norm_time - rtt / 2
+            ttfb = self._response_stream_packets[0].norm_time + rtt / 2
+            pglt = self._response_stream_packets[-1].norm_time + rtt / 2
+            resp_delay = ttfb - req_start
 
         facts["request_start"] = req_start
         facts["ttfb"] = ttfb
@@ -800,15 +806,20 @@ class Trace:
 
         return self._extended_facts
 
-    def _get_rtt(self) -> float:
+    def _get_rtt(self) -> Optional[float]:
         def calc_rtt(
             direction: Direction, left_trace: "Trace", right_trace: "Trace"
-        ) -> float:
+        ) -> Optional[float]:
+            # a packet in direction ``direction`` from the right trace
             last_in_dir_packet_right: Optional["Packet"] = None
+            # a packet in direction ``direction`` from the left trace
             last_in_dir_packet_left: Optional["Packet"] = None
+            # the first packet in the other direction after the last packet in the direction from the right trace
             first_opp_dir_packet_right: Optional["Packet"] = None
+            # the first packet in the other direction after the last packet in the direction from the left trace
             first_opp_dir_packet_left: Optional["Packet"] = None
 
+            # search for packets
             for packet in right_trace.packets:
                 if packet.direction == direction:
                     last_in_dir_packet_left = left_trace.get_packet_by_fpr(
@@ -817,6 +828,24 @@ class Trace:
 
                     if not last_in_dir_packet_left:
                         # maybe the packet never arrived on left side -> search for a new one
+                        last_in_dir_packet_left = None
+                        last_in_dir_packet_right = None
+                        first_opp_dir_packet_left = None
+                        first_opp_dir_packet_right = None
+                        continue
+
+                    elif (
+                        direction == Direction.TO_SERVER
+                        and last_in_dir_packet_left.norm_time > packet.norm_time
+                    ) or (
+                        direction == Direction.TO_CLIENT
+                        and last_in_dir_packet_left.norm_time < packet.norm_time
+                    ):
+                        # this should not happen
+                        last_in_dir_packet_left = None
+                        last_in_dir_packet_right = None
+                        first_opp_dir_packet_left = None
+                        first_opp_dir_packet_right = None
 
                         continue
 
@@ -830,6 +859,24 @@ class Trace:
 
                     if not first_opp_dir_packet_left:
                         # maybe the packet never arrived on left side -> search for a new one
+                        last_in_dir_packet_left = None
+                        last_in_dir_packet_right = None
+                        first_opp_dir_packet_left = None
+                        first_opp_dir_packet_right = None
+                        continue
+
+                    elif (
+                        direction == Direction.TO_SERVER
+                        and first_opp_dir_packet_left.norm_time < packet.norm_time
+                    ) or (
+                        direction == Direction.TO_CLIENT
+                        and first_opp_dir_packet_left.norm_time > packet.norm_time
+                    ):
+                        # tihs should not happen...
+                        last_in_dir_packet_left = None
+                        last_in_dir_packet_right = None
+                        first_opp_dir_packet_left = None
+                        first_opp_dir_packet_right = None
 
                         continue
 
@@ -844,9 +891,17 @@ class Trace:
                     and first_opp_dir_packet_right
                     and first_opp_dir_packet_left
                 ):
+                    # we found all packets we need
                     break
 
-            assert first_opp_dir_packet_right and last_in_dir_packet_right
+            if not first_opp_dir_packet_right or not last_in_dir_packet_right:
+                # we did not find the packets
+                LOGGER.warning(
+                    "No suitable packets found for RTT calculation."
+                    "Maybe normalization of capture time failed or clock drift in left and right trace is too large."
+                )
+                return None
+
             assert (
                 first_opp_dir_packet_right.norm_time
                 > last_in_dir_packet_right.norm_time
@@ -905,11 +960,19 @@ class Trace:
 
         rtt_ret = calc_rtt(Direction.TO_SERVER, left_trace, right_trace)
         rtt_fwd = calc_rtt(Direction.TO_CLIENT, left_trace, right_trace)
-        assert (
-            abs(rtt_fwd / rtt_ret - 1) <= 0.02 or abs(rtt_fwd - rtt_ret) <= 0.005
-        ), f"RTTs vary by more than 2 % or 5ms: {rtt_fwd * 1000:.1f} ms vs. {rtt_ret * 1000:.1f} ms"
 
-        return (rtt_fwd + rtt_ret) / 2
+        if rtt_fwd is not None and rtt_ret is not None:
+            assert (
+                abs(rtt_fwd / rtt_ret - 1) <= 0.02 or abs(rtt_fwd - rtt_ret) <= 0.005
+            ), f"RTTs vary by more than 2 % or 5ms: {rtt_fwd * 1000:.1f} ms vs. {rtt_ret * 1000:.1f} ms"
+
+            return (rtt_fwd + rtt_ret) / 2
+        elif rtt_ret is not None:
+            return rtt_ret
+        elif rtt_fwd is not None:
+            return rtt_fwd
+        elif rtt_ret is None and rtt_fwd is None:
+            return None
 
     def iter_stream_packets(self, packet: "Packet") -> Iterator[QuicStreamPacket]:
         for quic_packet in packet.get_multiple_layers("quic"):
