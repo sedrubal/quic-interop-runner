@@ -273,12 +273,30 @@ class Deployment:
         self._docker_clis = dict[str, docker.DockerClient]()
         self._stage_status_cv = threading.Condition()
         self.docker_host_urls = CONFIG.docker_host_urls
+        self._remote_server_ips = defaultdict[str, dict[str, IPAddress]](
+            dict[str, IPAddress]
+        )
 
     def get_docker_cli(self, name="default"):
         if name not in self._docker_clis.keys():
             self._docker_clis[name] = docker.DockerClient(self.docker_host_urls[name])
 
         return self._docker_clis[name]
+
+    def get_remote_server_ip(
+        self, client_host: str, server_host: str, server_port: int = 443
+    ) -> IPAddress:
+        """
+        Determine the IP address we want to use, when the ``client_host`` wants to connect to ``server_host``.
+        """
+
+        if not self._remote_server_ips[server_host].get(client_host):
+            server_cli = self.get_docker_cli(server_host)
+            client_cli = self.get_docker_cli(client_host)
+            server_ip = negotiate_server_ip(server_cli, client_cli, port=server_port)
+            self._remote_server_ips[server_host][client_host] = server_ip
+
+        return self._remote_server_ips[server_host][client_host]
 
     def run_and_wait(
         self,
@@ -800,6 +818,7 @@ class Deployment:
             tmp.result()
             pcap_file = log_path / "sim" / "trace_node_right.pcap"
             pcap_ns3_file = log_path / "sim" / "trace_node_right_ns3.pcap"
+
             if pcap_file.is_file():
                 shutil.move(pcap_file, pcap_ns3_file)
 
@@ -839,7 +858,11 @@ class Deployment:
 
         self._remove_existing_container(f"{self.project_name}_server", server_cli)
         server_port = 443
-        server_ip = negotiate_server_ip(server_cli, client_cli, port=server_port)
+        server_ip = self.get_remote_server_ip(
+            server_host=testcase.server_docker_host,
+            client_host=testcase.client_docker_host,
+            server_port=server_port,
+        )
         server_ip4 = server_ip if server_ip.version == 4 else None
         server_ip6 = server_ip if server_ip.version == 6 else None
         LOGGER.debug(
@@ -986,6 +1009,8 @@ class Deployment:
             )
 
         remove_containers(containers)
+        client_cli.close()
+        server_cli.close()
 
         return result
 
