@@ -4,6 +4,9 @@ body.loading .navbar-nav .duration,
 body.loading .navbar-nav .end-time {
   opacity: 0.3;
 }
+body.loading {
+  cursor: wait;
+}
 
 .btn-xs {
   margin: 0 .1rem .1rem 0;
@@ -30,4 +33,27 @@ body.loading .navbar-nav .end-time {
 tr.hover-xy > th, th.hover-xy {
   background-color: #cfd9db;
   color: #e74c3c;
+}
+
+#about {
+  background-image: url("/satellite-gs.svg");
+  background-repeat: no-repeat;
+  background-position: bottom right;
+  background-size: 10rem;
+}
+
+.calc-rating {
+  --rating-red: calc(24 + 207 * (1 - var(--rating)));
+  --rating-green: calc(76 + 112 * var(--rating));
+  --rating-blue: calc(60 + 96 * var(--rating));
+  --rating-color: rgb(var(--rating-red), var(--rating-green), var(--rating-blue));
+}
+.calc-rating.btn-rating {
+  background-color: var(--rating-color);
+  border-color: var(--rating-color);
+  color: #fff;
+}
+.calc-rating.rating-color {
+  color: var(--rating-color);
+  filter: brightness(1.2) saturate(5);
 }

@@ -2,6 +2,12 @@
 
 (function() {
   "use strict";
+  // const LOGS_BASE_URL = "https://f000.backblazeb2.com/file/quic-interop-runner-sat/";
+  // const LOGS_BASE_URL = "https://interop.sedrubal.de/";
+  const LOGS_BASE_URL = window.location.href.split('?')[0];
+  // const INDEX = "index.html";
+  const INDEX = "";
+  const QVIS_BASE_URL = "https://qvis.quictools.info/";
   const map = { client: {}, server: {}, test: {} };
   const color_type = { succeeded: "success", unsupported: "secondary disabled", failed: "danger"};
 
@@ -14,31 +20,70 @@
     ].join(":").replace(/\b(\d)\b/g, "0$1");
   }
 
-  function getLogLink(log_dir, server, client, test, text, res) {
-    var ttip = "<b>Test:</b> " + test + "<br>" +
-               "<b>Client:</b> " + client + "<br>" +
-               "<b>Server:</b> " + server + "<br>" +
-               "<b>Result: <span class=\"text-" + color_type[res] + "\">" + res + "</span></b>";
+  function getLogLink(type, log_dir, server, client, test_result, test_desc) {
+    var ttip = `
+      <b>Test:</b> ${test_desc.name}<br/>
+      <b>Client:</b> ${client}<br/>
+      <b>Server:</b> ${server}<br/>
+      <b>Result: <span class="badge badge-${color_type[test_result.result]}">${test_result.result}</span></b>
+    `;
 
-    var a = document.createElement("a");
-    a.className = "btn btn-xs btn-" + color_type[res] + " " + res + " test-" + text.toLowerCase();
-    var ttip_target = a;
-    if (res !== "unsupported") {
-      a.href = "logs/" + log_dir + "/" + server + "_" + client + "/" + test;
-      a.target = "_blank";
-      ttip += "<br><br>(Click for logs.)";
-    } else {
-      var s = document.createElement("span");
-      s.className = "d-inline-block";
-      s.tabIndex = 0;
-      a.style = "pointer-events: none;";
-      s.appendChild(a);
-      ttip_target = s;
+    var btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = `btn btn-xs btn-${color_type[test_result.result]} ${test_result.result} test-${test_result.abbr.toLowerCase()}`;
+    if (type === "measurement" && test_result.result === "succeeded") {
+      try {
+        const rating = Number.parseInt(test_result.details.split(" ")[0]) / test_desc.theoretical_max_value;
+        const adaptedRating = Math.min(1, rating * 2);
+
+        ttip += `<br/><b>Efficiency:</b> <span class="badge badge-dark calc-rating rating-color" style="--rating: ${adaptedRating};">${(rating * 100).toFixed(0)} %</span>`;
+
+        btn.style.setProperty("--rating", adaptedRating);
+        btn.className += " calc-rating btn-rating"
+      } catch (e) {
+        console.error("Measurement details did not parse:", test_result.details);
+      }
     }
-    ttip_target.title = ttip;
-    $(ttip_target).attr("data-toggle", "tooltip").attr("data-placement", "bottom").attr("data-html", true).tooltip();
-    $(ttip_target).click(function() { $(this).blur(); });
-    a.appendChild(document.createTextNode(text));
+    var ttip_target = btn;
+    if (test_result.result !== "unsupported") {
+      const log_url = `${LOGS_BASE_URL}logs/${log_dir}/${server}_${client}/${test_desc.name}/${INDEX}`;
+      btn.href = log_url;
+      btn.target = "_blank"
+      // popover
+      ttip += `<p><div class="btn-group-vertical w-100">
+        <a class="btn btn-sm btn-secondary" href="${log_url}" target="_blank">Open Logs</a>`;
+      // if (test_result.result == "succeeded") {
+      //   if (type == "testcase") {
+      //     const qlog_server_url = `${LOGS_BASE_URL}logs/${log_dir}/${server}_${client}/${test_desc.name}/server.qlog`;
+      //     const qlog_client_url = `${LOGS_BASE_URL}logs/${log_dir}/${server}_${client}/${test_desc.name}/client.qlog`;
+      //     const qvis_url = `${QVIS_BASE_URL}#/files?list=${LOGS_BASE_URL}logs/${log_dir}/${server}_${client}/${test_desc.name}/server.qlog`;
+      //     ttip += `<a class="btn btn-sm btn-outline-secondary" href="${qvis_url}" target="_blank">Open qlog in qvis*</a>`;
+      //   } else {
+      //     for (let i = 1, len = test_desc.repetitions || 1; i <= len; i++) {
+      //       const qlog_server_url = `${LOGS_BASE_URL}logs/${log_dir}/${server}_${client}/${test_desc.name}/${i}/server.qlog`;
+      //       const qlog_client_url = `${LOGS_BASE_URL}logs/${log_dir}/${server}_${client}/${test_desc.name}/${i}/client.qlog`;
+      //       const qvis_url = `${QVIS_BASE_URL}#?file1=${qlog_server_url}&file2=${qlog_client_url}`;
+      //       ttip += `<a class="btn btn-sm btn-outline-secondary" href="${qvis_url}" target="_blank">Open qlog #${i} in qvis*</a>`;
+      //     }
+      //   }
+      // }
+      ttip += `</div></p>`;
+      // if (test_result.result == "succeeded") {
+      //   ttip += '<small><i class="text-muted">*qlog files may not exist</i></small>';
+      // }
+    }
+    $(ttip_target)
+      .attr("data-toggle", "popover")
+      .attr("data-placement", "bottom")
+      .attr("data-trigger", "click")
+      .attr("data-content", ttip)
+      .attr("data-html", true)
+      .popover({sanitize: false})
+      .on('show.bs.popover', function(evt) {
+        // close all other popovers
+        $("[data-toggle=popover]").not(this).popover("hide");
+      });
+    btn.appendChild(document.createTextNode(test_result.abbr));
     return ttip_target;
   }
 
@@ -89,12 +134,21 @@
     return row;
   }
 
-  function fillInteropTable(result) {
+  function fillInteropTable(result, log_dir) {
     var index = 0;
     var appendResult = function(el, res, i, j) {
-      result.results[index].forEach(function(item) {
-        if(item.result !== res) return;
-        el.appendChild(getLogLink(result.log_dir, result.servers[j], result.clients[i], item.name, item.abbr, res));
+      result.results[index].forEach(function(test_result) {
+        if(test_result.result !== res) return;
+        el.appendChild(
+          getLogLink(
+            "testcase",
+            log_dir,
+            result.servers[j],
+            result.clients[i],
+            test_result,
+            result.tests[test_result.abbr],
+          )
+        );
       });
     };
 
@@ -106,7 +160,7 @@
       var row = makeRowHeader(tbody, result, i);
       for(var j = 0; j < result.servers.length; j++) {
         var cell = row.insertCell(j+1);
-        cell.className = "server-" + result.servers[j] + " client-" + result.clients[i];
+        cell.className = `server-${result.servers[j]} client-${result.clients[i]}`;
         appendResult(cell, "succeeded", i, j);
         appendResult(cell, "unsupported", i, j);
         appendResult(cell, "failed", i, j);
@@ -115,7 +169,7 @@
     }
   }
 
-  function fillMeasurementTable(result) {
+  function fillMeasurementTable(result, log_dir) {
     var t = document.getElementById("measurements");
     t.innerHTML = "";
     makeColumnHeaders(t, result);
@@ -123,20 +177,129 @@
     var index = 0;
     for(var i = 0; i < result.clients.length; i++) {
       var row = makeRowHeader(tbody, result, i);
+      row.className = `row-${result.clients[i]}`;
       for(var j = 0; j < result.servers.length; j++) {
         var res = result.measurements[index];
         var cell = row.insertCell(j+1);
-        cell.className = "server-" + result.servers[j] + " client-" + result.clients[i];
-        for(var k = 0; k < res.length; k++) {
-          var measurement = res[k];
-          var link = getLogLink(result.log_dir, result.servers[j], result.clients[i], measurement.name, measurement.abbr, measurement.result);
-          if (measurement.result === "succeeded")
-              link.innerHTML += ": " + measurement.details;
-          cell.appendChild(link);
-        }
+        cell.className = `server-${result.servers[j]} client-${result.clients[i]}`;
+        const btnGroup = document.createElement('div');
+        btnGroup.className = "btn-group-vertical";
+        cell.appendChild(btnGroup);
+        res.sort((a, b) => a['abbr'] < b['abbr'] ? -1 : a['abbr'] > b['abbr'] ? 1 : 0).forEach((meas_result) => {
+          const measurement = result.tests[meas_result.abbr];
+          if (!meas_result.result) {
+            return;
+          }
+          var link = getLogLink(
+            "measurement",
+            log_dir,
+            result.servers[j],
+            result.clients[i],
+            meas_result,
+            measurement,
+          );
+          if (meas_result.result === "succeeded") {
+            link.innerHTML += ": " + meas_result.details;
+          }
+          btnGroup.appendChild(link);
+        });
         index++;
       }
     }
+    // add efficiency row and col
+    // collect efficiencies
+    var effsByCombi = result.servers.map(() => result.clients.map(() => null));
+    for (var c = 0; c < result.clients.length; c++) {
+      for (var s = 0; s < result.servers.length; s++) {
+        var measResults = result.measurements[c * result.servers.length + s];
+        var effsForCombi = {}
+        measResults.forEach((measResult) => {
+          if (measResult.result == "succeeded") {
+            const eff = Number.parseInt(measResult.details.split(" ")[0]) / result.tests[measResult.abbr].theoretical_max_value;
+            effsForCombi[measResult.abbr] = eff;
+          } else {
+            effsForCombi[measResult.abbr] = null;
+          }
+        });
+        effsByCombi[s][c] = effsForCombi;
+      }
+    }
+
+    // create html elements
+
+    // calculate avg effs for servers
+    const effRow = document.createElement("tr");
+    effRow.className = "eff-row";
+    tbody.appendChild(effRow);
+    var cell = document.createElement("th");
+    cell.scope = "row";
+    cell.className = "table-light eff-title";
+    cell.innerHTML = "Efficiency";
+    effRow.appendChild(cell);
+
+    for (var s = 0; s < result.servers.length; s++) {
+      var serverEffsByMeas = {};
+      for (var c = 0; c < result.clients.length; c++) {
+        const effForCombi = effsByCombi[s][c];
+        Object.entries(effForCombi).forEach(([abbr, eff]) => {
+          const serverEffsForMeas = serverEffsByMeas[abbr] || [];
+          serverEffsForMeas.push(eff);
+          serverEffsByMeas[abbr] = serverEffsForMeas;
+        });
+      }
+      var cell = createEffCell(serverEffsByMeas, `server-${result.servers[s]}`)
+      effRow.appendChild(cell);
+    }
+    // add right lower cell
+    cell = document.createElement("th");
+    cell.className = "table-light eff-title";
+    effRow.appendChild(cell);
+
+    // calculate avg effs for clients
+    cell = document.createElement("th");
+    cell.scope = "col";
+    cell.className = "table-light eff-title";
+    cell.innerHTML = "Efficiency";
+    t.tHead.querySelector('tr').appendChild(cell);
+
+    for (var c = 0; c < result.clients.length; c++) {
+      var clientEffsByMeas = {};
+      for (var s = 0; s < result.servers.length; s++) {
+        const effForCombi = effsByCombi[s][c];
+        Object.entries(effForCombi).forEach(([abbr, eff]) => {
+          const clientEffsForMeas = clientEffsByMeas[abbr] || [];
+          clientEffsForMeas.push(eff);
+          clientEffsByMeas[abbr] = clientEffsForMeas;
+        });
+      }
+      var cell = createEffCell(clientEffsByMeas, `client-${result.clients[c]}`)
+      tbody.querySelector(`.row-${result.clients[c]}`).appendChild(cell);
+    }
+  }
+
+  function createEffCell(effsByMeas, className) {
+    var cell = document.createElement("th");
+    cell.className = `table-light eff-cell ${className}`;
+    const btnGroup = document.createElement('div');
+    btnGroup.className = "btn-group-vertical";
+    cell.appendChild(btnGroup);
+    Object.entries(effsByMeas).forEach(([abbr, effs]) => {
+      const avgEff = effs.reduce((acc, cur) => acc + cur, 0) / effs.filter((e) => e !== null).length;
+      const badge = document.createElement("span");
+      var avgEffStr = "";
+      if (isNaN(avgEff)) {
+        avgEffStr = "-";
+        badge.className = `btn btn-xs btn-secondary disabled test-${abbr.toLowerCase()}`;
+      } else {
+        avgEffStr = `${((avgEff) * 100).toFixed(0)} %`;
+        badge.className = `btn btn-xs calc-rating btn-rating test-${abbr.toLowerCase()}`;
+        const adaptedRating = Math.min(1, avgEff * 2);
+        badge.style.setProperty("--rating", adaptedRating);
+      }
+      badge.innerHTML = `${abbr}: ${avgEffStr}`;
+      btnGroup.appendChild(badge);
+    });
+    return cell;
   }
 
   function dateToString(date) {
@@ -181,10 +344,12 @@
       show[type] = map[type].map(e => "." + type + "-" + e);
     });
 
-    $(".result td").add(".result th").add(".result td a").hide();
+    $(".result td").add(".result th").add(".result td .btn").add(".result th .badge").not('.eff-title').hide();
 
     const show_classes = show.client.map(el1 => show.server.map(el2 => el1 + el2)).flat().join();
     $(".client-any," + show_classes).show();
+    $(show.server.map((serverCls) => `.eff-cell${serverCls}`).join(",")).show();
+    $(show.client.map((clientCls) => `.eff-cell${clientCls}`).join(",")).show();
 
     $(".result " + show.client.map(e => "th" + e).join()).show();
     $(".result " + show.server.map(e => "th" + e).join()).show();
@@ -210,11 +375,12 @@
 
   function clickButton(e) {
     function toggle(array, value) {
-        var index = array.indexOf(value);
-        if (index === -1)
-            array.push(value);
-         else
-            array.splice(index, 1);
+      var index = array.indexOf(value);
+      if (index === -1) {
+        array.push(value);
+      } else {
+        array.splice(index, 1);
+      }
     }
 
     var b = $(e.target).closest(":button")[0];
@@ -241,13 +407,11 @@
     return false;
   }
 
-  function makeTooltip(name, desc) {
-    return "<strong>" + name + "</strong>" + (desc === undefined ? "" : "<br>" + desc);
+  function makeTooltip(name, desc, timeout) {
+    return "<strong>" + name + "</strong>" + (desc === undefined ? "" : "<br>" + desc) + (timeout ? `<br><b>Test Timeout:</b> ${timeout} s` : "");
   }
 
-  function process(result) {
-    window.result = result;
-
+  function process(result, log_dir) {
     var startTime = new Date(1000*result.start_time);
     var endTime = new Date(1000*result.end_time);
     var duration = result.end_time - result.start_time;
@@ -257,32 +421,28 @@
     document.getElementById("quic-vers").innerHTML =
       "<tt>" + result.quic_version + "</tt> (\"draft-" + result.quic_draft + "\")";
 
-    fillInteropTable(result);
-    fillMeasurementTable(result);
+    fillInteropTable(result, log_dir);
+    fillMeasurementTable(result, log_dir);
 
     $("#client").add("#server").add("#test").empty();
     $("#client").append(result.clients.map(e => makeButton("client", e, undefined, result.images ? result.images[e].compliant : undefined)));
     $("#server").append(result.servers.map(e => makeButton("server", e, undefined, result.images ? result.images[e].compliant : undefined)));
-    if (result.hasOwnProperty("tests")) {
-      $("#test").append(Object.keys(result.tests).map(e => makeButton("test", e, makeTooltip(result.tests[e].name, result.tests[e].desc))));
-    } else {
-      // TODO: this else can eventually be removed, when all past runs have the test descriptions in the json
-      const tcases = result.results.concat(result.measurements).flat().map(x => [x.abbr, x.name]).filter((e, i, a) => a.map(x => x[0]).indexOf(e[0]) === i);
-      $("#test").append(tcases.map(e => makeButton("test", e[0], makeTooltip(e[1]))));
-    }
+    $("#test").append(Object.keys(result.tests).map(e => makeButton("test", e, makeTooltip(result.tests[e].name, result.tests[e].desc, result.tests[e].timeout))));
     setButtonState();
 
     $("table.result").delegate("td", "mouseover mouseleave", function(e) {
-        const t = $(this).closest("table.result");
-        if (e.type === "mouseover") {
-          $(this).parent().addClass("hover-xy");
-          t.children("colgroup").eq($(this).index()).addClass("hover-xy");
-          t.find("th").eq($(this).index()).addClass("hover-xy");
-        } else {
-          $(this).parent().removeClass("hover-xy");
-          t.children("colgroup").eq($(this).index()).removeClass("hover-xy");
-          t.find("th").eq($(this).index()).removeClass("hover-xy");
-        }
+      const t = $(this).closest("table.result");
+      if (e.type === "mouseover") {
+        $(this).parent().addClass("hover-xy");
+        t.children("colgroup").eq($(this).index()).addClass("hover-xy");
+        t.find("th").eq($(this).index()).addClass("hover-xy");
+        t.find(".eff-row th").eq($(this).index()).addClass("hover-xy");
+      } else {
+        $(this).parent().removeClass("hover-xy");
+        t.children("colgroup").eq($(this).index()).removeClass("hover-xy");
+        t.find("th").eq($(this).index()).removeClass("hover-xy");
+        t.find(".eff-row th").eq($(this).index()).removeClass("hover-xy");
+      }
     });
   }
 
@@ -290,14 +450,15 @@
     document.getElementsByTagName("body")[0].classList.add("loading");
     var xhr = new XMLHttpRequest();
     xhr.responseType = 'json';
-    xhr.open('GET', 'logs/' + dir + '/result.json');
+    xhr.open('GET', `${LOGS_BASE_URL}logs/${dir}/result.json`);
     xhr.onreadystatechange = function() {
       if(xhr.readyState !== XMLHttpRequest.DONE) return;
       if(xhr.status !== 200) {
         console.log("Received status: ", xhr.status);
         return;
       }
-      process(xhr.response);
+      window.result = xhr.response;
+      process(xhr.response, dir);
       document.getElementsByTagName("body")[0].classList.remove("loading");
     };
     xhr.send();
@@ -308,7 +469,7 @@
   // enable loading of old runs
   var xhr = new XMLHttpRequest();
   xhr.responseType = 'json';
-  xhr.open('GET', 'logs/logs.json');
+  xhr.open('GET', `${LOGS_BASE_URL}logs/logs.json`);
   xhr.onreadystatechange = function() {
     if(xhr.readyState !== XMLHttpRequest.DONE) return;
     if(xhr.status !== 200) {
