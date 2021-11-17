@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import sys
 import argparse
 from functools import cached_property
 from pathlib import Path
@@ -75,6 +76,21 @@ class CompareCli:
         """
         measurements1 = self.result1.get_all_measurements_of_type(self.measurement)
         measurements2 = self.result2.get_all_measurements_of_type(self.measurement)
+
+        if not measurements1:
+            existing_meas_abbrs = ", ".join(
+                meas.abbr for meas in self.result1.measurement_descriptions.values()
+            )
+            sys.exit(
+                f"Found no measurements of type {self.measurement} in first result. Existing measurements are {existing_meas_abbrs}"
+            )
+        if not measurements2:
+            existing_meas_abbrs = ", ".join(
+                meas.abbr for meas in self.result2.measurement_descriptions.values()
+            )
+            sys.exit(
+                f"Found no measurements of type {self.measurement} in second result. Existing measurements are {existing_meas_abbrs}"
+            )
 
         compare_result = {
             "missing in 1": list[str](),
