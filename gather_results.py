@@ -17,11 +17,10 @@ from sqlalchemy_utils import UUIDType
 
 from enums import TestResult
 from result_parser import MeasurementResultInfo, Result, TestResultInfo
-from utils import TerminalFormatter
+from utils import LOGGER, TerminalFormatter
 
 Base = declarative_base()
 
-LOGGER = logging.getLogger(name="quic-interop-runner")
 
 ANALYZE_LAST_N_LINES = 100
 

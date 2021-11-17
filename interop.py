@@ -22,11 +22,10 @@ from exceptions import ConflictError, TestFailed, TestUnsupported
 from implementations import IMPLEMENTATIONS, Implementation
 from result_parser import Result, TestResultInfo
 from testcases import Measurement, TestCase
-from utils import LogFileFormatter, TerminalFormatter, sleep_between
+from utils import LOGGER, LogFileFormatter, TerminalFormatter, sleep_between
 
 CONSOLE_LOG_HANDLER = logging.StreamHandler(stream=sys.stderr)
 
-LOGGER = logging.getLogger(name="quic-interop-runner")
 
 UNSUPPORTED_EXIT_CODE = 127
 

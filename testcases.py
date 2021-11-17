@@ -19,10 +19,7 @@ from exceptions import TestFailed, TestUnsupported
 from result_parser import MeasurementDescription, TestDescription
 from trace_analyzer import Direction, PacketType, TraceAnalyzer, get_packet_type
 from units import DataRate, FileSize, Time
-from utils import random_string
-
-LOGGER = logging.getLogger(name="quic-interop-runner")
-
+from utils import LOGGER, random_string
 
 QUIC_DRAFT = 34  # draft-34
 QUIC_VERSION = hex(0x1)

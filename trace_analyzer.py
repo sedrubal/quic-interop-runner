@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import logging
 import subprocess
 from enum import Enum
 from pathlib import Path
@@ -9,8 +8,7 @@ import pyshark
 
 from conf import CONFIG
 from exceptions import TestFailed
-
-LOGGER = logging.getLogger(name="quic-interop-runner")
+from utils import LOGGER
 
 #  IP4_CLIENT = "193.167.0.100"
 #  IP4_SERVER = "193.167.100.100"

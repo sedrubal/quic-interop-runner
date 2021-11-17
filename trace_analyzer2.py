@@ -21,7 +21,7 @@ from termcolor import colored, cprint
 
 from conf import CONFIG
 from enums import CacheMode, Direction, Side
-from utils import TraceTriple, YaspinWrapper, clear_line, create_relpath
+from utils import LOGGER, TraceTriple, YaspinWrapper, clear_line, create_relpath
 
 if typing.TYPE_CHECKING:
     from pyshark.packet.packet import Packet  # type: ignore

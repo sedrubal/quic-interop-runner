@@ -1,22 +1,21 @@
 """Load and provide implementations."""
 
 import json
-import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Optional
 from pathlib import Path
+from typing import TYPE_CHECKING, Optional
 
 import docker
 from dateutil.parser import parse as parse_date
 
 from enums import ImplementationRole
 from result_json_types import JSONImageMetadata
+from utils import LOGGER
 
 if TYPE_CHECKING:
     from deployment import Deployment
 
-LOGGER = logging.getLogger(name="quic-interop-runner")
 
 IMPLEMENTATIONS_JSON_PATH = Path(__file__).parent / "implementations.json"
 

@@ -2,7 +2,6 @@
 
 import concurrent.futures
 import ipaddress
-import logging
 import marshal
 import socket
 import sys
@@ -16,12 +15,11 @@ import docker
 
 from custom_types import IPAddress
 from implementations import Implementation
+from utils import LOGGER
 
 Container = Type[docker.models.containers.Container]
 Image = Type[docker.models.images.Image]
 Network = Type[docker.models.networks.Network]
-
-LOGGER = logging.getLogger(name="quic-interop-runner")
 
 
 #  def get_docker_bridge_interface(

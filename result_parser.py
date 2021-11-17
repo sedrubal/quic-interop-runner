@@ -26,9 +26,7 @@ from result_json_types import (
     JSONTestDescr,
     JSONTestResult,
 )
-from utils import UrlOrPath, compare_and_merge
-
-LOGGER = logging.getLogger(name="quic-interop-runner")
+from utils import LOGGER, UrlOrPath, compare_and_merge
 
 DETAILS_RE = re.compile(r"(?P<avg>\d+) \(± (?P<var>\d+)\) (?P<unit>\w+)")
 
@@ -257,6 +255,7 @@ class Result:
         raw_data: JSONResult = json.loads(content)
         assert isinstance(raw_data, dict)
         # parse result ID
+
         if raw_data.get("id"):
             self._id = UUID(hex=raw_data.get("id"))
         # parse start time
@@ -301,6 +300,7 @@ class Result:
             image_versions = img_metadata.get("versions")
             image_repo_digests = img_metadata.get("repo_digests")
             image = img_metadata.get("image")
+
             if not image:
                 image = IMPLEMENTATIONS[name].image
 
@@ -354,6 +354,7 @@ class Result:
         self._test_descriptions = test_descriptions
 
         # load test and measurement results
+
         for server_index, server_name in enumerate(raw_data["servers"]):
             for client_index, client_name in enumerate(raw_data["clients"]):
 
@@ -461,11 +462,13 @@ class Result:
             "results": test_results_lin,
             "measurements": meas_results_lin,
         }
+
         return output
 
     @property
     def id(self) -> UUID:
         """The UUID of this test."""
+
         if not self._id:
             self._id = uuid4()
 
@@ -481,6 +484,7 @@ class Result:
         assert (
             self._start_time
         ), "No start time set. Did you already call load_from_json()?"
+
         return self._start_time
 
     @start_time.setter
@@ -490,7 +494,10 @@ class Result:
     @property
     def end_time(self) -> datetime:
         """The end time of the test run."""
-        assert self._end_time
+        assert (
+            self._end_time
+        ), f"End Time is missing in {self.file_path}. Did you already call load_from_json()?"
+
         return self._end_time
 
     @end_time.setter
@@ -509,6 +516,7 @@ class Result:
         assert (
             self._quic_draft is not None
         ), "No QUIC draft set. Did you already call load_from_json()?"
+
         return self._quic_draft
 
     @quic_draft.setter
@@ -521,6 +529,7 @@ class Result:
         assert (
             self._quic_version is not None
         ), "No QUIC version set. Did you already call load_from_json()?"
+
         return self._quic_version
 
     @quic_version.setter
@@ -533,6 +542,7 @@ class Result:
         assert (
             self._log_dir is not None
         ), "No log dir set. Did you already call load_from_json()?"
+
         return self._log_dir
 
     @log_dir.setter
@@ -542,11 +552,13 @@ class Result:
     @property
     def servers(self) -> dict[str, Implementation]:
         """The servers with metadata used in this test run."""
+
         return self._servers
 
     @property
     def clients(self) -> dict[str, Implementation]:
         """The clients with metadata used in this test run."""
+
         return self._clients
 
     @property
@@ -568,6 +580,7 @@ class Result:
             assert impl.image == impl2.image
 
             # merge compliant
+
             if impl.compliant is not None and impl2.compliant is not None:
                 if impl.compliant is True and impl2.compliant is True:
                     compliant = True
@@ -598,6 +611,7 @@ class Result:
 
         if role.is_server:
             self.servers[impl.name] = impl
+
         if role.is_client:
             self.clients[impl.name] = impl
 
@@ -608,11 +622,13 @@ class Result:
         """
         Return a dict of test and measurement abbr.s and description that ran during this run.
         """
+
         return self._test_descriptions
 
     @property
     def measurement_descriptions(self) -> dict[str, MeasurementDescription]:
         """Return a dict of measurement abbrs and their descriptions."""
+
         return {
             abbr: test_desc
             for abbr, test_desc in self.test_descriptions.items()
@@ -637,6 +653,7 @@ class Result:
             timeout: Optional[int] = compare_and_merge(
                 "timeout", test_desc, test_desc2, error_msg
             )
+
             if isinstance(test_desc2, MeasurementDescription):
                 if isinstance(test_desc, MeasurementDescription):
                     theoretical_max_value = compare_and_merge(
@@ -676,6 +693,7 @@ class Result:
 
         Dict keys are <server name> -> <client name> -> <test abbr>
         """
+
         return self._test_results
 
     @property
@@ -754,6 +772,7 @@ class Result:
             self._test_results[server_impl.name] = dict[
                 str, dict[str, TestResultInfo]
             ]()
+
         if client_impl.name not in self.test_results[server_impl.name].keys():
             self._test_results[server_impl.name][client_impl.name] = dict[
                 str, TestResultInfo
@@ -766,6 +785,7 @@ class Result:
             test=self.test_descriptions[test_abbr],
             _base_log_dir=self.log_dir,
         )
+
         if test_abbr in self.test_results[server_impl.name][client_impl.name].keys():
             if update_failed:
                 test_included: TestResultInfo = self._test_results[server_impl.name][
@@ -779,6 +799,7 @@ class Result:
                     ] = test_result_info
                 elif test_result != TestResult.SUCCEEDED:
                     # do not overwrite with a failed test:
+
                     return
                 else:
                     breakpoint()
@@ -811,6 +832,7 @@ class Result:
 
         if server_impl.name not in self.test_results.keys():
             return
+
         if client_impl.name not in self.test_results[server_impl.name].keys():
             return
 
@@ -824,6 +846,7 @@ class Result:
 
         Dict keys are <server name> -> <client name> -> <measurement abbr>
         """
+
         return self._meas_results
 
     @property
@@ -919,6 +942,7 @@ class Result:
             self._meas_results[server_impl.name] = dict[
                 str, dict[str, MeasurementResultInfo]
             ]()
+
         if client_impl.name not in self._meas_results[server_impl.name].keys():
             self._meas_results[server_impl.name][client_impl.name] = dict[
                 str, MeasurementResultInfo
@@ -935,6 +959,7 @@ class Result:
             details=details,
             values=values,
         )
+
         if meas_abbr in self._meas_results[server_impl.name][client_impl.name].keys():
             if update_failed:
                 meas_included: MeasurementResultInfo = self._meas_results[
@@ -989,6 +1014,7 @@ class Result:
             self._meas_results[server_impl.name] = dict[
                 str, dict[str, MeasurementResultInfo]
             ]()
+
         if client_impl.name not in self._meas_results[server_impl.name].keys():
             self._meas_results[server_impl.name][client_impl.name] = dict[
                 str, MeasurementResultInfo
@@ -1006,6 +1032,7 @@ class Result:
                 client_impl.name
             ][meas_abbr]
             values = existing_meas_result_info.values
+
             if existing_meas_result_info.result:
                 if update_failed:
                     if existing_meas_result_info.result == TestResult.SUCCEEDED:
@@ -1017,6 +1044,7 @@ class Result:
                         f"A result for measurement {meas_abbr} already exists and we do not update failed results: "
                         f"{existing_meas_result_info.result.value}"
                     )
+
             if len(values) >= num_repetitions:
                 raise ConflictError(
                     f"Too many values for measurement {meas_abbr} after adding the new one: "
@@ -1028,6 +1056,7 @@ class Result:
 
         if len(values) == num_repetitions or meas_result != TestResult.SUCCEEDED:
             # measurement is completed
+
             if meas_result == TestResult.SUCCEEDED:
                 mean = statistics.mean(values)
                 stdev = statistics.stdev(values)
@@ -1074,6 +1103,7 @@ class Result:
 
         if server_impl.name not in self._meas_results.keys():
             return
+
         if client_impl.name not in self._meas_results[server_impl.name].keys():
             return
 
@@ -1086,10 +1116,12 @@ class Result:
         update_failed: bool = True,
     ) -> "Result":
         """Merge this result with another result."""
+
         if self.quic_draft != other.quic_draft:
             raise ConflictError(
                 f"QUIC Draft missmatch: {self.quic_draft} != {other.quic_draft}"
             )
+
         if self.quic_version != other.quic_version:
             raise ConflictError(
                 f"QUIC version missmatch: {self.quic_version} != {other.quic_version}"
@@ -1202,6 +1234,7 @@ def main():
     path = sys.argv[-1]
     result = Result(path)
     assert result.file_path
+
     if result.file_path.is_file():
         result.load_from_json()
     print(result)

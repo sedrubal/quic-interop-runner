@@ -42,7 +42,7 @@ from testcases import (
     TestCase,
     generate_cert_chain,
 )
-from utils import TerminalFormatter, random_string
+from utils import LOGGER, TerminalFormatter, random_string
 
 MEMLOCK_ULIMIT = docker.types.Ulimit(name="memlock", hard=67108864, soft=67108864)
 IPERF_ENDPOINT_IMG = "martenseemann/quic-interop-iperf-endpoint"
@@ -65,8 +65,6 @@ REAL_LINK_SETUP_SCRIPT = Path(__file__).parent / "real_link_setup.sh"
 
 DEFAULT_SCENARIO = "simple-p2p --delay=15ms --bandwidth=10Mbps --queue=25"
 DEFAULT_REQUEST_URL = "https://server4:443/test"
-
-LOGGER = logging.getLogger(name="quic-interop-runner")
 
 
 class ContainerStatus(Enum):
