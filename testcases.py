@@ -1749,7 +1749,7 @@ class MeasurementGoodput(Measurement):
     @classmethod
     @property
     def repetitions(cls) -> int:
-        return 2
+        return 10
 
     def get_paths(self):
         self._files = [self._generate_random_file(self.FILESIZE)]
@@ -1845,13 +1845,6 @@ class MeasurementSatellite(MeasurementGoodput):
     @property
     def theoretical_max_value(cls):
         return cls.forward_data_rate / DataRate.KBPS
-
-    @classmethod
-    @property
-    def repetitions(cls) -> int:
-        #  return 3
-
-        return 2
 
     @classmethod
     @property
@@ -1967,6 +1960,11 @@ class MeasurementRealLink(MeasurementGoodput):
         """timeout in s"""
 
         return 120
+
+    @classmethod
+    @property
+    def repetitions(cls) -> int:
+        return 5
 
 
 class MeasurementStarlink(MeasurementRealLink):
