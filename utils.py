@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from pathlib import Path
 from time import sleep
-from typing import Callable, NamedTuple, Optional, TypeVar, Union
+from typing import Callable, Iterable, NamedTuple, Optional, TypeVar, Union
 
 import humanize
 import requests
@@ -47,6 +47,7 @@ def random_string(length: int):
 def compare_and_merge(property: str, obj1, obj2, error_msg: str):
     val1 = getattr(obj1, property, None)
     val2 = getattr(obj2, property, None)
+
     if val1 is not None and val2 is not None:
         if val1 != val2:
             raise ConflictError(
@@ -293,6 +294,7 @@ def existing_file_path(value: str, allow_none=False) -> Optional[Path]:
 def time_range(value: str) -> tuple[time, time]:
     """Parse two time values in the format HH:MM separated by `-`."""
     values = value.strip().split("-")
+
     if len(values) != 2:
         raise argparse.ArgumentTypeError(
             f"{value} is not a valid time range. It must be separated by -"
@@ -300,6 +302,7 @@ def time_range(value: str) -> tuple[time, time]:
 
     start_str, end_str = values
     start_bits = start_str.split(":")
+
     if len(start_bits) != 2:
         raise argparse.ArgumentTypeError(
             f"{start_str} is not a valid time. It must be in HH:MM format."
@@ -315,6 +318,7 @@ def time_range(value: str) -> tuple[time, time]:
         ) from err
 
     end_bits = end_str.split(":")
+
     if len(end_bits) != 2:
         raise argparse.ArgumentTypeError(
             f"{end_str} is not a valid time. It must be in HH:MM format."
@@ -331,18 +335,22 @@ def time_range(value: str) -> tuple[time, time]:
 
     start = time(hour=start_hour, minute=start_minute)
     end = time(hour=end_hour, minute=end_minute)
+
     return start, end
 
 
 def time_total_seconds(value: time) -> int:
     """Return the total number of seconds in a time object."""
+
     return value.hour * 3600 + value.minute * 60 + value.second
 
 
 def sleep_between(start: time, end: time) -> None:
     """Sleep if the current time is between start and end."""
+
     while True:
         now = datetime.now()
+
         if start <= now.time() <= end:
             until_seconds = time_total_seconds(end)
             now_total_seconds = time_total_seconds(now.time())
@@ -482,10 +490,12 @@ class UrlOrPath:
             return self.path.is_file()
         else:
             resp = requests.head(self.src)
+
             if resp.status_code == 404:
                 return False
 
             resp.raise_for_status()
+
             return True
 
     @property
@@ -542,7 +552,7 @@ class TraceTriple:
 
 class Subplot:
     fig: plt.Figure
-    ax: plt.Axes
+    ax: Union[plt.Axes, Iterable[plt.Axes]]
 
     def __init__(self, *args, **kwargs):
         self.fig, self.ax = plt.subplots(*args, **kwargs)
