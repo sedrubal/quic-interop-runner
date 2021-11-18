@@ -192,17 +192,28 @@ class TraceAnalyzeResult:
     def max_timestamp(self) -> float:
         """The maximum packet timestamp we have ever seen."""
         assert self.extended_facts
-        return self.extended_facts["plt"]
+        plt = self.extended_facts["plt"] or 0
+
+        return max(
+            plt,
+            self.request_stream_packet_timestamps[-1],
+            self.response_stream_packet_timestamps[-1],
+            self.response_stream_layers_first_timestamps[-1],
+            self.response_stream_layers_retrans_timestamps[-1],
+            self.server_client_packet_timestamps[-1],
+        )
 
     @cached_property
     def max_forward_data_rate(self) -> float:
         """The maximum forward path data rate."""
-        return max(*self.forward_tx_data_rates, *self.forward_goodput_data_rates)
+        values = (0, *self.forward_tx_data_rates, *self.forward_goodput_data_rates)
+        return max(values)
 
     @cached_property
     def max_return_data_rate(self) -> float:
         """The maximum return path data rate."""
-        return max(self.return_data_rates)
+        values = (0, *self.return_data_rates)
+        return max(values)
 
     @cached_property
     def min_packet_number(self) -> int:
