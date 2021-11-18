@@ -1127,7 +1127,7 @@ class Result:
         measurement_abbr: str,
     ) -> Optional[Statistics]:
         """
-        :return: Statistics about efficiency for the measurements ``measurement_abbr``, where ``implementations`` was used as ``role``.
+        :return: Statistics of efficiency for the measurements ``measurement_abbr``, where ``implementations`` was used as ``role``.
         """
         impl = (
             (
@@ -1155,6 +1155,95 @@ class Result:
             return None
         else:
             return Statistics.calc(effs)
+
+    def get_measurement_value_stats(
+        self,
+        implementation: Union[str, Implementation],
+        role: ImplementationRole,
+        measurement_abbr: str,
+    ) -> Optional[Statistics]:
+        """
+        :return: Statistics of measurement values of ``measurement_abbr``, where ``implementations`` was used as ``role``.
+        """
+        impl = (
+            (
+                self.servers[implementation]
+                if role.is_server
+                else self.clients[implementation]
+            )
+            if isinstance(implementation, str)
+            else implementation
+        )
+        assert role in impl.role
+
+        avgs = [
+            meas.avg
+            for meas in self.get_all_measurements_of_type(
+                measurement_abbr, succeeding=True
+            )
+            if (
+                (role.is_server and meas.server.name == impl.name)
+                or (role.is_client and meas.client.name == impl.name)
+            )
+        ]
+
+        if not avgs:
+            return None
+        else:
+            return Statistics.calc(avgs)
+
+    def get_overall_measurement_value_stats(
+        self, measurement_abbr: str
+    ) -> Optional[Statistics]:
+        avgs = [
+            meas.avg
+            for meas in self.get_all_measurements_of_type(
+                measurement_abbr, succeeding=True
+            )
+        ]
+
+        if not avgs:
+            return None
+        else:
+            return Statistics.calc(avgs)
+
+    def get_overall_measurement_efficiency_stats(
+        self, measurement_abbr: str
+    ) -> Optional[Statistics]:
+        effs = [
+            meas.avg_efficiency
+            for meas in self.get_all_measurements_of_type(
+                measurement_abbr, succeeding=True
+            )
+        ]
+
+        if not effs:
+            return None
+        else:
+            return Statistics.calc(effs)
+
+    def get_marginalized_efficiency_stats(
+        self, measurement_abbr: str, role: ImplementationRole
+    ) -> Optional[Statistics]:
+        """
+        :Return: Stats of the marginalized efficiency averages.
+
+        I.E.: Use the measurement average efficiency of each matrix cell.
+        Calculate statistic of column (``role=ImplementationRole.SERVER``) or row (``role=ImplementationRole.CLIENT``).
+        Use the average values of these statistics.
+        Calculate statistic of these average values.
+        """
+        assert role is not ImplementationRole.BOTH
+        stats = [
+            self.get_efficiency_stats(server, role, measurement_abbr)
+            for server in self.servers.keys()
+        ]
+        # filter out None values
+        stats = [stat for stat in stats if stat]
+        if not stats:
+            return None
+        else:
+            return Statistics.calc([stat.avg for stat in stats])
 
     def merge(
         self,

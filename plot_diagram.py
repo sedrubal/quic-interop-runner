@@ -227,17 +227,17 @@ class TraceAnalyzeResult:
     @cached_property
     def response_packet_stats(self) -> Statistics:
         """Some stats about response packets."""
-        return Statistics.calc(self.response_packet_sizes)  # type: ignore
+        return Statistics.calc(self.response_packet_sizes)
 
     @cached_property
     def response_overhead_stats(self) -> Statistics:
         """Some stats about overhead data."""
-        return Statistics.calc(self.response_overhead_sizes)  # type: ignore
+        return Statistics.calc(self.response_overhead_sizes)
 
     @cached_property
     def response_stream_data_stats(self) -> Statistics:
         """Some stats about stream data."""
-        return Statistics.calc(self.response_stream_data_sizes)  # type: ignore
+        return Statistics.calc(self.response_stream_data_sizes)
 
 
 class PlotCli:
