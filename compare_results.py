@@ -15,9 +15,9 @@ from result_parser import MeasurementResultInfo, Result
 from utils import Subplot
 
 SAME_AVG_THRESH_PERC = 0.05
-SAME_VAR_THRESH_PERC = 0.10
+SAME_STDEV_THRESH_PERC = 0.10
 HIGH_AVG_DEVIATION_PERC = 0.2
-HIGH_VAR_DEVIATION_PERC = 0.2
+HIGH_STDEV_DEVIATION_PERC = 0.2
 
 
 def parse_args():
@@ -103,14 +103,14 @@ class CompareCli:
             "failed in 1": list[str](),
             "failed in 2": list[str](),
             "succeeded in both": list[str](),
-            "same avg and var": list[tuple[str, float, float, float]](),
-            "same avg different var": list[
+            "same avg and stdev": list[tuple[str, float, float, float]](),
+            "same avg different stdev": list[
                 tuple[str, tuple[float, float, float], tuple[float, float, float], bool]
             ](),
-            "different avg same var": list[
+            "different avg same stdev": list[
                 tuple[str, tuple[float, float, float], tuple[float, float, float], bool]
             ](),
-            "different avg and var": list[
+            "different avg and stdev": list[
                 tuple[str, tuple[float, float, float], tuple[float, float, float], bool]
             ](),
             "tldr": "",
@@ -153,11 +153,11 @@ class CompareCli:
                     avg_dev = meas_result2.avg / meas_result1.avg - 1
                     same_avg = abs(avg_dev) < SAME_AVG_THRESH_PERC
                     high_avg_dev = abs(avg_dev) > HIGH_AVG_DEVIATION_PERC
-                    # compare var
-                    diff_var = meas_result1.var - meas_result2.var
-                    var_dev = diff_var / meas_result1.avg
-                    same_var = abs(var_dev) < SAME_VAR_THRESH_PERC
-                    high_var_dev = abs(var_dev) > HIGH_VAR_DEVIATION_PERC
+                    # compare stdev
+                    diff_stdev = meas_result1.stdev - meas_result2.stdev
+                    stdev_dev = diff_stdev / meas_result1.avg
+                    same_stdev = abs(stdev_dev) < SAME_STDEV_THRESH_PERC
+                    high_stdev_dev = abs(stdev_dev) > HIGH_STDEV_DEVIATION_PERC
                     data: tuple[
                         str,
                         tuple[float, float, float],
@@ -166,21 +166,21 @@ class CompareCli:
                     ] = (
                         combi,
                         (meas_result1.avg, meas_result2.avg, avg_dev),
-                        (meas_result1.var, meas_result2.var, var_dev),
-                        high_avg_dev or high_var_dev,
+                        (meas_result1.stdev, meas_result2.stdev, stdev_dev),
+                        high_avg_dev or high_stdev_dev,
                     )
 
-                    if same_avg and same_var:
-                        key = "same avg and var"
+                    if same_avg and same_stdev:
+                        key = "same avg and stdev"
                         num_almost_equal += 1
-                    elif same_avg and not same_var:
-                        key = "same avg different var"
+                    elif same_avg and not same_stdev:
+                        key = "same avg different stdev"
                         num_different_meas_results += 1
-                    elif not same_avg and same_var:
-                        key = "different avg same var"
+                    elif not same_avg and same_stdev:
+                        key = "different avg same stdev"
                         num_different_meas_results += 1
                     else:
-                        key = "different avg and var"
+                        key = "different avg and stdev"
                         num_different_meas_results += 1
                     compare_result[key].append(data)
                     avgs1.append(meas_result1.avg)
@@ -265,10 +265,10 @@ class CompareCli:
         short_helper("failed in 1")
         short_helper("failed in 2")
         short_helper("succeeded in both", color="green")
-        detailed_helper("different avg and var", color="yellow")
-        detailed_helper("different avg same var", color="yellow")
-        detailed_helper("same avg different var", color="green")
-        detailed_helper("same avg and var", color="green")
+        detailed_helper("different avg and stdev", color="yellow")
+        detailed_helper("different avg same stdev", color="yellow")
+        detailed_helper("same avg different stdev", color="green")
+        detailed_helper("same avg and stdev", color="green")
 
         cprint("TL;DR;", attrs=["bold"])
         print()
@@ -279,16 +279,16 @@ class CompareCli:
         Plot something.
         """
         avgs1 = [
-            *(x[1][0] for x in self.result_comparison["same avg and var"]),
-            *(x[1][0] for x in self.result_comparison["same avg different var"]),
-            *(x[1][0] for x in self.result_comparison["different avg same var"]),
-            *(x[1][0] for x in self.result_comparison["different avg and var"]),
+            *(x[1][0] for x in self.result_comparison["same avg and stdev"]),
+            *(x[1][0] for x in self.result_comparison["same avg different stdev"]),
+            *(x[1][0] for x in self.result_comparison["different avg same stdev"]),
+            *(x[1][0] for x in self.result_comparison["different avg and stdev"]),
         ]
         avgs2 = [
-            *(x[1][1] for x in self.result_comparison["same avg and var"]),
-            *(x[1][1] for x in self.result_comparison["same avg different var"]),
-            *(x[1][1] for x in self.result_comparison["different avg same var"]),
-            *(x[1][1] for x in self.result_comparison["different avg and var"]),
+            *(x[1][1] for x in self.result_comparison["same avg and stdev"]),
+            *(x[1][1] for x in self.result_comparison["same avg different stdev"]),
+            *(x[1][1] for x in self.result_comparison["different avg same stdev"]),
+            *(x[1][1] for x in self.result_comparison["different avg and stdev"]),
         ]
         avg1 = sum(avgs1) / len(avgs1)
         avg2 = sum(avgs2) / len(avgs2)

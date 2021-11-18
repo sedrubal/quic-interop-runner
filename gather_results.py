@@ -100,7 +100,7 @@ class MeasurementRun(Base):
     reason = sa.Column(sa.Enum(Reason), nullable=True)
     planned_repetitions = sa.Column(sa.Integer)
     avg = sa.Column(sa.Integer)
-    var = sa.Column(sa.Float)
+    stdev = sa.Column(sa.Float)
 
 
 class MeasurementRepetitionRun(Base):
@@ -312,7 +312,7 @@ class GatherResults:
 
         if meas_result.succeeded:
             run.avg = meas_result.avg
-            run.var = meas_result.var
+            run.stdev = meas_result.stdev
 
         if meas_result.result == TestResult.FAILED and meas_result.repetition_log_dirs:
             if not run.reason or not self.skip_existing_reasons:

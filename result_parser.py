@@ -26,9 +26,9 @@ from result_json_types import (
     JSONTestDescr,
     JSONTestResult,
 )
-from utils import LOGGER, UrlOrPath, compare_and_merge
+from utils import LOGGER, Statistics, UrlOrPath, compare_and_merge
 
-DETAILS_RE = re.compile(r"(?P<avg>\d+) \(± (?P<var>\d+)\) (?P<unit>\w+)")
+DETAILS_RE = re.compile(r"(?P<avg>\d+) \(± (?P<stdev>\d+)\) (?P<unit>\w+)")
 
 
 @dataclass(frozen=True)
@@ -181,14 +181,14 @@ class MeasurementResultInfo(_ResultInfoMixin):
         return int(self._details_match.group("avg"))
 
     @property
-    def var(self) -> int:
-        """The variance value."""
+    def stdev(self) -> int:
+        """The standard deviation value."""
 
-        return int(self._details_match.group("var"))
+        return int(self._details_match.group("stdev"))
 
     @property
     def unit(self) -> str:
-        """The unit of ``avg`` and ``var``."""
+        """The unit of ``avg`` and ``stdev``."""
 
         return self._details_match.group("unit")
 
@@ -201,6 +201,16 @@ class MeasurementResultInfo(_ResultInfoMixin):
             details=self.details,
             values=self.values,
         )
+
+    @property
+    def avg_efficiency(self) -> float:
+        """The average efficiency."""
+        assert self.test.theoretical_max_value
+        assert self.succeeded
+
+        eff = self.avg / self.test.theoretical_max_value
+        assert 0 < eff <= 1
+        return eff
 
 
 TestResults = dict[str, dict[str, dict[str, TestResultInfo]]]
@@ -1109,6 +1119,42 @@ class Result:
 
         if meas_abbr in self._meas_results[server_impl.name][client_impl.name].keys():
             del self._meas_results[server_impl.name][client_impl.name][meas_abbr]
+
+    def get_efficiency_stats(
+        self,
+        implementation: Union[str, Implementation],
+        role: ImplementationRole,
+        measurement_abbr: str,
+    ) -> Optional[Statistics]:
+        """
+        :return: Statistics about efficiency for the measurements ``measurement_abbr``, where ``implementations`` was used as ``role``.
+        """
+        impl = (
+            (
+                self.servers[implementation]
+                if role.is_server
+                else self.clients[implementation]
+            )
+            if isinstance(implementation, str)
+            else implementation
+        )
+        assert role in impl.role
+
+        effs = [
+            meas.avg_efficiency
+            for meas in self.get_all_measurements_of_type(
+                measurement_abbr, succeeding=True
+            )
+            if (
+                (role.is_server and meas.server.name == impl.name)
+                or (role.is_client and meas.client.name == impl.name)
+            )
+        ]
+
+        if not effs:
+            return None
+        else:
+            return Statistics.calc(effs)
 
     def merge(
         self,

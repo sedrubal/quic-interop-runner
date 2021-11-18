@@ -112,12 +112,21 @@ class Statistics(NamedTuple):
     @classmethod
     def calc(cls, data: list[Union[int, float]]) -> "Statistics":
         """Calculate statistics for data."""
+        try:
+            var = statistics.variance(data)
+            std = statistics.stdev(data)
+        except statistics.StatisticsError as err:
+            if "variance requires at least two data points" in str(err).lower():
+                var = 0
+                std = 0
+            else:
+                raise err
 
         return cls(
             avg=statistics.mean(data),
             med=statistics.median(data),
-            var=statistics.variance(data),
-            std=statistics.stdev(data),
+            var=var,
+            std=std,
             sum=sum(data),
             num=len(data),
             max=max(data),
