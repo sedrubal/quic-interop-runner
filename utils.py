@@ -15,7 +15,9 @@ from time import sleep
 from typing import Callable, Iterable, NamedTuple, Optional, Sequence, TypeVar, Union
 
 import humanize
+import numpy as np
 import requests
+import seaborn as sns
 import termcolor
 from dateutil.parser import parse as parse_date
 from matplotlib import pyplot as plt
@@ -80,6 +82,10 @@ class Statistics(NamedTuple):
     max: Union[int, float]
     #: The minimum
     min: Union[int, float]
+    #: The 0.95 quantile
+    q_95: float
+    #: The 0.05 quantile
+    q_05: float
 
     def mpl_label_short(
         self,
@@ -89,8 +95,8 @@ class Statistics(NamedTuple):
 
         return "\n".join(
             (
-                fr"$\mu = {formatter(self.avg)} \left(\pm {formatter(self.std)}\right)$",
-                fr"Range: {formatter(self.min)}..{formatter(self.max)}",
+                fr"$\mu = {formatter(self.avg)}\,\left(\pm {formatter(self.std)}\right)$",
+                fr"Range: ${formatter(self.min)}..{formatter(self.max)}$",
             )
         )
 
@@ -105,32 +111,51 @@ class Statistics(NamedTuple):
                 fr"$\mu = {formatter(self.avg)}$",
                 fr"$\mathrm{{median}} = {formatter(self.med)}$",
                 fr"$\sigma = {formatter(self.std)}$",
-                fr"Range: {formatter(self.min)}..{formatter(self.max)}",
+                fr"Range: ${formatter(self.min)}..{formatter(self.max)}$",
+            )
+        )
+
+    def mpl_label_narrow(
+        self,
+        formatter: Callable[[Union[float, int]], str] = str,
+    ) -> str:
+        """:Return: A narrow label for matplotlib."""
+
+        return "\n".join(
+            (
+                fr"$\mu = {formatter(self.avg)}$",
+                fr"$\mathrm{{Md}} = {formatter(self.med)}$",
+                fr"$\sigma = {formatter(self.std)}$",
+                fr"$\min = {formatter(self.min)}$",
+                fr"$\max = {formatter(self.max)}$",
             )
         )
 
     @classmethod
     def calc(cls, data: Union[Sequence[int], Sequence[float]]) -> "Statistics":
         """Calculate statistics for data."""
+        avg = statistics.fmean(data)
         try:
-            var = statistics.variance(data)
+            var = statistics.variance(data, avg)
             std = statistics.stdev(data)
         except statistics.StatisticsError as err:
             if "variance requires at least two data points" in str(err).lower():
-                var = 0
-                std = 0
+                var = 0.0
+                std = 0.0
             else:
                 raise err
 
         return cls(
-            avg=statistics.mean(data),
+            avg=avg,
             med=statistics.median(data),
             var=var,
             std=std,
-            sum=sum(data),
+            sum=statistics.fsum(data),  # type: ignore
             num=len(data),
             max=max(data),
             min=min(data),
+            q_95=np.quantile(data, q=0.95),  # type: ignore
+            q_05=np.quantile(data, q=0.05),  # type: ignore
         )
 
 
@@ -561,10 +586,11 @@ class TraceTriple:
 
 class Subplot:
     fig: plt.Figure
-    ax: Union[plt.Axes, Iterable[plt.Axes]]
+    ax: Union[plt.Axes, Sequence[plt.Axes], Sequence[Sequence[plt.Axes]]]
 
     def __init__(self, *args, **kwargs):
         self.fig, self.ax = plt.subplots(*args, **kwargs)
+        sns.set()
 
     def __enter__(self):
         return self.fig, self.ax
@@ -573,15 +599,26 @@ class Subplot:
         plt.close(fig=self.fig)
 
 
-def natural_data_rate(value: int) -> str:
+def natural_data_rate(value: int, short: bool = False) -> str:
     """Convert a value in bps to a natural string."""
-    replace_units = {
-        "Bytes": "bit/s",
-        "kB": "kbit/s",
-        "MB": "Mbit/s",
-        "GB": "Gbit/s",
-        "TB": "Tbit/s",
-    }
+    if short:
+        replace_units = {
+            "Byte": "",
+            "Bytes": "",
+            "kB": "k",
+            "MB": "M",
+            "GB": "G",
+            "TB": "T",
+        }
+    else:
+        replace_units = {
+            "Byte": "bit/s",
+            "Bytes": "bit/s",
+            "kB": "kbit/s",
+            "MB": "Mbit/s",
+            "GB": "Gbit/s",
+            "TB": "Tbit/s",
+        }
     natural_file_size = humanize.naturalsize(value, binary=False)
     natural_value, file_size_unit = natural_file_size.split(" ", 1)
     replaced_unit = replace_units[file_size_unit]

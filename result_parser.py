@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Optional, Union, cast
 from uuid import UUID, uuid4
 
+import pandas
 from dateutil.parser import parse as parse_date
 
 from enums import ImplementationRole, TestResult
@@ -26,6 +27,7 @@ from result_json_types import (
     JSONTestDescr,
     JSONTestResult,
 )
+from units import DataRate
 from utils import LOGGER, Statistics, UrlOrPath, compare_and_merge
 
 DETAILS_RE = re.compile(r"(?P<avg>\d+) \(± (?P<stdev>\d+)\) (?P<unit>\w+)")
@@ -50,6 +52,7 @@ class TestDescription:
 class MeasurementDescription(TestDescription):
     """The description of a measurement."""
 
+    #: The value, that can theoretically reached in best case (same unit as values)
     theoretical_max_value: Optional[float]
     repetitions: Optional[int]
 
@@ -1119,6 +1122,46 @@ class Result:
 
         if meas_abbr in self._meas_results[server_impl.name][client_impl.name].keys():
             del self._meas_results[server_impl.name][client_impl.name][meas_abbr]
+
+    def get_measurement_results_as_dataframe(self) -> pandas.DataFrame:
+        """Return the measurement results as data frame."""
+        meas_descs = sorted(
+            self.measurement_descriptions.values(), key=lambda desc: desc.abbr
+        )
+        assert all(meas_desc.theoretical_max_value for meas_desc in meas_descs)
+        data = [
+            [
+                meas.server.name,
+                meas.client.name,
+                meas_desc.name,
+                i,
+                value * DataRate.from_str(meas.unit),
+                value / meas_desc.theoretical_max_value,
+                meas.avg,
+                meas.stdev,
+                meas.avg_efficiency,
+            ]
+            for meas_desc in meas_descs
+            for meas in self.get_all_measurements_of_type(
+                meas_desc.abbr, succeeding=True
+            )
+            for i, value in enumerate(meas.values)
+        ]
+        df = pandas.DataFrame(
+            data,
+            columns=[
+                "server",
+                "client",
+                "measurement",
+                "repetition",
+                "value",
+                "efficiency",
+                "avg",
+                "stdev",
+                "avg_efficiency",
+            ],
+        )
+        return df.sort_values(["server", "client", "measurement", "repetition"])
 
     def get_efficiency_stats(
         self,
