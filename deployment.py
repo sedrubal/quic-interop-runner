@@ -229,6 +229,7 @@ def container_monitor_thread(
     if new_status != status:
         status = new_status
         log_callback(container, status.value, False)
+        status_changed_callback(container, status)
 
     try:
         result = container.wait()
@@ -254,6 +255,7 @@ def container_monitor_thread(
     if new_status != status:
         status = new_status
         log_callback(container, status.value, False)
+        status_changed_callback(container, status)
 
     # stop all containers when one container exits
     end_callback()
@@ -445,10 +447,19 @@ class Deployment:
                             timeout=max(0, timeout - (time.time() - start))
                         )
 
+                        if any(
+                            data_structure[container].status == ContainerStatus.EXITED
+                            for container in containers
+                        ):
+                            LOGGER.debug(
+                                "Detected container exit during startup phase."
+                            )
+                            break
+
                         if timed_out:
                             LOGGER.error(
                                 "Timeout after %i seconds. Could not even start all containers.",
-                                timeout,
+                                time.time() - start,
                             )
 
                             break
