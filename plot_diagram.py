@@ -193,15 +193,15 @@ class TraceAnalyzeResult:
         """The maximum packet timestamp we have ever seen."""
         assert self.extended_facts
         plt = self.extended_facts["plt"] or 0
+        timestamp_series = [
+            self.request_stream_packet_timestamps,
+            self.response_stream_packet_timestamps,
+            self.response_stream_layers_first_timestamps,
+            self.response_stream_layers_retrans_timestamps,
+            self.server_client_packet_timestamps,
+        ]
 
-        return max(
-            plt,
-            self.request_stream_packet_timestamps[-1],
-            self.response_stream_packet_timestamps[-1],
-            self.response_stream_layers_first_timestamps[-1],
-            self.response_stream_layers_retrans_timestamps[-1],
-            self.server_client_packet_timestamps[-1],
-        )
+        return max(plt, *(ts[-1] for ts in timestamp_series if ts))
 
     @cached_property
     def max_forward_data_rate(self) -> float:
