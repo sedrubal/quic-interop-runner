@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 from functools import cached_property
 from itertools import chain
 from pathlib import Path
-from typing import Optional, Union, cast
+from typing import Iterable, Optional, Sequence, Union, cast
 from uuid import UUID, uuid4
 
 import pandas
@@ -1122,6 +1122,40 @@ class Result:
 
         if meas_abbr in self._meas_results[server_impl.name][client_impl.name].keys():
             del self._meas_results[server_impl.name][client_impl.name][meas_abbr]
+
+    def remove_impl_results(
+        self,
+        impl: Union[str, Implementation],
+        role: ImplementationRole = ImplementationRole.BOTH,
+        abbrs: Optional[Iterable[str]] = None,
+    ):
+        """Remove test and measurement results for the given implementation."""
+        if isinstance(impl, Implementation):
+            impl_name = impl.name
+        else:
+            impl_name = impl
+
+        if not abbrs:
+            abbrs = self.test_descriptions.keys()
+
+        if role.is_server:
+            for client_name in self.clients.keys():
+                for abbr in abbrs:
+                    self.remove_test_result(
+                        server=impl_name, client=client_name, test_abbr=abbr
+                    )
+                    self.remove_measurement_result(
+                        server=impl_name, client=client_name, meas_abbr=abbr
+                    )
+        if role.is_client:
+            for server_name in self.servers.keys():
+                for abbr in abbrs:
+                    self.remove_test_result(
+                        server=server_name, client=impl_name, test_abbr=abbr
+                    )
+                    self.remove_measurement_result(
+                        server=server_name, client=impl_name, meas_abbr=abbr
+                    )
 
     def get_measurement_results_as_dataframe(self) -> pandas.DataFrame:
         """Return the measurement results as data frame."""
