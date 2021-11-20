@@ -361,14 +361,15 @@ class Deployment:
             log_buf(container)
 
             if get_container_status(container) in (ContainerStatus.RUNNING,):
-                if force:
-                    log_callback(container, "Killing container...")
-                    container.kill()
-                else:
-                    log_callback(container, "Stopping container...")
-                    container.stop()
-            #  else:
-            #      log_callback(container, f"status={container.status}")
+                try:
+                    if force:
+                        log_callback(container, "Killing container...")
+                        container.kill()
+                    else:
+                        log_callback(container, "Stopping container...")
+                        container.stop()
+                except docker.errors.APIError as err:
+                    LOGGER.error(err)
 
             log_buf(container)
 

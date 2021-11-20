@@ -67,3 +67,4 @@ class JSONResult(TypedDict):
     quic_version: str
     results: list[list[JSONTestResult]]
     measurements: list[list[JSONMeasurementResult]]
+    # TODO add docker system info of hosts.
