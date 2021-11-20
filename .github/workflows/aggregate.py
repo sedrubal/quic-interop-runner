@@ -1,3 +1,4 @@
+"""Deprecated script. Merging is done automatically."""
 import argparse
 import json
 import sys

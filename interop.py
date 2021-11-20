@@ -95,7 +95,7 @@ class InteropRunner:
         self._result = Result(
             file_path=output,
             log_dir=log_dir,
-            quic_version=int(testcases.QUIC_VERSION, base=16),
+            quic_version=testcases.QUIC_VERSION,
             quic_draft=testcases.QUIC_DRAFT,
             start_time=start_time,
         )

@@ -36,6 +36,7 @@ from enums import ImplementationRole as Role
 from implementations import IMPLEMENTATIONS, Implementation
 from testcases import (
     MEASUREMENTS,
+    QUIC_VERSION,
     TESTCASES,
     MeasurementRealLink,
     Perspective,
@@ -614,7 +615,6 @@ class Deployment:
         server = IMPLEMENTATIONS[server_name]
 
         timeout = 60 * 60 * 1  # 1h
-        version = 0x1
         testcase_lookup: dict[str, Type[TestCase]] = {
             **{tc.name: tc for tc in TESTCASES},
             **{tc.name: tc for tc in MEASUREMENTS},
@@ -632,7 +632,7 @@ class Deployment:
             role=Role.SERVER,
             local_certs_path=local_certs_path,
             testcase=testcase.testname(Perspective.SERVER),
-            version=version,
+            version=QUIC_VERSION,
             local_www_path=local_www_path,
             entrypoint=["sleep", str(timeout)],
         )
@@ -642,7 +642,7 @@ class Deployment:
             role=Role.CLIENT,
             local_certs_path=local_certs_path,
             testcase=testcase.testname(Perspective.CLIENT),
-            version=version,
+            version=QUIC_VERSION,
             request_urls=DEFAULT_REQUEST_URL,
             local_download_path=local_downloads_path,
             entrypoint=["sleep", str(timeout)],
@@ -670,7 +670,7 @@ class Deployment:
         client: Implementation,
         server: Implementation,
         request_urls: str,
-        version: str,
+        version: int,
     ) -> ExecResult:
         if testcase.additional_containers:
             # TODO extra containers
@@ -722,7 +722,7 @@ class Deployment:
         client: Implementation,
         server: Implementation,
         request_urls: str,
-        version: str,
+        version: int,
     ) -> ExecResult:
         with concurrent.futures.ThreadPoolExecutor() as executor:
             create_sim_t = executor.submit(
@@ -855,7 +855,7 @@ class Deployment:
         client: Implementation,
         server: Implementation,
         request_urls: str,
-        version: str,
+        version: int,
     ) -> ExecResult:
         client_cli = self.get_docker_cli(testcase.client_docker_host)
         server_cli = self.get_docker_cli(testcase.server_docker_host)
@@ -1237,7 +1237,7 @@ class Deployment:
         role: Role,
         local_certs_path: Path,
         testcase: str,
-        version,
+        version: int,
         request_urls: Optional[str] = None,
         local_www_path: Optional[Path] = None,
         local_download_path: Optional[Path] = None,
@@ -1249,7 +1249,7 @@ class Deployment:
         env = {
             "ROLE": role.value,
             "TESTCASE": testcase,
-            "VERSION": version,
+            "VERSION": hex(version),
             "SSLKEYLOGFILE": SSLKEYLOG_FILE,
             "QLOGDIR": QLOG_DIR,
         }
@@ -1285,7 +1285,7 @@ class Deployment:
         role: Role,
         local_certs_path: Path,
         testcase: str,
-        version,
+        version: int,
         server_ip: IPAddress,
         server_port: int,
         request_urls: Optional[str] = None,
@@ -1296,7 +1296,7 @@ class Deployment:
         env = {
             "ROLE": role.value,
             "TESTCASE": testcase,
-            "VERSION": version,
+            "VERSION": hex(version),
             "SSLKEYLOGFILE": SSLKEYLOG_FILE,
             "QLOGDIR": QLOG_DIR,
         }

@@ -22,7 +22,7 @@ from units import DataRate, FileSize, Time
 from utils import LOGGER, random_string
 
 QUIC_DRAFT = 34  # draft-34
-QUIC_VERSION = hex(0x1)
+QUIC_VERSION = 0x1
 
 
 def generate_cert_chain(directory: Union[str, Path], length: int = 1):
@@ -292,8 +292,10 @@ class TestCase(abc.ABC):
         if len(versions) != 1:
             raise TestFailed(f"Expected exactly one version. Got {versions}")
 
-        if QUIC_VERSION not in versions:
-            raise TestFailed(f"Wrong version. Expected {QUIC_VERSION}, got {versions}")
+        if hex(QUIC_VERSION) not in versions:
+            raise TestFailed(
+                f"Wrong version. Expected {hex(QUIC_VERSION)}, got {versions}"
+            )
 
         if len(self._files) == 0:
             raise AssertionError("No test files generated.")
