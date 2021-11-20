@@ -943,14 +943,17 @@ class Trace:
                 in_dir_delay >= -0.1 and opp_dir_delay >= -0.1
             ), "The delays should be positive!"
 
+            small_delay_threshold = 0.0015
             if direction == Direction.TO_SERVER:
-                assert (
-                    in_dir_delay < 0.001
-                ), "The delay in direction to the server should be very small, because of norm time."
+                assert in_dir_delay < small_delay_threshold, (
+                    f"The delay in direction to the server should be very small"
+                    f" (<{small_delay_threshold}, because of norm time), but it was {in_dir_delay}."
+                )
             else:
-                assert (
-                    opp_dir_delay < 0.001
-                ), "The delay in direction to the server should be very small, because of norm_time"
+                assert opp_dir_delay < small_delay_threshold, (
+                    f"The delay in direction to the server should be very small"
+                    f" (<{small_delay_threshold}, because of norm_time), but it was {opp_dir_delay}."
+                )
 
             return in_dir_delay + opp_dir_delay
 
