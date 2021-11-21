@@ -215,92 +215,12 @@ class InteropRunner:
         """Print the interop tables."""
         LOGGER.info("Run took %s", datetime.now() - self._result.start_time)
 
-        def get_letters(
-            tests_for_combi: Iterable[TestResultInfo],
-            result: TestResult,
-            color: str,
-        ) -> str:
-            return colored(
-                "".join(
-                    [
-                        test_result.test.abbr
-                        for test_result in tests_for_combi
-                        if test_result.result is result
-                    ]
-                ),
-                color=color,
-            )
-
-        if self._tests:
-            table = prettytable.PrettyTable()
-            table.title = "Test Cases"
-            table.hrules = prettytable.ALL
-            table.vrules = prettytable.ALL
-            table.field_names = [""] + self._servers
-
-            for client in self._clients:
-                row = [client]
-
-                for server in self._servers:
-                    tests_for_combi = self._result.get_test_results_for_combination(
-                        server, client
-                    ).values()
-                    res = "\n".join(
-                        (
-                            get_letters(
-                                tests_for_combi,
-                                TestResult.SUCCEEDED,
-                                "green",
-                            ),
-                            get_letters(
-                                tests_for_combi,
-                                TestResult.UNSUPPORTED,
-                                "grey",
-                            ),
-                            get_letters(tests_for_combi, TestResult.FAILED, "red"),
-                        )
-                    )
-                    row.append(res)
-                table.add_row(row)
-
-            print(table)
-
-        if self._measurements:
-            table = prettytable.PrettyTable()
-            table.title = "Measurements"
-            table.hrules = prettytable.ALL
-            table.vrules = prettytable.ALL
-            table.field_names = [""] + self._servers
-
-            for client in self._clients:
-                row = [client]
-
-                for server in self._servers:
-                    results = []
-
-                    for measurement in self._measurements:
-                        res = self._result.get_measurement_result(
-                            server, client, measurement.abbreviation
-                        )
-
-                        if not hasattr(res, "result"):
-                            continue
-
-                        if res.result == TestResult.SUCCEEDED:
-                            results.append(
-                                colored(
-                                    f"{measurement.abbreviation}: {res.details}",
-                                    "green",
-                                )
-                            )
-                        elif res.result == TestResult.UNSUPPORTED:
-                            results.append(colored(measurement.abbreviation, "grey"))
-                        elif res.result == TestResult.FAILED:
-                            results.append(colored(measurement.abbreviation, "red"))
-                    row.append("\n".join(results))
-                table.add_row(row)
-
-            print(table)
+        self._result.print_tables(
+            servers=sorted(self._servers),
+            clients=sorted(self._clients),
+            test_abbrs=sorted(test.abbreviation for test in self._tests),
+            measurement_abbrs=sorted(meas.abbreviation for meas in self._measurements),
+        )
 
     def _export_results(self):
         if not self._result.file_path:

@@ -15,7 +15,9 @@ from typing import Iterable, Optional, Sequence, Union, cast
 from uuid import UUID, uuid4
 
 import pandas
+import prettytable
 from dateutil.parser import parse as parse_date
+from termcolor import colored
 
 from enums import ImplementationRole, TestResult
 from exceptions import ConflictError
@@ -727,7 +729,10 @@ class Result:
         server_name = server if isinstance(server, str) else server.name
         client_name = client if isinstance(client, str) else client.name
 
-        return self.test_results[server_name][client_name]
+        try:
+            return self.test_results[server_name][client_name]
+        except KeyError:
+            return {}
 
     def get_test_result(
         self,
@@ -880,7 +885,10 @@ class Result:
         server_name = server if isinstance(server, str) else server.name
         client_name = client if isinstance(client, str) else client.name
 
-        return self.measurement_results[server_name][client_name]
+        try:
+            return self.measurement_results[server_name][client_name]
+        except KeyError:
+            return {}
 
     def get_measurement_result(
         self,
@@ -1321,6 +1329,122 @@ class Result:
             return None
         else:
             return Statistics.calc([stat.avg for stat in stats])
+
+    def print_tables(
+        self,
+        servers: Optional[list[str]] = None,
+        clients: Optional[list[str]] = None,
+        test_abbrs: Optional[list[str]] = None,
+        measurement_abbrs: Optional[list[str]] = None,
+    ):
+        """Print the result tables to the terminal."""
+        servers = servers if servers is not None else sorted(self.servers.keys())
+        clients = clients if clients is not None else sorted(self.clients.keys())
+        test_abbrs = (
+            test_abbrs
+            if test_abbrs is not None
+            else sorted(self.test_descriptions.keys())
+        )
+        measurement_abbrs = (
+            measurement_abbrs
+            if measurement_abbrs is not None
+            else sorted(self.measurement_descriptions.keys())
+        )
+
+        # filter out test_abbrs
+        for meas_abbr in measurement_abbrs:
+            if meas_abbr in test_abbrs:
+                test_abbrs.remove(meas_abbr)
+
+        def get_letters(
+            tests_for_combi: Iterable[TestResultInfo],
+            result: TestResult,
+            color: str,
+        ) -> str:
+            return colored(
+                "".join(
+                    [
+                        test_result.test.abbr
+                        for test_result in tests_for_combi
+                        if test_result.result is result
+                    ]
+                ),
+                color=color,
+            )
+
+        if self.test_results and test_abbrs:
+            table = prettytable.PrettyTable()
+            table.title = "Test Cases"
+            table.hrules = prettytable.ALL
+            table.vrules = prettytable.ALL
+            table.field_names = [""] + servers
+
+            for client_name in clients:
+                row = [client_name]
+
+                for server_name in servers:
+                    tests_for_combi = self.get_test_results_for_combination(
+                        server_name, client_name
+                    ).values()
+                    res = "\n".join(
+                        (
+                            get_letters(
+                                tests_for_combi,
+                                TestResult.SUCCEEDED,
+                                "green",
+                            ),
+                            get_letters(
+                                tests_for_combi,
+                                TestResult.UNSUPPORTED,
+                                "grey",
+                            ),
+                            get_letters(tests_for_combi, TestResult.FAILED, "red"),
+                        )
+                    )
+                    row.append(res)
+                table.add_row(row)
+
+            print(table)
+
+        if self.measurement_results and measurement_abbrs:
+            table = prettytable.PrettyTable()
+            table.title = "Measurements"
+            table.hrules = prettytable.ALL
+            table.vrules = prettytable.ALL
+            table.field_names = [""] + servers
+
+            for client_name in clients:
+                row = [client_name]
+
+                for server_name in servers:
+                    results = []
+
+                    for meas_abbr in measurement_abbrs:
+                        try:
+                            res = self.get_measurement_result(
+                                server_name, client_name, meas_abbr
+                            )
+                        except KeyError:
+                            continue
+
+                        if not hasattr(res, "result"):
+                            continue
+
+                        if res.result == TestResult.SUCCEEDED:
+                            results.append(
+                                colored(
+                                    f"{meas_abbr}: {res.details}",
+                                    "green",
+                                )
+                            )
+                        elif res.result == TestResult.UNSUPPORTED:
+                            results.append(colored(meas_abbr, "grey"))
+                        elif res.result == TestResult.FAILED:
+                            results.append(colored(meas_abbr, "red"))
+                    row.append("\n".join(results))
+                table.add_row(row)
+
+            print(table)
 
     def merge(
         self,
