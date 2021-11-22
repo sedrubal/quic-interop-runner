@@ -13,3 +13,5 @@ dist/
 .ipynb_checkpoints
 .vscode
 db.sql
+.debug/
+*.sql
