@@ -1,9 +1,5 @@
 #!/usr/bin/env python3
 
-#
-# TODO we could also plot the goodputs, which can directly be fetched from the result.json files without parsing anything else.
-#
-
 import argparse
 import logging
 from pathlib import Path
@@ -130,7 +126,6 @@ class PlotPltsCli:
             measurement_results = self.load_measurement_results()
 
             timeout = self.get_timeout()
-            timeout = 10
 
             values = [
                 self.get_average_plt(measurement_result)
