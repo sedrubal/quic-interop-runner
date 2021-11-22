@@ -42,7 +42,7 @@ class Reason(Enum):
 
 LINE_REASON_MAPPING = {
     re.compile(r".*Test failed: took longer than.*"): Reason.TIMEOUT,
-    re.compile(r".*No key log file found.*"): Reason.NO_OUTPUT_FILE,
+    re.compile(r".*No key log file found.*"): Reason.NO_KEYLOG_FILE,
     re.compile(r".*Wrong version\..*"): Reason.WRONG_VERSION,
     re.compile(r".*Missing files.*"): Reason.MISSING_FILES,
     re.compile(r".*File size of .* doesn't match.*"): Reason.FILE_SIZE_MISSMATCH,
@@ -325,8 +325,8 @@ class GatherResults:
         self.session.add(run)
         self.session.commit()
 
-        for repetition, log_dir in enumerate(meas_result.repetition_log_dirs):
-            self.insert_measurement_repetition_run(run.id, repetition, log_dir)
+        # for repetition, log_dir in enumerate(meas_result.repetition_log_dirs):
+        #     self.insert_measurement_repetition_run(run.id, repetition, log_dir)
 
         return run.id
 
