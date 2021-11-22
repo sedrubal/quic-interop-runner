@@ -326,6 +326,7 @@ class PlotStatsCli:
                 hue="by",
                 split=True,
                 data=df,
+                clip=[0, 1] if self.efficiency else 0,
             )
             ax.set_xlabel("")
             ax.set_ylabel("")
@@ -484,6 +485,7 @@ class PlotStatsCli:
             alpha=1,
             linewidth=1.5,
             clip=(0, 1) if self.efficiency else None,
+            cut=0,
         )
 
         # # # here we add a white line that represents the contour of each kdeplot

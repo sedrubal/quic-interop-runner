@@ -19,3 +19,5 @@ for extra_arg in "" "--efficiency"; do
         run ./plot_stats.py --no-interactive "${extra_arg}" "--img-path=${IMG_PATH}" --plot-type=ridgeline "${measurement}" "${RESULT}"
     done
 done
+
+echo "Don't forget to plot using ./plot_real_experiments.py!"

@@ -7,7 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from datetime import timedelta
+from datetime import timedelta, datetime
 from pathlib import Path
 from typing import ClassVar, Optional, Type, Union
 
@@ -1761,10 +1761,10 @@ class MeasurementGoodput(Measurement):
         self._check_version_and_files()
 
         packets = self.client_trace.get_1rtt(Direction.FROM_SERVER)
-        packet_times: list[timedelta] = [packet.sniff_time for packet in packets]
+        packet_times: list[datetime] = [packet.sniff_time for packet in packets]
         first = min(packet_times)
         last = max(packet_times)
-        time = last - first
+        time: timedelta = last - first
 
         if not time:
             raise TestFailed("No time difference between first an last packet.")
