@@ -5,7 +5,7 @@
     "role": "both"
   },
   "quicly": {
-    "image": "h2oserver/quicly-interop-runner:latest",
+    "image": "therealsedrubal/quicly-qns",
     "url": "https://github.com/h2o/quicly",
     "role": "both"
   },
@@ -15,7 +15,7 @@
     "role": "both"
   },
   "quant": {
-    "image": "ntap/quant:interop",
+    "image": "therealsedrubal/quant-qns",
     "url": "https://github.com/NTAP/quant",
     "role": "both"
   },
