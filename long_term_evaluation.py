@@ -80,6 +80,11 @@ def parse_args():
         help="The testcases and measurements to analyse",
     )
     parser.add_argument(
+        "--output",
+        type=Path,
+        help="Render the plot there.",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Debug mode",
@@ -190,13 +195,19 @@ class AnalyzeResult(enum.IntEnum):
 AnalyzeResults = dict[str, dict[AnalyzeResult, list[tuple[str, Series]]]]
 
 
-class Cli:
+class LTECli:
     def __init__(
-        self, logs_dir: Path, combinations: list[str], testcases: list[str], debug=False
+        self,
+        logs_dir: Path,
+        combinations: list[str],
+        testcases: list[str],
+        debug=False,
+        output: Optional[Path] = None,
     ):
         self.logs_dir = logs_dir
         self.combinations = combinations
         self.testcases = testcases
+        self.output = output
         self.debug = debug
 
     @cached_property
@@ -323,11 +334,14 @@ class Cli:
                 analyze_result,
                 combinations,
             ) in combinations_by_analzyse_results.items():
+                percentage = len(combinations) * 100 / len(self.all_combinations)
                 print()
-                cprint(f"### {analyze_result.name}", attrs=["bold"])
+                cprint(
+                    f"### {analyze_result.name} ({percentage:.0f} %)", attrs=["bold"]
+                )
                 print()
 
-                for combination, series in combinations:
+                for combination, series in sorted(combinations):
                     test_results_str = "".join(
                         colored("?", color="white", on_color="on_grey")
                         if succeeded is None
@@ -409,7 +423,7 @@ class Cli:
 
             testcases_str = "-".join(sorted(analyze_results.keys()))
             fig.savefig(
-                f"long_term_evaluation-{testcases_str}.png",
+                self.output or f"long_term_evaluation-{testcases_str}.png",
                 dpi=300,
                 #  transparent=True,
                 bbox_inches="tight",
@@ -419,10 +433,11 @@ class Cli:
 
 def main():
     args = parse_args()
-    cli = Cli(
+    cli = LTECli(
         logs_dir=args.logs_dir,
         combinations=args.combination,
         testcases=args.testcase,
+        output=args.output,
         debug=args.debug,
     )
     cli.run()

@@ -195,11 +195,17 @@ class PlotStatsCli:
         )
         # g.map_lower(sns.kdeplot, levels=4, color=".9")
 
-        g.fig.suptitle(
-            f"Correlation between Average Efficiency Values between Different Measurements of the same Implementation Combinations"
-        )
+        # Title will be added by latex figure
+        # g.fig.suptitle(
+        #     f"Correlation between Average Efficiency Values between Different Measurements of the same Implementation Combinations"
+        # )
         # plt.subplots_adjust(top=0.9)
 
+        # place legend in upper right triangle
+        g._legend.set_bbox_to_anchor((0.85, 0.8))
+        g.fig.subplots_adjust(right=0.98)
+
+        # rotate axis labels and clip axes
         for row, axes in enumerate(g.axes):
             for ax in axes[: row + 1]:
                 ax.set_xlim(xmin=0, xmax=1)
