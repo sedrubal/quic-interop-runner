@@ -92,11 +92,22 @@ class Statistics(NamedTuple):
         formatter: Callable[[Union[float, int]], str] = str,
     ) -> str:
         """:Return: A short label for matplotlib."""
+        trans = str.maketrans(
+            {
+                " ": r"\,",
+                "%": r"\%",
+            }
+        )
+        avg_str = formatter(self.avg).translate(trans)
+        # med_str = formatter(self.med).translate(trans)
+        std_str = formatter(self.std).translate(trans)
+        min_str = formatter(self.min).translate(trans)
+        max_str = formatter(self.max).translate(trans)
 
         return "\n".join(
             (
-                fr"$\mu = {formatter(self.avg)}\,\left(\pm {formatter(self.std)}\right)$",
-                fr"Range: ${formatter(self.min)}..{formatter(self.max)}$",
+                fr"$\mu = {avg_str}\,\left(\pm {std_str}\right)$",
+                fr"Range: ${min_str}..{max_str}$",
             )
         )
 
@@ -105,13 +116,24 @@ class Statistics(NamedTuple):
         formatter: Callable[[Union[float, int]], str] = str,
     ) -> str:
         """:Return: A short label for matplotlib."""
+        trans = str.maketrans(
+            {
+                " ": r"\,",
+                "%": r"\%",
+            }
+        )
+        avg_str = formatter(self.avg).translate(trans)
+        med_str = formatter(self.med).translate(trans)
+        std_str = formatter(self.std).translate(trans)
+        min_str = formatter(self.min).translate(trans)
+        max_str = formatter(self.max).translate(trans)
 
         return "\n".join(
             (
-                fr"$\mu = {formatter(self.avg)}$",
-                fr"$\mathrm{{median}} = {formatter(self.med)}$",
-                fr"$\sigma = {formatter(self.std)}$",
-                fr"Range: ${formatter(self.min)}..{formatter(self.max)}$",
+                fr"$\mu = {avg_str}$",
+                fr"$\mathrm{{median}} = {med_str}$",
+                fr"$\sigma = {std_str}$",
+                fr"Range: ${min_str}..{max_str}$",
             )
         )
 
@@ -120,14 +142,25 @@ class Statistics(NamedTuple):
         formatter: Callable[[Union[float, int]], str] = str,
     ) -> str:
         """:Return: A narrow label for matplotlib."""
+        trans = str.maketrans(
+            {
+                " ": r"\,",
+                "%": r"\%",
+            }
+        )
+        avg_str = formatter(self.avg).translate(trans)
+        med_str = formatter(self.med).translate(trans)
+        std_str = formatter(self.std).translate(trans)
+        min_str = formatter(self.min).translate(trans)
+        max_str = formatter(self.max).translate(trans)
 
         return "\n".join(
             (
-                fr"$\mu = {formatter(self.avg)}$",
-                fr"$\mathrm{{Md}} = {formatter(self.med)}$",
-                fr"$\sigma = {formatter(self.std)}$",
-                fr"$\min = {formatter(self.min)}$",
-                fr"$\max = {formatter(self.max)}$",
+                fr"$\mu = {avg_str}$",
+                fr"$\mathrm{{Md}} = {med_str}$",
+                fr"$\sigma = {std_str}$",
+                fr"$\min = {min_str}$",
+                fr"$\max = {max_str}$",
             )
         )
 
@@ -599,7 +632,7 @@ class Subplot:
         plt.close(fig=self.fig)
 
 
-def natural_data_rate(value: int, short: bool = False) -> str:
+def natural_data_rate(value: Union[int, float], short: bool = False) -> str:
     """Convert a value in bps to a natural string."""
     if short:
         replace_units = {

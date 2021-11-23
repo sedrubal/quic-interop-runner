@@ -6,13 +6,17 @@ import argparse
 import sys
 from functools import cached_property
 from pathlib import Path
+from typing import Optional
 
+import pandas as pd
+import seaborn as sns
 from matplotlib import pyplot as plt
 from termcolor import colored, cprint
 
 from enums import TestResult
-from result_parser import MeasurementResultInfo, Result
-from utils import Subplot
+from result_parser import MeasurementDescription, MeasurementResultInfo, Result
+from units import DataRate
+from utils import Statistics, Subplot, natural_data_rate
 
 SAME_AVG_THRESH_PERC = 0.05
 SAME_STDEV_THRESH_PERC = 0.10
@@ -34,6 +38,16 @@ def parse_args():
         default=None,
         type=Path,
         help="Store the plot into this file",
+    )
+    parser.add_argument(
+        "--label1",
+        type=str,
+        help="The label for result 1.",
+    )
+    parser.add_argument(
+        "--label2",
+        type=str,
+        help="The label for result 2.",
     )
     parser.add_argument(
         "result1",
@@ -60,15 +74,25 @@ class CompareCli:
         result1: Result,
         result2: Result,
         test_abbr: str,
+        label1: Optional[str] = None,
+        label2: Optional[str] = None,
         plot=False,
         output=None,
     ):
         self.result1 = result1
         self.result2 = result2
+        self.label1 = label1
+        self.label2 = label2
         self.test_abbr = test_abbr
         self.plot = plot
         self.output = output
         self._unit = ""
+
+    @property
+    def measurement(self) -> MeasurementDescription:
+        """The measurement description to use."""
+
+        return self.result2.measurement_descriptions[self.test_abbr]
 
     @cached_property
     def result_comparison(self):
@@ -278,23 +302,45 @@ class CompareCli:
         """
         Plot something.
         """
+        factor = DataRate.from_str(self._unit)
         avgs1 = [
-            *(x[1][0] for x in self.result_comparison["same avg and stdev"]),
-            *(x[1][0] for x in self.result_comparison["same avg different stdev"]),
-            *(x[1][0] for x in self.result_comparison["different avg same stdev"]),
-            *(x[1][0] for x in self.result_comparison["different avg and stdev"]),
+            *(x[1][0] * factor for x in self.result_comparison["same avg and stdev"]),
+            *(
+                x[1][0] * factor
+                for x in self.result_comparison["same avg different stdev"]
+            ),
+            *(
+                x[1][0] * factor
+                for x in self.result_comparison["different avg same stdev"]
+            ),
+            *(
+                x[1][0] * factor
+                for x in self.result_comparison["different avg and stdev"]
+            ),
         ]
         avgs2 = [
-            *(x[1][1] for x in self.result_comparison["same avg and stdev"]),
-            *(x[1][1] for x in self.result_comparison["same avg different stdev"]),
-            *(x[1][1] for x in self.result_comparison["different avg same stdev"]),
-            *(x[1][1] for x in self.result_comparison["different avg and stdev"]),
+            *(x[1][1] * factor for x in self.result_comparison["same avg and stdev"]),
+            *(
+                x[1][1] * factor
+                for x in self.result_comparison["same avg different stdev"]
+            ),
+            *(
+                x[1][1] * factor
+                for x in self.result_comparison["different avg same stdev"]
+            ),
+            *(
+                x[1][1] * factor
+                for x in self.result_comparison["different avg and stdev"]
+            ),
         ]
-        avg1 = sum(avgs1) / len(avgs1)
-        avg2 = sum(avgs2) / len(avgs2)
         assert len(avgs1) == len(avgs2)
+        stats1 = Statistics.calc(avgs1)
+        stats2 = Statistics.calc(avgs2)
 
-        if self.result1.file_path.name != self.result2.file_path.name:
+        if self.label1 and self.label2:
+            label1 = self.label1
+            label2 = self.label2
+        elif self.result1.file_path.name != self.result2.file_path.name:
             label1 = self.result1.file_path.name
             label2 = self.result2.file_path.name
         elif self.result1.file_path.is_path != self.result2.file_path.is_path:
@@ -312,19 +358,30 @@ class CompareCli:
             label1 = str(self.result1.file_path)
             label2 = str(self.result2.file_path)
 
+        label1 = f"{label1}\n{stats1.mpl_label_narrow(natural_data_rate)}"
+        label2 = f"{label2}\n{stats2.mpl_label_narrow(natural_data_rate)}"
+
+        df1 = pd.DataFrame(avgs1, columns=["avg. Goodput"])
+        df2 = pd.DataFrame(avgs2, columns=["avg. Goodput"])
+        df1.append(["Source"])
+        df2.append(["Source"])
+        df1["Source"] = label1
+        df2["Source"] = label2
+        df = pd.concat([df1, df2])
+
         with Subplot() as (fig, ax):
             ax.set_ylabel("Average Data Rate of Implementation Combination")
             ax.set_title(
-                f"Comparison of Results of Measurement {self.test_abbr}"
-                f"\n({len(avgs1)} combinations)"
+                f"Comparison of Results of Measurement {self.measurement.name.title()}"
+                f"\n({len(avgs1)} Combinations)"
             )
-            ax.yaxis.set_major_formatter(lambda val, _pos: f"{int(val)} {self._unit}")
-            ax.boxplot(
-                [avgs1, avgs2],
-                labels=[
-                    f"{label1}\n(avg. {avg1:.0f} {self._unit})",
-                    f"{label2}\n(avg. {avg2:.0f} {self._unit})",
-                ],
+            ax.yaxis.set_major_formatter(lambda val, _pos: natural_data_rate(val))
+            ax.set_ylim(ymin=0, ymax=10 * DataRate.MBPS)
+            sns.boxplot(
+                data=df,
+                x="Source",
+                y="avg. Goodput",
+                ax=ax,
             )
 
             if self.output:
@@ -348,6 +405,8 @@ def main():
         result1=args.result1,
         result2=args.result2,
         test_abbr=args.test_abbr,
+        label1=args.label1,
+        label2=args.label2,
         plot=args.plot,
         output=args.output,
     )

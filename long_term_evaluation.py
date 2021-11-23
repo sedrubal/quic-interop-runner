@@ -8,58 +8,20 @@ from itertools import product
 from pathlib import Path
 from typing import Iterable, Optional
 
+import pandas as pd
+import seaborn as sns
 from matplotlib import pyplot as plt
+from matplotlib.dates import MonthLocator
 from termcolor import colored, cprint
 
-from result_parser import Result
+from result_parser import MeasurementDescription, Result
 from units import DataRate
-from utils import Subplot, YaspinWrapper, existing_dir_path, natural_data_rate
+from utils import LOGGER, Subplot, YaspinWrapper, existing_dir_path, natural_data_rate
 
 Series = list[tuple[Optional[bool], Optional[float]]]
 
 # limit values to that value. Every other value seems to be buggy.
 MAX_AVG = 100 * DataRate.MBPS
-
-
-COLORS = [
-    "xkcd:darkish red",
-    "xkcd:terracotta",
-    "xkcd:true green",
-    "xkcd:light indigo",
-    "xkcd:moss",
-    "xkcd:toxic green",
-    "xkcd:cobalt blue",
-    "xkcd:dark lime",
-    "xkcd:cornflower blue",
-    "xkcd:bright aqua",
-    "xkcd:hot purple",
-    "xkcd:tealish green",
-    "xkcd:light lilac",
-    "xkcd:indian red",
-    "xkcd:pinky red",
-    "xkcd:darkish green",
-    "xkcd:fern",
-    "xkcd:lemon",
-    "xkcd:bright cyan",
-    "xkcd:tealish",
-    "xkcd:earth",
-    "xkcd:medium grey",
-    "xkcd:ugly pink",
-    "xkcd:parchment",
-    "xkcd:grey purple",
-    "xkcd:turtle green",
-    "xkcd:sickly green",
-    "xkcd:amethyst",
-    "xkcd:light bluish green",
-    "xkcd:steel",
-    "xkcd:piss yellow",
-    "xkcd:pale gold",
-    "xkcd:lipstick",
-    "xkcd:midnight",
-    "xkcd:chocolate brown",
-    "xkcd:lemon lime",
-    "xkcd:grey brown",
-]
 
 
 def parse_args():
@@ -209,6 +171,22 @@ class LTECli:
         self.testcases = testcases
         self.output = output
         self.debug = debug
+
+    @property
+    def measurements(self) -> list[MeasurementDescription]:
+        """The measurement descriptions to use."""
+
+        meas_descs = list[MeasurementDescription]()
+        result = self.results[-1]
+        for abbr in self.testcases:
+            try:
+                meas_descs.append(result.measurement_descriptions[abbr])
+            except KeyError:
+                LOGGER.warning(
+                    "Measurement %s is unknown. Maybe it is a test case. Ignoring.",
+                    abbr,
+                )
+        return meas_descs
 
     @cached_property
     def results(self) -> list[Result]:
@@ -361,16 +339,19 @@ class LTECli:
         self.plot_avgs(analyze_results)
 
     def plot_avgs(self, analyze_results: AnalyzeResults):
-        dates = [result.end_time for result in self.results]
-        with Subplot(nrows=len(analyze_results)) as (fig, axs):
+        # sns.set_theme(style="whitegrid")
 
-            axs: Iterable[plt.Axes] = [axs] if len(analyze_results) == 1 else axs
+        dates = [result.end_time for result in self.results]
+        with Subplot(nrows=len(self.measurements)) as (fig, axs):
+
+            axs: Iterable[plt.Axes] = [axs] if len(self.measurements) == 1 else axs
             fig.title = "Long Term Evaluation of QUIC Interop Runner results"
 
-            for ax, (testcase, combinations_by_analzyse_results) in zip(
-                axs, analyze_results.items()
-            ):
-                ax.set_title(f"Measurement Case: {testcase}")
+            for ax, meas_case in zip(axs, self.measurements):
+                combinations_by_analzyse_results = analyze_results[meas_case.abbr]
+                ax.set_title(
+                    f"Values of Measurement {meas_case.name.title()} over Time"
+                )
                 ax.set_xlabel("Run")
                 ax.set_ylabel("Average Goodput of each Implementation")
                 ax.yaxis.set_major_formatter(lambda val, _pos: natural_data_rate(val))
@@ -394,9 +375,8 @@ class LTECli:
                         ]
                         avgs_by_server[server_name].append(values)
 
-                for server_index, (server, avg_series) in enumerate(
-                    sorted(avgs_by_server.items())
-                ):
+                df = pd.DataFrame()
+                for server, avg_series in sorted(avgs_by_server.items()):
                     avgs_for_server = list[Optional[float]]()
 
                     for run_index in range(len(avg_series[0])):
@@ -411,15 +391,47 @@ class LTECli:
                         else:
                             avgs_for_server.append(None)
 
-                    ax.plot(
-                        dates,
-                        avgs_for_server,
-                        marker=".",
-                        label=server,
-                        color=COLORS[server_index % len(COLORS)],
-                    )
+                    df[server] = avgs_for_server
 
-                ax.legend(title="Server Implementation")
+                df.index = dates
+
+                # clip first few samples
+                df = df[df.index > pd.Timestamp(year=2021, month=7, day=1)]
+
+                # aggregate by day
+                df = df.groupby(df.index.floor("d")).mean()
+
+                # # add nans for missing data
+                # max_time_delta = pd.Timedelta(days=1)
+                # append_dfs = list[pd.DataFrame]()
+                # for i, date in enumerate(df.index[:-1]):
+                #     next_date = df.index[i + 1]
+                #     if next_date - date > max_time_delta:
+                #         hole_indices = pd.date_range(
+                #             start=date + max_time_delta,
+                #             end=next_date - max_time_delta,
+                #             freq="D",
+                #         )
+                #         hole_df = pd.DataFrame(
+                #             index=hole_indices,
+                #             columns=df.columns,
+                #         )
+                #         append_dfs.append(hole_df)
+                # if append_dfs:
+                #     df = pd.concat([df, *append_dfs])
+                #     df.sort_index(inplace=True)
+                # df.plot()
+
+                sns.lineplot(
+                    data=df,
+                    markers=True,
+                    # dashes=False,
+                    markeredgecolor=None,
+                    ax=ax,
+                )
+                ax.xaxis.set_major_locator(MonthLocator())
+
+                ax.legend(title="Server")
 
             testcases_str = "-".join(sorted(analyze_results.keys()))
             fig.savefig(
