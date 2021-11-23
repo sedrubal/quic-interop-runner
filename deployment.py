@@ -1315,16 +1315,14 @@ class Deployment:
         if role == Role.SERVER:
             extra_hosts: Optional[dict[str, str]] = None
         else:
+            extra_hosts = {
+                "server": server_ip.exploded,
+                "server46": server_ip.exploded,
+            }
             if server_ip.version == 4:
-                extra_hosts = {
-                    "server4": server_ip.exploded,
-                    #  "server46": other_ipv4.exploded,
-                }
+                extra_hosts["server4"] = server_ip.exploded
             else:
-                extra_hosts = {
-                    "server6": server_ip.exploded,
-                    #  "server46": other_ipv4.exploded,
-                }
+                extra_hosts["server6"] = server_ip.exploded
 
         container = self._create_container(
             cli=cli,
