@@ -943,16 +943,31 @@ class Trace:
                 in_dir_delay >= -0.1 and opp_dir_delay >= -0.1
             ), "The delays should be positive!"
 
-            small_delay_threshold = 0.0015
+            small_delay_threshold = {
+                "warn": 0.001,
+                "error": 0.0015,
+                "fail": 0.002,
+            }
             if direction == Direction.TO_SERVER:
-                assert in_dir_delay < small_delay_threshold, (
-                    f"The delay in direction to the server should be very small"
-                    f" (<{small_delay_threshold}, because of norm time), but it was {in_dir_delay}."
-                )
+                small_delay = in_dir_delay
             else:
-                assert opp_dir_delay < small_delay_threshold, (
+                small_delay = opp_dir_delay
+            if small_delay > small_delay_threshold["fail"]:
+                raise AssertionError(
+                    f"The delay in direction to the server should definitevly be smaller than "
+                    f"{small_delay_threshold['fail']} (because of normalized time) but was {small_delay}."
+                )
+            elif small_delay > small_delay_threshold["error"]:
+                LOGGER.error(
                     f"The delay in direction to the server should be very small"
-                    f" (<{small_delay_threshold}, because of norm_time), but it was {opp_dir_delay}."
+                    f" (<{small_delay_threshold['error']}, because of norm time), but it was {small_delay}."
+                    f" Can't calculate RTT."
+                )
+                return None
+            elif small_delay > small_delay_threshold["warn"]:
+                LOGGER.warning(
+                    f"The delay in direction to the server should be very small"
+                    f" (<{small_delay_threshold['warn']}, because of norm time), but it was {small_delay}."
                 )
 
             return in_dir_delay + opp_dir_delay
