@@ -82,7 +82,7 @@ def parse_args():
     )
     parser.add_argument(
         "-f",
-        "--format",
+        "--img-format",
         type=str,
         default="png",
         help="The format of the image to save",
@@ -584,7 +584,7 @@ def main():
         efficiency=args.efficiency,
         debug=args.debug,
         img_path=args.img_path,
-        img_format=args.format,
+        img_format=args.img_format,
         no_interactive=args.no_interactive,
     )
     cli.run()

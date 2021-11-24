@@ -44,7 +44,7 @@ class JSONImageMetadata(TypedDict):
     """Metadata about an image."""
 
     image: str
-    id: str
+    id: Optional[str]
     repo_digests: Optional[list[str]]
     versions: list[str]
     created: Optional[str]

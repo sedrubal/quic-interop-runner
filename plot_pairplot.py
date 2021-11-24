@@ -80,7 +80,7 @@ def parse_args():
     )
     parser.add_argument(
         "-f",
-        "--format",
+        "--img-format",
         type=str,
         default="png",
         help="The format of the image to save",
@@ -185,6 +185,11 @@ class PlotStatsCli:
             hue="server",
             corner=True,
             dropna=True,
+            kind="scatter",
+            markers=[
+                self.results[0].servers[server_name].unique_marker
+                for server_name in sorted(df.server.unique())
+            ],
             diag_kind="hist",
             diag_kws={
                 "hue": None,
@@ -205,17 +210,51 @@ class PlotStatsCli:
         g._legend.set_bbox_to_anchor((0.85, 0.8))
         g.fig.subplots_adjust(right=0.98)
 
+        watermarks_diagonal = sorted(meas.abbr.upper() for meas in self.measurements)
+        watermarks = list("ABCDEFHKLMOPRSTUWXYZ")
+        watermark_index = 0
         # rotate axis labels and clip axes
         for row, axes in enumerate(g.axes):
-            for ax in axes[: row + 1]:
+            for col, ax in enumerate(axes[: row + 1]):
+                # limit (efficiencies)
                 ax.set_xlim(xmin=0, xmax=1)
+                # set axis formatter
                 ax.xaxis.set_major_formatter(self.format_value)
+                # rotate labels at the bottom
                 for label in ax.get_xticklabels():
                     label.set_rotation(90)
-            for ax in axes[:row]:
-                # y-axis only scatter plots, not diag
-                ax.set_ylim(ymin=0, ymax=1)
-                ax.yaxis.set_major_formatter(self.format_value)
+
+                if col < row:
+                    # lower triangle: scatter plot (not hist)
+                    ax.set_ylim(ymin=0, ymax=1)
+                    ax.yaxis.set_major_formatter(self.format_value)
+                    # watermark
+                    ax.text(
+                        0.5,
+                        0.5,
+                        watermarks[watermark_index],
+                        transform=ax.transAxes,
+                        fontsize=40,
+                        color="grey",
+                        alpha=0.25,
+                        ha="center",
+                        va="center",
+                    )
+                    watermark_index += 1
+                else:
+                    # diagonal
+                    # watermark
+                    ax.text(
+                        0.5,
+                        0.5,
+                        watermarks_diagonal[row],
+                        transform=ax.transAxes,
+                        fontsize=40,
+                        color="grey",
+                        alpha=0.25,
+                        ha="center",
+                        va="center",
+                    )
 
         self._save(
             g.fig,
@@ -257,7 +296,7 @@ def main():
         # plot_type=args.plot_type,
         debug=args.debug,
         img_path=args.img_path,
-        img_format=args.format,
+        img_format=args.img_format,
         no_interactive=args.no_interactive,
     )
     cli.run()

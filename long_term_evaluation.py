@@ -424,7 +424,10 @@ class LTECli:
 
                 sns.lineplot(
                     data=df,
-                    markers=True,
+                    markers=[
+                        self.results[-1].servers[server_name].unique_marker
+                        for server_name in sorted(df.columns)
+                    ],
                     # dashes=False,
                     markeredgecolor=None,
                     ax=ax,

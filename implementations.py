@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 import docker
+import seaborn as sns
 from dateutil.parser import parse as parse_date
 
 from enums import ImplementationRole
@@ -109,6 +110,14 @@ class Implementation:
             ),
             compliant=self.compliant,
         )
+
+    @property
+    def unique_marker(self) -> str:
+        """Return a unique, well distinguishable matplotlib marker."""
+
+        markers = sns._core.unique_markers(len(IMPLEMENTATIONS))
+        index = sorted(IMPLEMENTATIONS.keys()).index(self.name)
+        return markers[index]
 
     def __str__(self):
         role_flags = "&".join(
