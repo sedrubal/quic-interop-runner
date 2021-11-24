@@ -179,6 +179,7 @@ class PlotStatsCli:
         ).reset_index()
 
         sns.set_theme(style="whitegrid")
+        plt.rc("legend", fontsize=14)
 
         g = sns.pairplot(
             data=df,
@@ -186,6 +187,7 @@ class PlotStatsCli:
             corner=True,
             dropna=True,
             kind="scatter",
+            aspect=1,
             markers=[
                 self.results[0].servers[server_name].unique_marker
                 for server_name in sorted(df.server.unique())
@@ -207,17 +209,20 @@ class PlotStatsCli:
         # plt.subplots_adjust(top=0.9)
 
         # place legend in upper right triangle
-        g._legend.set_bbox_to_anchor((0.85, 0.8))
+        g._legend.set_bbox_to_anchor((0.85, 0.7))
         g.fig.subplots_adjust(right=0.98)
 
-        watermarks_diagonal = sorted(meas.abbr.upper() for meas in self.measurements)
+        meas_names = [meas.name for meas in sorted(self.measurements)]
+        watermarks_diagonal = [meas.abbr.upper() for meas in sorted(self.measurements)]
         watermarks = list("ABCDEFHKLMOPRSTUWXYZ")
         watermark_index = 0
+        plot_regression_in = frozenset({"A", "D", "E", "H", "K", "M"})
         # rotate axis labels and clip axes
         for row, axes in enumerate(g.axes):
             for col, ax in enumerate(axes[: row + 1]):
                 # limit (efficiencies)
                 ax.set_xlim(xmin=0, xmax=1)
+                ax.set_xticks([0, 0.25, 0.5, 0.75, 1])
                 # set axis formatter
                 ax.xaxis.set_major_formatter(self.format_value)
                 # rotate labels at the bottom
@@ -227,12 +232,14 @@ class PlotStatsCli:
                 if col < row:
                     # lower triangle: scatter plot (not hist)
                     ax.set_ylim(ymin=0, ymax=1)
+                    ax.set_yticks([0, 0.25, 0.5, 0.75, 1])
                     ax.yaxis.set_major_formatter(self.format_value)
                     # watermark
+                    watermark = watermarks[watermark_index]
                     ax.text(
                         0.5,
                         0.5,
-                        watermarks[watermark_index],
+                        watermark,
                         transform=ax.transAxes,
                         fontsize=40,
                         color="grey",
@@ -241,6 +248,37 @@ class PlotStatsCli:
                         va="center",
                     )
                     watermark_index += 1
+                    if watermark in plot_regression_in:
+                        # regression (one regression for all instead of one for each hue)
+                        row_meas_name = meas_names[row]
+                        col_meas_name = meas_names[col]
+                        sns.regplot(
+                            x=col_meas_name,
+                            y=row_meas_name,
+                            data=df[["server", "client", row_meas_name, col_meas_name]],
+                            robust=True,
+                            ci=None,
+                            scatter=False,
+                            fit_reg=True,
+                            color="red",
+                            truncate=False,
+                            line_kws={
+                                "alpha": 0.25,
+                                # "color": "red",
+                                # "linestyle": "dashed",
+                                "linewidth": 1,
+                            },
+                            ax=ax,
+                        )
+                    # diagonal line
+                    ax.axline(
+                        [0, 0],
+                        [1, 1],
+                        color="grey",
+                        linewidth=1,
+                        alpha=0.25,
+                        linestyle="dashed",
+                    )
                 else:
                     # diagonal
                     # watermark

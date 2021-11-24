@@ -80,6 +80,9 @@ class MeasurementDescription(TestDescription):
             repetitions=None,
         )
 
+    def __lt__(self, other: "MeasurementDescription") -> bool:
+        return self.name < other.name
+
 
 @dataclass(frozen=True)  # type: ignore
 class _ResultInfoMixin(ABC):
