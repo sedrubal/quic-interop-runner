@@ -27,13 +27,6 @@ from utils import Statistics, Subplot, YaspinWrapper, natural_data_rate
 LOGGER = logging.getLogger("quic-interop-runner")
 
 
-# class PlotType(Enum):
-#     BOXPLOT = "boxplot"
-#     KDES = "kdes"
-#     HEATMAP = "heatmap"
-#     RIDGELINE = "ridgeline"
-
-
 def parse_args():
     """Parse command line args."""
     parser = argparse.ArgumentParser(__doc__)

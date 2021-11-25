@@ -13,6 +13,7 @@ from typing import Any, Callable, Literal, Optional, Union
 
 import numpy as np
 import pandas as pd
+import prettytable
 import seaborn as sns
 from matplotlib import pyplot as plt
 from termcolor import colored
@@ -38,13 +39,15 @@ def parse_args():
     """Parse command line args."""
     parser = argparse.ArgumentParser(__doc__)
     parser.add_argument(
-        "tests",
+        "--test",
+        dest="tests",
         nargs="+",
         type=str,
         help="The measurement cases to plot.",
     )
     parser.add_argument(
-        "result",
+        "results",
+        nargs="+",
         type=Result,
         help="Result file to use.",
     )
@@ -94,7 +97,7 @@ class PlotStatsCli:
     def __init__(
         self,
         test_abbrs: str,
-        result: Result,
+        results: list[Result],
         plot_type: PlotType,
         img_path: Path,
         img_format: str,
@@ -103,7 +106,7 @@ class PlotStatsCli:
         no_interactive: bool = False,
     ) -> None:
         self.test_abbrs = test_abbrs
-        self.result = result
+        self.results = results
         self.plot_type = plot_type
         self.efficiency = efficiency
         self.debug = debug
@@ -111,8 +114,9 @@ class PlotStatsCli:
         self.img_path = img_path
         self.img_format = img_format
         self._colors = Tango()
-        self.result.load_from_json()
         self.no_interactive = no_interactive
+        for result in self.results:
+            result.load_from_json()
 
     def _log(self, msg: str, log_level: int = logging.INFO):
         if self._spinner:
@@ -124,15 +128,27 @@ class PlotStatsCli:
     def measurements(self) -> list[MeasurementDescription]:
         """The measurements to use."""
 
-        try:
-            return [
-                self.result.measurement_descriptions[abbr] for abbr in self.test_abbrs
-            ]
-        except KeyError:
-            sys.exit(
-                f"Unknown measurement in {', '.join(self.test_abbrs)}. "
-                f"Known ones are: {', '.join(sorted(self.result.measurement_descriptions.keys()))}"
-            )
+        measurements = list[MeasurementDescription]()
+        available_measurements = set[str]()
+        for result in self.results:
+            available_measurements.update(result.measurement_descriptions.keys())
+        if not self.test_abbrs:
+            self.test_abbrs = sorted(available_measurements)
+        for test_abbr in self.test_abbrs:
+            for result in self.results:
+                test_desc = result.measurement_descriptions.get(test_abbr, None)
+                if test_desc is None:
+                    continue
+                else:
+                    measurements.append(test_desc)
+                    break
+            else:
+                sys.exit(
+                    f"Unknown measurement in {', '.join(self.test_abbrs)}. "
+                    f"Known ones are: {', '.join(sorted(available_measurements))}"
+                )
+
+        return measurements
 
     @property
     def meas_prop_key(self) -> str:
@@ -152,90 +168,144 @@ class PlotStatsCli:
 
         return "%" if self.efficiency else "kbps"
 
+    def format_percentage(self, value: Union[float, int], _pos=None) -> str:
+        return f"{value * 100:.0f} %"
+
+    def format_data_rate(self, value: Union[float, int], _pos=None) -> str:
+        """A formatter for the current unit."""
+        return natural_data_rate(int(value))
+
+    def _format_latex(self, text: str) -> str:
+        return str.translate(
+            text,
+            str.maketrans(
+                {
+                    " ": r"\,",
+                    "%": r"\%",
+                }
+            ),
+        )
+
     def format_value(
         self, value: Union[float, int], _pos: Optional[Any] = None, latex: bool = False
     ) -> str:
         """A formatter for the current unit."""
         text = (
-            f"{value * 100:.0f} %" if self.efficiency else natural_data_rate(int(value))
+            self.format_percentage(value)
+            if self.efficiency
+            else self.format_data_rate(value)
         )
         if latex:
-            text = str.translate(
-                text,
-                str.maketrans(
-                    {
-                        " ": r"\,",
-                        "%": r"\%",
-                    }
-                ),
-            )
+            return self._format_latex(text)
         return text
 
+    def get_dataframe(self) -> pd.DataFrame:
+        dfs = [result.get_measurement_results_as_dataframe() for result in self.results]
+        return pd.concat(dfs)
+
     def plot_boxplot(self):
-        with Subplot() as (fig, ax):
-            assert isinstance(ax, plt.Axes)
-            df = self.result.get_measurement_results_as_dataframe()
-            sns.set_theme(style="whitegrid")
+        # sns.set_theme(style="whitegrid")
+        df = self.get_dataframe()
+        df = df[["measurement", "value", "efficiency"]]
 
-            ax = sns.boxplot(
-                ax=ax,
+        # replace measurements with abbreviations
+        for measurement in self.measurements:
+            df.loc[df.measurement == measurement.name, "measurement"] = measurement.abbr
+
+        with Subplot(ncols=2) as (fig, axs):
+            assert not isinstance(axs, plt.Axes)
+            [ax1, ax2] = axs
+            assert isinstance(ax1, plt.Axes)
+            assert isinstance(ax2, plt.Axes)
+
+            ax1.grid()
+            ax2.grid()
+            # breakpoint()
+            sns.boxplot(
+                ax=ax1,
                 x="measurement",
-                y=self.meas_prop_key,
-                data=df,
+                y="value",
+                data=df[["measurement", "value"]],
             )
-            ax.set_title(f"{self.meas_prop_name.title()} by Measurement")
-            ax.grid()
-            ax.yaxis.set_major_formatter(self.format_value)
-            if self.efficiency:
-                ax.set_ylim(ymin=0, ymax=1)
-            else:
-                ax.set_ylim(ymin=0)
+            sns.boxplot(
+                ax=ax2,
+                x="measurement",
+                y="efficiency",
+                data=df[["measurement", "efficiency"]],
+            )
+            # ax.set_title(f"{self.meas_prop_name.title()} by Measurement")
+            ax1.yaxis.set_major_formatter(self.format_data_rate)
+            ax2.yaxis.set_major_formatter(self.format_percentage)
+            ax1.set_ylim(ymin=0)
+            ax2.set_ylim(ymin=0, ymax=1)
+            # no labels, will be explained in titles
+            ax1.set_xlabel("")
+            ax1.set_ylabel("")
+            ax2.set_xlabel("")
+            ax2.set_ylabel("")
+            # titles
+            ax1.set_title("Goodput")
+            ax2.set_title("Efficiency")
+            # move tickes of right axis to right
+            ax2.yaxis.tick_right()
+            # padding between subplots
+            fig.subplots_adjust(wspace=0.1)
 
-            stats_lines = list[str]()
+            table = prettytable.PrettyTable()
+            table.hrules = prettytable.FRAME
+            table.vrules = prettytable.ALL
+            table.field_names = [
+                "Measurement",
+                "Type",
+                "AVG",
+                "Med",
+                "std",
+                "min",
+                "max",
+                "q05",
+                "q95",
+            ]
+
             for measurement in self.measurements:
-                stats = (
-                    self.result.get_overall_measurement_efficiency_stats(
-                        measurement.abbr
-                    )
-                    if self.efficiency
-                    else self.result.get_overall_measurement_value_stats(
-                        measurement.abbr
-                    )
+                val_stats = Statistics.calc(
+                    df[df.measurement == measurement.abbr]["value"]
                 )
-                if stats:
-                    stats_lines.append(measurement.name)
-                    stats_lines.append(
-                        stats.mpl_label_short(
-                            formatter=lambda val: self.format_value(val, latex=True)
-                        )
-                    )
+                eff_stats = Statistics.calc(
+                    df[df.measurement == measurement.abbr]["efficiency"]
+                )
+                table.add_row(
+                    [
+                        measurement.name.title(),
+                        "Values",
+                        self.format_data_rate(val_stats.avg),
+                        self.format_data_rate(val_stats.med),
+                        self.format_data_rate(val_stats.std),
+                        self.format_data_rate(val_stats.min),
+                        self.format_data_rate(val_stats.max),
+                        self.format_data_rate(val_stats.q_05),
+                        self.format_data_rate(val_stats.q_95),
+                    ]
+                )
+                table.add_row(
+                    [
+                        measurement.name.title(),
+                        "Efficiencies",
+                        self.format_percentage(eff_stats.avg),
+                        self.format_percentage(eff_stats.med),
+                        self.format_percentage(eff_stats.std),
+                        self.format_percentage(eff_stats.min),
+                        self.format_percentage(eff_stats.max),
+                        self.format_percentage(eff_stats.q_05),
+                        self.format_percentage(eff_stats.q_95),
+                    ]
+                )
 
-            stats_text = "\n".join(stats_lines)
-
-            ax.text(
-                1.05,
-                0.5,
-                stats_text,
-                transform=ax.transAxes,
-                fontsize=12,
-                verticalalignment="center",
-                horizontalalignment="left",
-                bbox=dict(
-                    boxstyle="round",
-                    facecolor=self._colors.chocolate1,
-                    edgecolor=self._colors.chocolate3,
-                    alpha=0.75,
-                ),
-            )
-            plt.subplots_adjust(right=0.55)
-            plt.subplots_adjust(left=0.2)
-            ax.set_xlabel("")
-            ax.set_ylabel("")
+            print(table)
 
             # TODO: Use ax.violinplot?
             self._save(
                 fig,
-                f"boxplots-{self.meas_prop_name.lower()}-{'-'.join(meas.abbr for meas in self.measurements)}",
+                f"boxplots-{'-'.join(meas.abbr for meas in sorted(self.measurements))}",
             )
 
     def plot_kdes(self):
@@ -579,7 +649,7 @@ def main():
     args = parse_args()
     cli = PlotStatsCli(
         test_abbrs=args.tests,
-        result=args.result,
+        results=args.results,
         plot_type=args.plot_type,
         efficiency=args.efficiency,
         debug=args.debug,

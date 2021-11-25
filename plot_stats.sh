@@ -34,6 +34,14 @@ run_muted ./compare_results.py \
     "${RESULT_SIM}" \
     G
 
+run ./plot_stats.py \
+    --no-interactive \
+    "--img-path=${IMG_PATH}" \
+    "--img-format=${FORMAT}" \
+    --plot-type=boxplot \
+    "${RESULT_SIM}" \
+    "${RESULT_REAL}"
+
 for extra_arg in "" "--efficiency"; do
     # TODO measurements argument breaks
     run ./plot_stats.py \
@@ -41,17 +49,9 @@ for extra_arg in "" "--efficiency"; do
         "${extra_arg}" \
         "--img-path=${IMG_PATH}" \
         "--img-format=${FORMAT}" \
-        --plot-type=boxplot \
-        "${MEASUREMENTS[@]}" \
-        "${RESULT_SIM}"
-    run ./plot_stats.py \
-        --no-interactive \
-        "${extra_arg}" \
-        "--img-path=${IMG_PATH}" \
-        "--img-format=${FORMAT}" \
         --plot-type=kdes \
-        "${MEASUREMENTS[@]}" \
-        "${RESULT_SIM}"
+        "${RESULT_SIM}" \
+        "${RESULT_REAL}"
 
     for measurement in "${MEASUREMENTS[@]}"; do
         run ./plot_stats.py \
@@ -61,7 +61,8 @@ for extra_arg in "" "--efficiency"; do
             "--img-format=${FORMAT}" \
             --plot-type=heatmap \
             "${measurement}" \
-            "${RESULT_SIM}"
+            "${RESULT_SIM}" \
+            "${RESULT_REAL}"
         run ./plot_stats.py \
             --no-interactive \
             "${extra_arg}" \
@@ -69,7 +70,8 @@ for extra_arg in "" "--efficiency"; do
             "--img-format=${FORMAT}" \
             --plot-type=ridgeline \
             "${measurement}" \
-            "${RESULT_SIM}"
+            "${RESULT_SIM}" \
+            "${RESULT_REAL}"
     done
 done
 
