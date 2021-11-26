@@ -724,6 +724,7 @@ class Trace:
             not self._cache_mode.load
             or not self._facts_cache_file.is_file()
             or not self._facts_cache_file.stat().st_size > 0
+            or self._facts_cache_file.stat().st_mtime <= self.input_file.stat().st_mtime
         ):
             return None
 
