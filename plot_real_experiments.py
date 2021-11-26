@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
 
 import argparse
-from pathlib import Path
+import sys
 from datetime import datetime
+from pathlib import Path
 
-import seaborn as sns
-from matplotlib import pyplot as plt
 import matplotlib.dates as mdates
 import pandas as pd
+import seaborn as sns
+from matplotlib import pyplot as plt
 from termcolor import colored
 
-from result_parser import Result
+from result_parser import MeasurementDescription, Result
 from utils import Subplot, natural_data_rate
 
 
@@ -50,12 +51,6 @@ def parse_args():
         default="png",
         help="The format of the image to save",
     )
-    parser.add_argument(
-        "-t",
-        "--time",
-        action="store_true",
-        help="Use only the time.",
-    )
 
     return parser.parse_args()
 
@@ -69,7 +64,6 @@ class PlotSatCli:
         img_format: str,
         # debug: bool = False,
         no_interactive: bool = False,
-        use_time: bool = False,
     ):
         self.result = result
         self._meas_abbrs = measurements
@@ -77,10 +71,9 @@ class PlotSatCli:
         self.img_format = img_format
         # self._colors = Tango()
         self.no_interactive = no_interactive
-        self.use_time = use_time
 
     @property
-    def measurements(self) -> list["MeasurementDescription"]:
+    def measurements(self) -> list[MeasurementDescription]:
         """The measurements to use."""
 
         try:
@@ -117,32 +110,70 @@ class PlotSatCli:
             plt.show()
 
     def plot_data(self, df: pd.DataFrame):
-        with Subplot() as (fig, ax):
+        with Subplot(ncols=2, sharey=True) as (fig, axs):
+            assert not isinstance(axs, plt.Axes)
+            [ax1, ax2] = axs
+            assert isinstance(ax1, plt.Axes)
+            assert isinstance(ax2, plt.Axes)
+
+            # ax1.yaxis.tick_right()
+            ax1.yaxis.set_major_formatter(lambda val, _pos: natural_data_rate(val))
+            ax1.yaxis.set_label_coords(1, y=1)
+            ax1.yaxis.label.set_rotation(0)
+
             fig.suptitle("Measurement Results using Real Satellite Links over Time")
-            plt.xticks(rotation=45)
-            sns.scatterplot(
-                ax=ax,
-                data=df,
-                x="Time",
-                y="Goodput",
-                #  label="measurement",
-                hue="Measurement",
+
+            cmap = sns.color_palette(as_cmap=True)
+            color_map = {meas.name: cmap[i] for i, meas in enumerate(self.measurements)}
+
+            for label, color in color_map.items():
+                ax1.scatter(
+                    x=df[df["Measurement"] == label]["Time"],
+                    y=df[df["Measurement"] == label]["Goodput"],
+                    facecolors=color,
+                    edgecolors="white",
+                    linewidth=0.5,
+                    label=label,
+                )
+                ax2.scatter(
+                    x=df[df["Measurement"] == label]["Time of Day"],
+                    y=df[df["Measurement"] == label]["Goodput"],
+                    facecolors=color,
+                    edgecolors="white",
+                    linewidth=0.5,
+                    label=label,
+                )
+
+            # ax2.xaxis.set_major_locator(mdates.HourLocator())
+            ax2.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
+            ax2.set_xlim(xmin=datetime(1970, 1, 1, 0, 0), xmax=datetime(1970, 1, 2))
+
+            ax1.set_title("Time")
+            ax2.set_title("Time of Day")
+
+            for label in (*ax1.get_xticklabels(), *ax2.get_xticklabels()):
+                label.set_rotation(45)
+
+            lines, labels = fig.axes[-1].get_legend_handles_labels()
+            fig.legend(
+                lines,
+                labels,
+                title="Measurement",
+                loc="lower center",
+                ncol=3,
+                bbox_to_anchor=(0.5, -0.2),
             )
 
-        ax.yaxis.set_major_formatter(lambda val, _pos: natural_data_rate(val))
-        if self.use_time:
-            # ax.xaxis.set_major_locator(mdates.HourLocator())
-            ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
-            ax.set_xlim(xmin=datetime(1970, 1, 1, 0, 0), xmax=datetime(1970, 1, 2))
-        meas_abbrs = "-".join(meas.abbr for meas in self.measurements)
-        time_str = "-time" if self.use_time else ""
-        self._save(
-            fig,
-            f"real-sat-experiment-results{time_str}-{meas_abbrs}",
-        )
+            # fig.tight_layout()
+
+            meas_abbrs = "-".join(meas.abbr for meas in self.measurements)
+            self._save(
+                fig,
+                f"real-sat-experiment-results-{meas_abbrs}",
+            )
 
     def collect_data(self) -> pd.DataFrame:
-        data = list[tuple[datetime, float, str]]()
+        data = list[tuple[datetime, datetime, float, str]]()
 
         for meas_desc in self.measurements:
             for meas in self.result.get_all_measurements_of_type(meas_desc.abbr):
@@ -153,15 +184,12 @@ class PlotSatCli:
                         with output.open("r") as file:
                             first_line = file.readline()
                             date = datetime.fromisoformat(first_line.split(",")[0])
-                        if self.use_time:
-                            time = date.replace(year=1970, month=1, day=1)
-                        else:
-                            time = date
-                        data.append((time, value * 1000, meas.test.name))
+                        time = date.replace(year=1970, month=1, day=1)
+                        data.append((date, time, value * 1000, meas.test.name))
 
         df = pd.DataFrame(
             data,
-            columns=["Time", "Goodput", "Measurement"],
+            columns=["Time", "Time of Day", "Goodput", "Measurement"],
         )
 
         # if self.use_time:
@@ -183,7 +211,6 @@ def main():
         img_path=args.img_path,
         img_format=args.format,
         no_interactive=args.no_interactive,
-        use_time=args.time,
     )
     cli.run()
 
