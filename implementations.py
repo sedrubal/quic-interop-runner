@@ -28,7 +28,7 @@ class Implementation:
     name: str
     url: str
     role: ImplementationRole
-    image: str
+    image: Optional[str]
 
     compliant: Optional[bool] = None
 
@@ -38,6 +38,7 @@ class Implementation:
     _image_created: Optional[datetime] = None
 
     def gather_infos_from_docker(self, docker_cli: docker.DockerClient):
+        assert self.image
         try:
             img = docker_cli.images.get(self.image)
         except docker.errors.ImageNotFound:
@@ -88,6 +89,7 @@ class Implementation:
         return self._image_created
 
     def img_metadata_json(self) -> JSONImageMetadata:
+        assert self.image
         if not self._image_id:
             LOGGER.warning("image_id of %s not yet determined.", self.name)
         if not self._image_repo_digests:
