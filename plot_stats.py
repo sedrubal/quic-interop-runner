@@ -8,14 +8,18 @@ import logging
 import sys
 from collections import defaultdict
 from enum import Enum
+from functools import cached_property
 from pathlib import Path
 from typing import Any, Callable, Literal, Optional, Union
 
+import matplotlib as mpl
 import numpy as np
 import pandas as pd
 import prettytable
 import seaborn as sns
 from matplotlib import pyplot as plt
+from matplotlib import transforms
+from matplotlib.ticker import FuncFormatter
 from termcolor import colored
 
 from enums import ImplementationRole
@@ -150,6 +154,14 @@ class PlotStatsCli:
 
         return measurements
 
+    @cached_property
+    def first_measurement(self) -> MeasurementDescription:
+        """The first measurement to use."""
+        measurement = self.measurements[0]
+        assert self._spinner
+        self._spinner.write(f"⚒ Using measurement {measurement.name}...")
+        return measurement
+
     @property
     def meas_prop_key(self) -> str:
         """Return the property name of a measurement to use."""
@@ -199,8 +211,15 @@ class PlotStatsCli:
             return self._format_latex(text)
         return text
 
-    def get_dataframe(self) -> pd.DataFrame:
-        dfs = [result.get_measurement_results_as_dataframe() for result in self.results]
+    @property
+    def formatter(self):
+        return FuncFormatter(self.format_value)
+
+    def get_dataframe(self, include_failed: bool = True) -> pd.DataFrame:
+        dfs = [
+            result.get_measurement_results_as_dataframe(include_failed=include_failed)
+            for result in self.results
+        ]
         return pd.concat(dfs)
 
     def plot_boxplot(self):
@@ -260,7 +279,6 @@ class PlotStatsCli:
                 "AVG",
                 "Med",
                 "std",
-                "min",
                 "max",
                 "q05",
                 "q95",
@@ -280,7 +298,6 @@ class PlotStatsCli:
                         self.format_data_rate(val_stats.avg),
                         self.format_data_rate(val_stats.med),
                         self.format_data_rate(val_stats.std),
-                        self.format_data_rate(val_stats.min),
                         self.format_data_rate(val_stats.max),
                         self.format_data_rate(val_stats.q_05),
                         self.format_data_rate(val_stats.q_95),
@@ -293,7 +310,6 @@ class PlotStatsCli:
                         self.format_percentage(eff_stats.avg),
                         self.format_percentage(eff_stats.med),
                         self.format_percentage(eff_stats.std),
-                        self.format_percentage(eff_stats.min),
                         self.format_percentage(eff_stats.max),
                         self.format_percentage(eff_stats.q_05),
                         self.format_percentage(eff_stats.q_95),
@@ -373,7 +389,7 @@ class PlotStatsCli:
 
             # # axs[i].legend()
 
-            df = self.result.get_measurement_results_as_dataframe()
+            df = self.get_dataframe()
             by_server = (
                 df.groupby(["measurement", "server"])[self.meas_prop_key]
                 .mean()
@@ -412,124 +428,122 @@ class PlotStatsCli:
             )
 
     def plot_heatmap(self):
-        df = self.result.get_measurement_results_as_dataframe()
+        df = self.get_dataframe(include_failed=False)
         sns.set_theme(style="whitegrid")
-        measurement = self.measurements[0]
-        g = sns.relplot(
-            data=df[df.measurement == measurement.name],
-            x="server",
-            y="client",
-            hue=self.meas_prop_key,
-            size=self.meas_prop_key,
-            palette=sns.color_palette("ch:start=.2,rot=-.3", as_cmap=True),
-            # palette=sns.color_palette("coolwarm", as_cmap=True).reversed(),
-            hue_norm=(df[self.meas_prop_key].min(), df[self.meas_prop_key].max()),
-            size_norm=(
-                df[self.meas_prop_key].min(),
-                df[self.meas_prop_key].max(),
-            ),
-            edgecolor="0.7",
-            height=10,
-            sizes=(5, 250),
-        )
-        # g.set(xlabel="", ylabel="")
-        g.fig.suptitle(
-            f"Average {self.meas_prop_name.title()} of Measurement {measurement.name.title()}"
-        )
-        g.set(aspect="equal")
-        g.despine(left=True, bottom=True)
-        g.ax.margins(0.02)
-        if g.legend:
-            for text in g.legend.texts:
-                if self.efficiency:
-                    text.set_text(f"{float(text.get_text()) * 100:.0f} %")
-                else:
-                    text.set_text(natural_data_rate(int(float(text.get_text()))))
-            for artist in g.legend.legendHandles:
-                artist.set_edgecolor(".7")
-        for label in g.ax.get_xticklabels():
-            label.set_rotation(90)
 
-        self._save(g.fig, f"heatmap_{self.meas_prop_name.lower()}_{measurement.abbr}")
+        # use the min/max for all measurements as reference
+        max_val = df[self.meas_prop_key].max()
+        min_val = df[self.meas_prop_key].min()
 
-    # def plot_heatmap_for_servers(self):
-    #     with Subplot() as (fig, ax):
-    #         assert isinstance(ax, plt.Axes)
-    #         df = pd.DataFrame(
-    #             data=[
-    #                 [
-    #                     meas.abbr,
-    #                     server,
-    #                     stat.avg if stat else None,
-    #                     stat.std if stat else None,
-    #                 ]
-    #                 for server in self.result.servers.keys()
-    #                 for meas in self.measurements
-    #                 for stat in [
-    #                     self.result.get_measurement_value_stats(
-    #                         server, ImplementationRole.SERVER, meas.abbr
-    #                     )
-    #                 ]
-    #             ],
-    #             columns=["measurement", "server", "avg", "std"],
-    #         )
-    #         df.sort_values("server")
-    #         sns.set_theme(style="whitegrid")
-    #         measurement = self.measurements[-1]
-    #         g = sns.scatterplot(
-    #             ax=ax,
-    #             data=df[df.measurement == measurement.name],
-    #             x="server",
-    #             y=0,
-    #             hue=self.meas_prop_key,
-    #             size=self.meas_prop_key,
-    #             palette=sns.color_palette("ch:start=.2,rot=-.3", as_cmap=True),
-    #             # palette=sns.color_palette("coolwarm", as_cmap=True).reversed(),
-    #             hue_norm=(df[self.meas_prop_key].min(), df[self.meas_prop_key].max()),
-    #             size_norm=(
-    #                 df[self.meas_prop_key].min(),
-    #                 df[self.meas_prop_key].max(),
-    #             ),
-    #             edgecolor="0.7",
-    #             # height=10,
-    #             sizes=(5, 250),
-    #             legend=False,
-    #         )
-    #         # g.set(ylabel="")
-    #         ax.axes.get_yaxis().set_visible(False)
-    #         ax.set_ylim(ymin=0, ymax=0)
-    #         ax.set_yticks([0])
-    #         ax.yaxis.grid(True)
-    #         ax.axhline(0, color="gray", linewidth=0.5)
-    #         # g.fig.suptitle(
-    #         #     f"Average {self.meas_prop_name} of Measurement {measurement.name}"
-    #         # )
-    #         # g.set(aspect="equal")
-    #         # g.despine(left=True, bottom=True)
-    #         ax.margins(0.02)
-    #         # for text in g.legend.texts:
-    #         #     if self.efficiency:
-    #         #         text.set_text(f"{float(text.get_text()) * 100:.0f} %")
-    #         #     else:
-    #         #         text.set_text(natural_data_rate(int(text.get_text())))
-    #         for label in ax.get_xticklabels():
-    #             label.set_rotation(90)
-    #         # for artist in g.legend.legendHandles:
-    #         #     artist.set_edgecolor(".7")
+        # filter by measurement
+        df = df[df.measurement == self.first_measurement.name]
+        # filter columns
+        df = df[["server", "client", self.meas_prop_key]]
+        # use mean values of same experiments
+        df = df.groupby(["server", "client"]).mean().reset_index()
 
-    #         self._save(fig, self.output_file)
+        with Subplot() as (fig, ax):
+            assert isinstance(ax, plt.Axes)
+
+            ax.grid(True, lw=0.5)
+            fig.suptitle(
+                f"Average {self.meas_prop_name.title()} of Measurement {self.first_measurement.name.title()}"
+            )
+
+            x_labels = [name for name in sorted(df.server.unique())]
+            y_labels = [name for name in reversed(sorted(df.client.unique()))]
+            x_to_num = {name: i for i, name in enumerate(x_labels)}
+            y_to_num = {name: i for i, name in enumerate(y_labels)}
+
+            hue_scale = 250
+
+            def scale_for_size(val):
+                return hue_scale * (val - min_val) / (max_val - min_val)
+
+            # def inverse_scale_for_size(val):
+            #     return val / hue_scale * (max_val - min_val) + min_val
+
+            hue = df[self.meas_prop_key]
+            sizes = hue.map(scale_for_size)
+
+            color_palette = sns.color_palette("ch:start=.2,rot=-.3", as_cmap=True)
+
+            scatter = ax.scatter(
+                x=df.server.map(x_to_num),
+                y=df.client.map(y_to_num),
+                s=sizes,
+                c=hue,
+                marker="o",
+                cmap=color_palette,
+            )
+
+            indices = df.set_index(["server", "client"]).index
+            missing_indices = list[tuple[str, str]]()
+            for server in x_labels:
+                for client in y_labels:
+                    if (server, client) not in indices:
+                        missing_indices.append((server, client))
+            ax.scatter(
+                x=[x_to_num[e[0]] for e in missing_indices],
+                y=[y_to_num[e[1]] for e in missing_indices],
+                c="red",
+                marker="x",
+            )
+
+            ax.set_xticks([x_to_num[name] for name in x_labels])
+            ax.set_yticks([y_to_num[name] for name in y_labels])
+            ax.set_xticklabels(x_labels, rotation=90, horizontalalignment="center")
+            ax.set_yticklabels(y_labels)
+
+            ax.set_box_aspect(len(y_labels) / len(x_labels))
+            # despine
+            ax.spines["top"].set_visible(False)
+            ax.spines["right"].set_visible(False)
+            ax.spines["bottom"].set_visible(False)
+            ax.spines["left"].set_visible(False)
+
+            ax.set_xlabel("Server")
+            ax.set_ylabel("Client")
+
+            ax.legend(
+                *scatter.legend_elements(
+                    num=5,
+                    fmt=self.formatter,
+                    prop="colors",
+                    # prop can unfortunately only be colors or sizes.
+                    # for sizes use:
+                    # func=inverse_scale_for_size,
+                ),
+                title=self.meas_prop_name.title(),
+                bbox_to_anchor=(1, 0.5),
+                loc="center left",
+                facecolor="white",
+                edgecolor="white",
+            )
+
+            self._save(
+                fig,
+                f"heatmap_{self.meas_prop_name.lower()}_{self.first_measurement.abbr}",
+            )
 
     def plot_ridgeline(self, dimension: Union[Literal["server"], Literal["client"]]):
         sns.set_theme(style="white", rc={"axes.facecolor": (0, 0, 0, 0)})
 
-        df = self.result.get_measurement_results_as_dataframe()
+        df = self.get_dataframe(include_failed=True)
         # filter by measurement
-        measurement = self.measurements[0]
-        df = df[df.measurement == measurement.name]
+        df = df[df.measurement == self.first_measurement.name]
+        # filter columns
+        df = df[[dimension, self.meas_prop_key]]
 
         # we generate a pd.Serie with the mean temperature for each month (used later for colors in the FacetGrid plot), and we create a new column in temp dataframe
         mean_series = df.groupby(dimension)[self.meas_prop_key].mean()
         df[f"mean_{dimension}"] = df[dimension].map(mean_series)
+
+        # bring in some variance to values == 0 for kde
+        df[self.meas_prop_key] = df[self.meas_prop_key].map(
+            lambda v: np.random.normal(0, 0.001) if v == 0 else v
+        )
+        # breakpoint()
 
         # we generate a color palette with Seaborn.color_palette()
         pal = sns.color_palette(palette="coolwarm", n_colors=12)
@@ -543,8 +557,13 @@ class PlotStatsCli:
             height=0.85,
             # height=0.75,
             palette=pal,
+            sharex=True,
+            sharey=False,
         )
 
+        max_goodput = self.first_measurement.theoretical_max_value
+        assert max_goodput
+        max_goodput = max_goodput * DataRate.KBPS
         # then we add the densities kdeplots for each month
         g.map(
             sns.kdeplot,
@@ -554,14 +573,17 @@ class PlotStatsCli:
             fill=True,
             alpha=1,
             linewidth=1.5,
-            clip=(0, 1) if self.efficiency else None,
-            cut=0,
+            clip=(0, 1) if self.efficiency else (0, max_goodput),
+            # there may be some lines without entries.
+            # kde estimation will complain about 0 variance.
+            # we can ignore this error.
+            # warn_singular=False,
         )
 
-        # # # here we add a white line that represents the contour of each kdeplot
-        # g.map(
-        #     sns.kdeplot, self.meas_prop_key, bw_adjust=1, clip_on=False, color="w", lw=1
-        # )
+        # # here we add a white line that represents the contour of each kdeplot
+        g.map(
+            sns.kdeplot, self.meas_prop_key, bw_adjust=1, clip_on=False, color="w", lw=1
+        )
 
         # here we add a horizontal line for each plot
         g.map(plt.axhline, y=0, lw=2, clip_on=False)
@@ -570,24 +592,27 @@ class PlotStatsCli:
         # notice how ax.lines[-1].get_color() enables you to access the last line's color in each matplotlib.Axes
         for ax, impl_name in zip(g.axes.flat, df[dimension].unique()):
             ax.text(
-                0 if measurement.abbr == "G" else 1,
-                0,
+                0.01 if self.first_measurement.abbr == "G" else 0.99,
+                0.2,
                 impl_name,
-                horizontalalignment="left" if measurement.abbr == "G" else "right",
+                horizontalalignment="left"
+                if self.first_measurement.abbr == "G"
+                else "right",
                 verticalalignment="bottom",
                 color=ax.lines[-1].get_color(),
                 transform=ax.transAxes,
+                # bbox=dict(facecolor="white", alpha=0.75),
             )
             # label.set_rotation(0)
             if self.efficiency:
                 ax.set_xlim(xmin=0, xmax=1)
             else:
-                ax.set_xlim(xmin=0)
+                ax.set_xlim(xmin=0, xmax=max_goodput)
 
         g.axes.flat[-1].xaxis.set_major_formatter(self.format_value)
 
         # we use matplotlib.Figure.subplots_adjust() function to get the subplots to overlap
-        g.fig.subplots_adjust(hspace=-0.3)
+        g.fig.subplots_adjust(hspace=-0.1)
 
         # eventually we remove axes titles, yticks and spines
         g.set_titles("")
@@ -598,12 +623,15 @@ class PlotStatsCli:
         # plt.setp(ax.get_xticklabels(), fontsize=15, fontweight="bold")
         plt.xlabel(self.meas_prop_name)
         g.fig.suptitle(
-            f"KDEs of {self.meas_prop_name} of {dimension.title()}s in Measurement {measurement.name.title()}"
+            f"KDEs of {self.meas_prop_name} of {dimension.title()}s in Measurement {self.first_measurement.name.title()}"
         )
+
+        g.fig.subplots_adjust(right=0.9)
 
         self._save(
             g.fig,
-            f"{self.meas_prop_name.lower()}-kdes-marginalized-by-{dimension}-{measurement.abbr}",
+            f"{self.meas_prop_name.lower()}-kdes-marginalized-by-{dimension}-{self.first_measurement.abbr}",
+            tight=False,
         )
 
     def run(self):
@@ -626,16 +654,27 @@ class PlotStatsCli:
 
             self._spinner.ok("✔")
 
-    def _save(self, figure: plt.Figure, output_file_base_name: str):
+    def _save(
+        self,
+        figure: plt.Figure,
+        output_file_base_name: str,
+        tight: bool = True,
+        transparent: bool = False,
+    ):
         """Save or show the plot."""
 
         output_file = self.img_path / f"{output_file_base_name}.{self.img_format}"
         assert self._spinner
+        kwargs: dict[str, Any] = {
+            "dpi": 300,
+        }
+        if tight:
+            kwargs["bbox_inches"] = "tight"
+        if transparent:
+            kwargs["transparent"] = True
         figure.savefig(
             output_file,
-            dpi=300,
-            #  transparent=True,
-            bbox_inches="tight",
+            **kwargs,
         )
         text = colored(f"{output_file} written.", color="green")
         self._spinner.write(f"✔ {text}")

@@ -320,7 +320,11 @@ class Result:
             image = img_metadata.get("image")
 
             if not image:
-                image = IMPLEMENTATIONS[name].image
+                try:
+                    image = IMPLEMENTATIONS[name].image
+                except KeyError:
+                    LOGGER.warning("Image for %s not known", name)
+                    image = None
 
             if name in client_names and name in server_names:
                 role = ImplementationRole.BOTH
@@ -1174,30 +1178,54 @@ class Result:
                         server=server_name, client=impl_name, meas_abbr=abbr
                     )
 
-    def get_measurement_results_as_dataframe(self) -> pandas.DataFrame:
+    def get_measurement_results_as_dataframe(
+        self, include_failed: bool = True
+    ) -> pandas.DataFrame:
         """Return the measurement results as data frame."""
-        meas_descs = sorted(
-            self.measurement_descriptions.values(), key=lambda desc: desc.abbr
-        )
+        meas_descs = sorted(self.measurement_descriptions.values())
+
+        data = list[tuple[str, str, str, int, Union[int, float], float]]()
         assert all(meas_desc.theoretical_max_value for meas_desc in meas_descs)
-        data = [
-            [
-                meas.server.name,
-                meas.client.name,
-                meas_desc.name,
-                i,
-                value * DataRate.from_str(meas.unit),
-                value / meas_desc.theoretical_max_value,
-                meas.avg,
-                meas.stdev,
-                meas.avg_efficiency,
-            ]
-            for meas_desc in meas_descs
+        for meas_desc in meas_descs:
+            # assert that the result.json file format is new enough to contain theoretical_max_value, repetitions and values
+            assert meas_desc.theoretical_max_value is not None
+            assert meas_desc.repetitions is not None
+            # remember unit of values[] when test failed. We use kbps anyway.
+            default_unit: int = DataRate.KBPS
             for meas in self.get_all_measurements_of_type(
-                meas_desc.abbr, succeeding=True
-            )
-            for i, value in enumerate(meas.values)
-        ]
+                meas_desc.abbr, succeeding=None if include_failed else True
+            ):
+                for iteration, value in enumerate(meas.values):
+                    unit = (
+                        DataRate.from_str(meas.unit) if meas.succeeded else default_unit
+                    )
+                    data.append(
+                        (
+                            meas.server.name,
+                            meas.client.name,
+                            meas_desc.name,
+                            iteration,
+                            value * unit,
+                            value / meas_desc.theoretical_max_value,
+                        )
+                    )
+
+                if not meas.succeeded and include_failed:
+                    # append goodput=0 & efficiency=0 for failed run
+                    # (which is the last iteration and there is not value recorded)
+                    failed_iteration = len(meas.values)
+                    assert failed_iteration < meas_desc.repetitions
+                    data.append(
+                        (
+                            meas.server.name,
+                            meas.client.name,
+                            meas_desc.name,
+                            failed_iteration,
+                            0,
+                            0.0,
+                        )
+                    )
+
         df = pandas.DataFrame(
             data,
             columns=[
@@ -1207,9 +1235,6 @@ class Result:
                 "repetition",
                 "value",
                 "efficiency",
-                "avg",
-                "stdev",
-                "avg_efficiency",
             ],
         )
         return df.sort_values(["server", "client", "measurement", "repetition"])

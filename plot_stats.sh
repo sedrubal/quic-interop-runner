@@ -43,7 +43,6 @@ run ./plot_stats.py \
     "${RESULT_REAL}"
 
 for extra_arg in "" "--efficiency"; do
-    # TODO measurements argument breaks
     run ./plot_stats.py \
         --no-interactive \
         "${extra_arg}" \
@@ -56,20 +55,20 @@ for extra_arg in "" "--efficiency"; do
     for measurement in "${MEASUREMENTS[@]}"; do
         run ./plot_stats.py \
             --no-interactive \
-            "${extra_arg}" \
+            ${extra_arg} \
+            "--test=${measurement}" \
             "--img-path=${IMG_PATH}" \
             "--img-format=${FORMAT}" \
             --plot-type=heatmap \
-            "${measurement}" \
             "${RESULT_SIM}" \
             "${RESULT_REAL}"
         run ./plot_stats.py \
             --no-interactive \
-            "${extra_arg}" \
+            ${extra_arg} \
+            "--test=${measurement}" \
             "--img-path=${IMG_PATH}" \
             "--img-format=${FORMAT}" \
             --plot-type=ridgeline \
-            "${measurement}" \
             "${RESULT_SIM}" \
             "${RESULT_REAL}"
     done

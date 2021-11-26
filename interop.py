@@ -608,6 +608,8 @@ class InteropRunner:
                 )
 
                 if result != TestResult.SUCCEEDED:
+                    # TODO should we really unschedule the measurements?
+                    # what if a timeout happens only once?
                     # unschedule all further measurements of same type with same implementations
                     for future_scheduled_test in self._scheduled_tests[::]:
                         if (
