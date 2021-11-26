@@ -469,6 +469,23 @@ class UrlOrPath:
 
             return resp.text
 
+    def readline(self):
+        if isinstance(self.src, Path):
+            with self.path.open("r") as file:
+                yield from file.readlines()
+        else:
+            breakpoint()
+            response = requests.get(self.src, stream=True)
+            response.raise_for_status()
+            buf = ""
+            for chunk in response.iter_content(chunk_size=8192):
+                buf += chunk.decode("utf-8")
+                lines = buf.splitlines()
+                buf = lines[-1]
+                yield from lines[:-1]
+
+            yield buf
+
     @property
     def scheme(self):
         return self.src.scheme if isinstance(self.src, Url) else None
