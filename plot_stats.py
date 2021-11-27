@@ -6,25 +6,23 @@
 import argparse
 import logging
 import sys
-from collections import defaultdict
 from enum import Enum
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Callable, Literal, Optional, Union
+from typing import Any, Literal, Optional, Union
 
-import matplotlib as mpl
 import numpy as np
 import pandas as pd
 import prettytable
 import seaborn as sns
 from matplotlib import pyplot as plt
-from matplotlib import transforms
 from matplotlib.ticker import FuncFormatter
+from pandas.core.frame import DataFrame
 from termcolor import colored
 
-from enums import ImplementationRole
+from enums import ImplementationRole, TestResult
 from implementations import LOGGER
-from result_parser import MeasurementDescription, Result
+from result_parser import MeasurementDescription, Result, TestResultInfo
 from tango_colors import Tango
 from units import DataRate
 from utils import Statistics, Subplot, YaspinWrapper, natural_data_rate
@@ -43,9 +41,17 @@ def parse_args():
     """Parse command line args."""
     parser = argparse.ArgumentParser(__doc__)
     parser.add_argument(
+        "-m",
+        "--measurement",
+        dest="measurements",
+        nargs="+",
+        type=str,
+        help="The test cases to plot (only for heatmap).",
+    )
+    parser.add_argument(
         "--test",
         dest="tests",
-        nargs="+",
+        nargs="*",
         type=str,
         help="The measurement cases to plot.",
     )
@@ -100,7 +106,8 @@ def parse_args():
 class PlotStatsCli:
     def __init__(
         self,
-        test_abbrs: str,
+        meas_abbrs: list[str],
+        test_abbrs: list[str],
         results: list[Result],
         plot_type: PlotType,
         img_path: Path,
@@ -109,6 +116,7 @@ class PlotStatsCli:
         debug: bool = False,
         no_interactive: bool = False,
     ) -> None:
+        self.meas_abbrs = meas_abbrs
         self.test_abbrs = test_abbrs
         self.results = results
         self.plot_type = plot_type
@@ -117,8 +125,9 @@ class PlotStatsCli:
         self._spinner: Optional[YaspinWrapper] = None
         self.img_path = img_path
         self.img_format = img_format
-        self._colors = Tango()
         self.no_interactive = no_interactive
+        self._colors = Tango(model="HTML")
+
         for result in self.results:
             result.load_from_json()
 
@@ -136,9 +145,9 @@ class PlotStatsCli:
         available_measurements = set[str]()
         for result in self.results:
             available_measurements.update(result.measurement_descriptions.keys())
-        if not self.test_abbrs:
-            self.test_abbrs = sorted(available_measurements)
-        for test_abbr in self.test_abbrs:
+        if not self.meas_abbrs:
+            self.meas_abbrs = sorted(available_measurements)
+        for test_abbr in self.meas_abbrs:
             for result in self.results:
                 test_desc = result.measurement_descriptions.get(test_abbr, None)
                 if test_desc is None:
@@ -148,7 +157,7 @@ class PlotStatsCli:
                     break
             else:
                 sys.exit(
-                    f"Unknown measurement in {', '.join(self.test_abbrs)}. "
+                    f"Unknown measurement in {', '.join(self.meas_abbrs)}. "
                     f"Known ones are: {', '.join(sorted(available_measurements))}"
                 )
 
@@ -427,7 +436,80 @@ class PlotStatsCli:
                 f"kdes-{self.meas_prop_name.lower()}-{'-'.join(meas.abbr for meas in self.measurements)}",
             )
 
-    def plot_heatmap(self):
+    def plot_test_case_heatmap(self):
+        assert self.test_abbrs
+        assert self._spinner
+        test_abbr = self.test_abbrs[0]
+        self._spinner.write(f"Using Test Case {test_abbr}")
+        data: Optional[list[TestResultInfo]] = None
+        # test_case: Optional[TestDescription] = None
+
+        for result in self.results:
+            if test_abbr in result.test_descriptions.keys():
+                # test_case = result.test_descriptions[test_abbr]
+                data = result.get_all_tests_of_type(test_abbr)
+                break
+        else:
+            raise ValueError(f"No test case with abbr {test_abbr} found")
+
+        df = DataFrame(
+            data=[
+                (
+                    result.server.name,
+                    result.client.name,
+                    result.result == TestResult.SUCCEEDED,
+                )
+                for result in data
+            ],
+            columns=["server", "client", "succeeded"],
+        )
+
+        sns.set_theme(style="whitegrid")
+
+        with Subplot() as (fig, ax):
+            assert isinstance(ax, plt.Axes)
+
+            ax.grid(True, lw=0.5)
+
+            x_labels = [name for name in sorted(df.server.unique())]
+            y_labels = [name for name in reversed(sorted(df.client.unique()))]
+            x_to_num = {name: i for i, name in enumerate(x_labels)}
+            y_to_num = {name: i for i, name in enumerate(y_labels)}
+
+            for succeeded in (True, False):
+                ax.scatter(
+                    x=df[df.succeeded == succeeded].server.map(x_to_num),
+                    y=df[df.succeeded == succeeded].client.map(y_to_num),
+                    c=self._colors.Chameleon if succeeded else self._colors.ScarletRed,
+                    # marker="$✔$" if succeeded else "x",
+                    marker="o" if succeeded else "x",
+                )
+
+            ax.set_xticks([x_to_num[name] for name in x_labels])
+            ax.set_yticks([y_to_num[name] for name in y_labels])
+            ax.set_xticklabels(x_labels, rotation=90, horizontalalignment="center")
+            ax.set_yticklabels(y_labels)
+
+            ax.set_box_aspect(len(y_labels) / len(x_labels))
+            # despine
+            ax.spines["top"].set_visible(False)
+            ax.spines["right"].set_visible(False)
+            ax.spines["bottom"].set_visible(False)
+            ax.spines["left"].set_visible(False)
+
+            ax.set_xlabel("Server")
+            ax.set_ylabel("Client")
+
+            ax.xaxis.set_ticks_position("top")
+            ax.xaxis.set_label_position("top")
+
+            self._save(
+                fig,
+                f"heatmap_test_{test_abbr}",
+            )
+
+    def plot_heatmap(self, meas_abbr: str):
+        measurement = [meas for meas in self.measurements if meas.abbr == meas_abbr][0]
         df = self.get_dataframe(include_failed=False)
         sns.set_theme(style="whitegrid")
 
@@ -436,7 +518,7 @@ class PlotStatsCli:
         min_val = df[self.meas_prop_key].min()
 
         # filter by measurement
-        df = df[df.measurement == self.first_measurement.name]
+        df = df[df.measurement == measurement.name]
         # filter columns
         df = df[["server", "client", self.meas_prop_key]]
         # use mean values of same experiments
@@ -446,12 +528,16 @@ class PlotStatsCli:
             assert isinstance(ax, plt.Axes)
 
             ax.grid(True, lw=0.5)
-            fig.suptitle(
-                f"Average {self.meas_prop_name.title()} of Measurement {self.first_measurement.name.title()}"
-            )
+            # fig.suptitle(
+            #     f"Average {self.meas_prop_name.title()} of Measurement {measurement.name.title()}"
+            # )
 
-            x_labels = [name for name in sorted(df.server.unique())]
-            y_labels = [name for name in reversed(sorted(df.client.unique()))]
+            if meas_abbr == "G":
+                x_labels = list(sorted(self.results[-1].servers.keys()))
+                y_labels = list(reversed(sorted(self.results[-1].clients.keys())))
+            else:
+                x_labels = list(sorted(df.server.unique()))
+                y_labels = list(reversed(sorted(df.client.unique())))
             x_to_num = {name: i for i, name in enumerate(x_labels)}
             y_to_num = {name: i for i, name in enumerate(y_labels)}
 
@@ -486,7 +572,7 @@ class PlotStatsCli:
             ax.scatter(
                 x=[x_to_num[e[0]] for e in missing_indices],
                 y=[y_to_num[e[1]] for e in missing_indices],
-                c="red",
+                c=self._colors.ScarletRed,
                 marker="x",
             )
 
@@ -505,6 +591,9 @@ class PlotStatsCli:
             ax.set_xlabel("Server")
             ax.set_ylabel("Client")
 
+            ax.xaxis.set_ticks_position("top")
+            ax.xaxis.set_label_position("top")
+
             ax.legend(
                 *scatter.legend_elements(
                     num=5,
@@ -515,15 +604,16 @@ class PlotStatsCli:
                     # func=inverse_scale_for_size,
                 ),
                 title=self.meas_prop_name.title(),
-                bbox_to_anchor=(1, 0.5),
-                loc="center left",
+                bbox_to_anchor=(0.5 if self.efficiency else 1, -0.25),
+                loc="lower center" if self.efficiency else "lower right",
                 facecolor="white",
                 edgecolor="white",
+                ncol=3,
             )
 
             self._save(
                 fig,
-                f"heatmap_{self.meas_prop_name.lower()}_{self.first_measurement.abbr}",
+                f"heatmap_{self.meas_prop_name.lower()}_{measurement.abbr}",
             )
 
     def plot_ridgeline(self, dimension: Union[Literal["server"], Literal["client"]]):
@@ -644,7 +734,10 @@ class PlotStatsCli:
             elif self.plot_type == PlotType.KDES:
                 self.plot_kdes()
             elif self.plot_type == PlotType.HEATMAP:
-                self.plot_heatmap()
+                for meas_abbr in self.meas_abbrs:
+                    self.plot_heatmap(meas_abbr)
+                if self.test_abbrs:
+                    self.plot_test_case_heatmap()
             elif self.plot_type == PlotType.RIDGELINE:
                 self.plot_ridgeline("server")
                 spinner.text = "Plotting..."
@@ -687,6 +780,7 @@ def main():
     """Main."""
     args = parse_args()
     cli = PlotStatsCli(
+        meas_abbrs=args.measurements,
         test_abbrs=args.tests,
         results=args.results,
         plot_type=args.plot_type,
