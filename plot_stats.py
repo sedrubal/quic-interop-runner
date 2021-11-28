@@ -13,14 +13,13 @@ from typing import Any, Literal, Optional, Union
 
 import numpy as np
 import pandas as pd
-import prettytable
 import seaborn as sns
 from matplotlib import pyplot as plt
 from matplotlib.ticker import FuncFormatter
 from pandas.core.frame import DataFrame
 from termcolor import colored
 
-from enums import ImplementationRole, TestResult
+from enums import TestResult
 from implementations import LOGGER
 from result_parser import MeasurementDescription, Result, TestResultInfo
 from tango_colors import Tango
@@ -35,6 +34,7 @@ class PlotType(Enum):
     KDES = "kdes"
     HEATMAP = "heatmap"
     RIDGELINE = "ridgeline"
+    ANALYZE = "analyze"
 
 
 def parse_args():
@@ -278,54 +278,6 @@ class PlotStatsCli:
             ax2.yaxis.tick_right()
             # padding between subplots
             fig.subplots_adjust(wspace=0.1)
-
-            table = prettytable.PrettyTable()
-            table.hrules = prettytable.FRAME
-            table.vrules = prettytable.ALL
-            table.field_names = [
-                "Measurement",
-                "Type",
-                "AVG",
-                "Med",
-                "std",
-                "max",
-                "q05",
-                "q95",
-            ]
-
-            for measurement in self.measurements:
-                val_stats = Statistics.calc(
-                    df[df.measurement == measurement.abbr]["value"]
-                )
-                eff_stats = Statistics.calc(
-                    df[df.measurement == measurement.abbr]["efficiency"]
-                )
-                table.add_row(
-                    [
-                        measurement.name.title(),
-                        "Values",
-                        self.format_data_rate(val_stats.avg),
-                        self.format_data_rate(val_stats.med),
-                        self.format_data_rate(val_stats.std),
-                        self.format_data_rate(val_stats.max),
-                        self.format_data_rate(val_stats.q_05),
-                        self.format_data_rate(val_stats.q_95),
-                    ]
-                )
-                table.add_row(
-                    [
-                        measurement.name.title(),
-                        "Efficiencies",
-                        self.format_percentage(eff_stats.avg),
-                        self.format_percentage(eff_stats.med),
-                        self.format_percentage(eff_stats.std),
-                        self.format_percentage(eff_stats.max),
-                        self.format_percentage(eff_stats.q_05),
-                        self.format_percentage(eff_stats.q_95),
-                    ]
-                )
-
-            print(table)
 
             # TODO: Use ax.violinplot?
             self._save(
@@ -616,23 +568,25 @@ class PlotStatsCli:
                 f"heatmap_{self.meas_prop_name.lower()}_{measurement.abbr}",
             )
 
-    def plot_ridgeline(self, dimension: Union[Literal["server"], Literal["client"]]):
+    def plot_ridgeline(
+        self, dimension: Union[Literal["server"], Literal["client"]], meas_abbr: str
+    ):
         sns.set_theme(style="white", rc={"axes.facecolor": (0, 0, 0, 0)})
+
+        measurement = [meas for meas in self.measurements if meas.abbr == meas_abbr][0]
 
         df = self.get_dataframe(include_failed=True)
         # filter by measurement
-        df = df[df.measurement == self.first_measurement.name]
+        df = df[df.measurement == measurement.name]
         # filter columns
-        df = df[[dimension, self.meas_prop_key]]
+        df = df[[dimension, "value"]]
 
         # we generate a pd.Serie with the mean temperature for each month (used later for colors in the FacetGrid plot), and we create a new column in temp dataframe
-        mean_series = df.groupby(dimension)[self.meas_prop_key].mean()
+        mean_series = df.groupby(dimension)["value"].mean()
         df[f"mean_{dimension}"] = df[dimension].map(mean_series)
 
         # bring in some variance to values == 0 for kde
-        df[self.meas_prop_key] = df[self.meas_prop_key].map(
-            lambda v: np.random.normal(0, 0.001) if v == 0 else v
-        )
+        df.value = df.value.map(lambda v: np.random.normal(0, 0.001) if v == 0 else v)
         # breakpoint()
 
         # we generate a color palette with Seaborn.color_palette()
@@ -651,7 +605,7 @@ class PlotStatsCli:
             sharey=False,
         )
 
-        max_goodput = self.first_measurement.theoretical_max_value
+        max_goodput = measurement.theoretical_max_value
         assert max_goodput
         max_goodput = max_goodput * DataRate.KBPS
         # then we add the densities kdeplots for each month
@@ -663,7 +617,7 @@ class PlotStatsCli:
             fill=True,
             alpha=1,
             linewidth=1.5,
-            clip=(0, 1) if self.efficiency else (0, max_goodput),
+            clip=(0, max_goodput),
             # there may be some lines without entries.
             # kde estimation will complain about 0 variance.
             # we can ignore this error.
@@ -671,9 +625,7 @@ class PlotStatsCli:
         )
 
         # # here we add a white line that represents the contour of each kdeplot
-        g.map(
-            sns.kdeplot, self.meas_prop_key, bw_adjust=1, clip_on=False, color="w", lw=1
-        )
+        g.map(sns.kdeplot, "value", bw_adjust=1, clip_on=False, color="w", lw=1)
 
         # here we add a horizontal line for each plot
         g.map(plt.axhline, y=0, lw=2, clip_on=False)
@@ -682,24 +634,42 @@ class PlotStatsCli:
         # notice how ax.lines[-1].get_color() enables you to access the last line's color in each matplotlib.Axes
         for ax, impl_name in zip(g.axes.flat, df[dimension].unique()):
             ax.text(
-                0.01 if self.first_measurement.abbr == "G" else 0.99,
+                0.01 if measurement.abbr == "G" else 0.99,
                 0.2,
                 impl_name,
-                horizontalalignment="left"
-                if self.first_measurement.abbr == "G"
-                else "right",
+                horizontalalignment="left" if measurement.abbr == "G" else "right",
                 verticalalignment="bottom",
                 color=ax.lines[-1].get_color(),
                 transform=ax.transAxes,
                 # bbox=dict(facecolor="white", alpha=0.75),
             )
             # label.set_rotation(0)
-            if self.efficiency:
-                ax.set_xlim(xmin=0, xmax=1)
-            else:
-                ax.set_xlim(xmin=0, xmax=max_goodput)
+            ax.set_xlim(xmin=0, xmax=max_goodput)
 
         g.axes.flat[-1].xaxis.set_major_formatter(self.format_value)
+        g.axes.flat[-1].set_xlabel("Goodput")
+
+        # add additional efficiency axis
+        # add a second x-axis to last subplot
+        x_axis_eff = g.axes.flat[-1].twiny()
+        # force position = bottom
+        x_axis_eff.xaxis.set_ticks_position("bottom")
+        x_axis_eff.xaxis.set_label_position("bottom")
+        # set 0% 100% as limits
+        x_axis_eff.set_xlim(xmin=0, xmax=1)
+        # add 6 ticks
+        x_axis_eff.set_xticks(np.arange(0, 1.2, 0.2))
+        # use percentage formatter
+        x_axis_eff.xaxis.set_major_formatter(self.format_percentage)
+        # increase distance between frame and axis
+        x_axis_eff.spines["bottom"].set_position(("axes", -0.8))
+        # ???
+        x_axis_eff.spines["bottom"].set_visible(True)
+        # set label and hide title
+        x_axis_eff.set_xlabel("Efficiency")
+        x_axis_eff.set_title("")
+        # increase shown area of plot at bottom so that additional axis is visible
+        g.fig.subplots_adjust(bottom=0.1)
 
         # we use matplotlib.Figure.subplots_adjust() function to get the subplots to overlap
         g.fig.subplots_adjust(hspace=-0.1)
@@ -711,18 +681,97 @@ class PlotStatsCli:
         g.set(ylabel="")
 
         # plt.setp(ax.get_xticklabels(), fontsize=15, fontweight="bold")
-        plt.xlabel(self.meas_prop_name)
         g.fig.suptitle(
-            f"KDEs of {self.meas_prop_name} of {dimension.title()}s in Measurement {self.first_measurement.name.title()}"
+            f"KDEs of {dimension.title()}s in Measurement {measurement.name.title()}"
         )
 
         g.fig.subplots_adjust(right=0.9)
 
         self._save(
             g.fig,
-            f"{self.meas_prop_name.lower()}-kdes-marginalized-by-{dimension}-{self.first_measurement.abbr}",
+            f"kdes-marginalized-by-{dimension}-{measurement.abbr}",
             tight=False,
         )
+
+    def print_analyze(self):
+        df = self.get_dataframe(include_failed=True)[
+            ["server", "client", "measurement", "value", "efficiency"]
+        ]
+
+        columns_cfg = ["l"]
+        first_row = [""]
+        cols = {}
+        perc_failed_row = ["failed"]
+        for i, measurement in enumerate(self.measurements):
+            multi_col_cfg = "c" if i == len(self.measurements) - 1 else "c|"
+            columns_cfg.extend(
+                (
+                    "            S[table-format=2.2]",
+                    "            r",
+                )
+            )
+            first_row.append(
+                fr"\multicolumn{{2}}{{{multi_col_cfg}}}{{\{measurement.abbr.lower()}/}}"
+            )
+            df_for_meas = df[df.measurement == measurement.name]
+            cols[measurement.abbr] = {
+                "val_stats": Statistics.calc(df_for_meas["value"]),
+                "eff_stats": Statistics.calc(df_for_meas["efficiency"]),
+            }
+            mins = df_for_meas.groupby(["server", "client"]).min().reset_index()
+            perc_failed = (mins.value == 0).sum() * 100 / len(mins)
+            perc_failed_row.append(
+                fr"\multicolumn{{2}}{{{multi_col_cfg}}}{{{perc_failed:.1f}\,\%}}"
+            )
+
+        rows = []
+        for label, key in (
+            ("mean", "avg"),
+            ("median", "med"),
+            (r"std.\ dev.", "std"),
+            ("maximum", "max"),
+        ):
+            row = [label]
+            for measurement in self.measurements:
+                val_stat = getattr(cols[measurement.abbr]["val_stats"], key)
+                eff_stat = getattr(cols[measurement.abbr]["eff_stats"], key)
+
+                row.extend(
+                    (
+                        f"{val_stat / DataRate.MBPS:.3g}",
+                        fr"{eff_stat * 100:.1f}\,\%",
+                    )
+                )
+            rows.append(row)
+
+        columns_cfg_str = "|\n".join(columns_cfg)
+        max_first_row = max(map(len, first_row))
+        max_last_row = max(map(len, perc_failed_row))
+        max_col_len = max(max(map(len, row)) for row in rows)
+        first_row_str = " & ".join(col.ljust(max_first_row) for col in first_row)
+        latex_table = fr"""
+\begin{{tabular}}{{%
+            {columns_cfg_str}
+        }}
+        \toprule
+        {first_row_str.lstrip()} \\
+        \midrule
+"""
+        for row in rows:
+            row_str = " & ".join(col.ljust(max_col_len) for col in row)
+            latex_table += fr"        {row_str} \\" + "\n"
+
+        perc_failed_str = " & ".join(col.ljust(max_last_row) for col in perc_failed_row)
+        latex_table += rf"""
+        \midrule
+        {perc_failed_str.lstrip()} \\
+        \bottomrule
+    \end{{tabular}}
+"""
+
+        assert self._spinner
+        with self._spinner.hidden():
+            print(latex_table.strip())
 
     def run(self):
         with YaspinWrapper(
@@ -739,9 +788,12 @@ class PlotStatsCli:
                 if self.test_abbrs:
                     self.plot_test_case_heatmap()
             elif self.plot_type == PlotType.RIDGELINE:
-                self.plot_ridgeline("server")
-                spinner.text = "Plotting..."
-                self.plot_ridgeline("client")
+                for meas_abbr in self.meas_abbrs:
+                    self.plot_ridgeline("server", meas_abbr)
+                    spinner.text = "Plotting..."
+                    self.plot_ridgeline("client", meas_abbr)
+            elif self.plot_type == PlotType.ANALYZE:
+                self.print_analyze()
             else:
                 assert False
 
