@@ -12,7 +12,16 @@ from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from pathlib import Path
 from time import sleep
-from typing import Callable, Iterable, NamedTuple, Optional, Sequence, TypeVar, Union
+from typing import (
+    Callable,
+    Iterable,
+    Iterator,
+    NamedTuple,
+    Optional,
+    Sequence,
+    TypeVar,
+    Union,
+)
 
 import humanize
 import numpy as np
@@ -21,6 +30,8 @@ import seaborn as sns
 import termcolor
 from dateutil.parser import parse as parse_date
 from matplotlib import pyplot as plt
+from prompt_toolkit import print_formatted_text
+from prompt_toolkit.shortcuts import ProgressBar
 from termcolor import colored, cprint
 from urllib3.util.url import Url, parse_url
 from yaspin import yaspin
@@ -289,6 +300,29 @@ class YaspinWrapper:
             self._update()
         else:
             self.yaspin.write(text)
+
+
+class ProgBarWrapper:
+    def __init__(self, hide: bool, *args, **kwargs):
+        self.hide = hide
+        if not hide:
+            self.pb = ProgressBar(*args, **kwargs)
+        else:
+            self.pb = None
+
+    def __enter__(self):
+        if self.pb:
+            return self.pb.__enter__()
+        else:
+            return self
+
+    def __exit__(self, err, args, traceback):
+        if self.pb:
+            return self.pb.__exit__(err, args, traceback)
+
+    def __call__(self, iter: Iterator, label, total, *args, **kwargs) -> Iterator:
+        print_formatted_text(label, f"({total})")
+        return iter
 
 
 class HideCursor:

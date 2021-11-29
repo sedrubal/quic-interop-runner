@@ -188,7 +188,8 @@ class PlotAllCli:
             trace_triples=trace_triples,
             annotate=self.annotate,
             cache=CacheMode.LOAD,
-            debug=self.debug,
+            # enable debug mode with interruptable terminal logging when we use more than 1 worker
+            debug=self.debug or self.max_workers > 1,
         )
 
         rets = list[str]()

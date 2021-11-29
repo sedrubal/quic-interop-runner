@@ -16,12 +16,18 @@ from typing import Any, Iterator, Optional, TypedDict
 import nest_asyncio
 import pyshark  # type: ignore
 from prompt_toolkit.formatted_text import HTML
-from prompt_toolkit.shortcuts import ProgressBar
 from termcolor import colored, cprint
 
 from conf import CONFIG
 from enums import CacheMode, Direction, Side
-from utils import LOGGER, TraceTriple, YaspinWrapper, clear_line, create_relpath
+from utils import (
+    LOGGER,
+    ProgBarWrapper,
+    TraceTriple,
+    YaspinWrapper,
+    clear_line,
+    create_relpath,
+)
 
 if typing.TYPE_CHECKING:
     from pyshark.packet.packet import Packet  # type: ignore
@@ -302,7 +308,7 @@ class Trace:
 
             # 3. Load all packets from pcap
             with spinner.hidden():
-                with ProgressBar() as prog_bar:
+                with ProgBarWrapper(hide=self.debug) as prog_bar:
                     _packet: "Packet"
 
                     for _packet in prog_bar(
