@@ -98,24 +98,24 @@ def collect_plots(
                 ]
 
                 for png in files:
-                    LOGGER.info("Searching for %s", png)
+                    LOGGER.debug("Searching for %s", png)
                     if not png.is_file():
                         LOGGER.error(f"Plot %s does not exist.", png)
 
                         continue
 
-                    target = collect_dir / f"{meas.combination}_{png.name}"
+                    target = collect_dir / f"{meas.combination}_{meas_abbr}_{png.name}"
 
                     if target.is_file():
                         if force:
+                            LOGGER.debug("%s already exists. Unlinking file...", target)
                             target.unlink()
                         else:
-                            sys.exit(
-                                colored(
-                                    f"{target} already exists. Use --force.",
-                                    color="red",
-                                )
+                            LOGGER.warning(
+                                "%s already exists. Ignoring. Use --force to overwrite.",
+                                target,
                             )
+                            continue
 
                     if collect_mode == CollectMode.SYMLINK:
                         LOGGER.info("Symlinking %s -> %s", target, png)
