@@ -63,8 +63,8 @@ def parse_args():
         "--test",
         "-m",
         "--measurement",
-        dest="meas_abbr",
-        nargs="*",
+        dest="meas_abbrs",
+        nargs="+",
         help="The measurements to use.",
     )
 
@@ -126,10 +126,11 @@ def collect_plots(
 
 
 def main():
+    LOGGER.setLevel(logging.DEBUG)
     args = parse_args()
     collect_plots(
         results=args.results,
-        meas_abbrs=args.measurements,
+        meas_abbrs=args.meas_abbrs,
         collect_dir=args.collect_dir,
         collect_mode=args.collect_mode,
         plot_modes=args.plot_mode,

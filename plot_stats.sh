@@ -56,7 +56,7 @@ for extra_arg in "" "--efficiency"; do
         run ./plot_stats.py \
             --no-interactive \
             ${extra_arg} \
-            "--test=${measurement}" \
+            "--measurement=${measurement}" \
             "--img-path=${IMG_PATH}" \
             "--img-format=${FORMAT}" \
             --plot-type=heatmap \
@@ -65,7 +65,7 @@ for extra_arg in "" "--efficiency"; do
         run ./plot_stats.py \
             --no-interactive \
             ${extra_arg} \
-            "--test=${measurement}" \
+            "--measurement=${measurement}" \
             "--img-path=${IMG_PATH}" \
             "--img-format=${FORMAT}" \
             --plot-type=ridgeline \
