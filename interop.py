@@ -22,9 +22,7 @@ from exceptions import ConflictError, TestFailed, TestUnsupported
 from implementations import IMPLEMENTATIONS, Implementation
 from result_parser import Result, TestResultInfo
 from testcases import Measurement, TestCase
-from utils import LOGGER, LogFileFormatter, TerminalFormatter, sleep_between
-
-CONSOLE_LOG_HANDLER = logging.StreamHandler(stream=sys.stderr)
+from utils import CONSOLE_LOG_HANDLER, LOGGER, LogFileFormatter, sleep_between
 
 
 UNSUPPORTED_EXIT_CODE = 127
@@ -58,14 +56,8 @@ class InteropRunner:
         shuffle: bool = False,
         pause_between: Optional[tuple[time, time]] = None,
     ):
-        LOGGER.setLevel(logging.DEBUG)
-
-        if debug:
-            CONSOLE_LOG_HANDLER.setLevel(logging.DEBUG)
-        else:
+        if not debug:
             CONSOLE_LOG_HANDLER.setLevel(logging.INFO)
-        CONSOLE_LOG_HANDLER.setFormatter(TerminalFormatter())
-        LOGGER.addHandler(CONSOLE_LOG_HANDLER)
 
         start_time = datetime.now()
 

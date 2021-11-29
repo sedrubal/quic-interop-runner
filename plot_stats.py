@@ -20,13 +20,10 @@ from pandas.core.frame import DataFrame
 from termcolor import colored
 
 from enums import TestResult
-from implementations import LOGGER
 from result_parser import MeasurementDescription, Result, TestResultInfo
 from tango_colors import Tango
 from units import DataRate
-from utils import Statistics, Subplot, YaspinWrapper, natural_data_rate
-
-LOGGER = logging.getLogger("quic-interop-runner")
+from utils import Statistics, Subplot, YaspinWrapper, natural_data_rate, LOGGER
 
 
 class PlotType(Enum):

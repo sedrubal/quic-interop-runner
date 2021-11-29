@@ -43,7 +43,7 @@ from testcases import (
     TestCase,
     generate_cert_chain,
 )
-from utils import LOGGER, TerminalFormatter, random_string
+from utils import LOGGER, random_string
 
 MEMLOCK_ULIMIT = docker.types.Ulimit(name="memlock", hard=67108864, soft=67108864)
 IPERF_ENDPOINT_IMG = "martenseemann/quic-interop-iperf-endpoint"
@@ -1469,11 +1469,6 @@ class Deployment:
 
 
 def main():
-    LOGGER.setLevel(logging.DEBUG)
-    CONSOLE_LOG_HANDLER = logging.StreamHandler(stream=sys.stderr)
-    CONSOLE_LOG_HANDLER.setFormatter(TerminalFormatter())
-    LOGGER.addHandler(CONSOLE_LOG_HANDLER)
-
     import argparse
 
     parser = argparse.ArgumentParser()

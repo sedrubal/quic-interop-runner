@@ -36,8 +36,6 @@ termcolor.ATTRIBUTES["italic"] = 3
 
 T = TypeVar("T")
 
-LOGGER = logging.getLogger(name="quic-interop-runner")
-
 
 def random_string(length: int):
     """Generate a random string of fixed length"""
@@ -707,3 +705,11 @@ class LogFileFormatter(logging.Formatter):
         # remove color control characters
 
         return re.compile(r"\x1B[@-_][0-?]*[ -/]*[@-~]").sub("", msg)
+
+
+LOGGER = logging.getLogger(name="quic-interop-runner")
+LOGGER.setLevel(logging.DEBUG)
+CONSOLE_LOG_HANDLER = logging.StreamHandler(stream=sys.stderr)
+CONSOLE_LOG_HANDLER.setLevel(logging.DEBUG)
+CONSOLE_LOG_HANDLER.setFormatter(TerminalFormatter())
+LOGGER.addHandler(CONSOLE_LOG_HANDLER)

@@ -842,6 +842,7 @@ class Result:
                 breakpoint()
                 raise ValueError(
                     f"Both results have a result for the test {test_abbr}."
+                    f"for {server_impl.name}_{client_impl.name}."
                 )
         else:
             self._test_results[server_impl.name][client_impl.name][
@@ -1019,7 +1020,8 @@ class Result:
             else:
                 breakpoint()
                 raise ValueError(
-                    f"Both results have a result for the measurement {meas_abbr}."
+                    f"Both results have a result for the measurement {meas_abbr} "
+                    f"for {server}_{client}."
                 )
         else:
             self._meas_results[server_impl.name][client_impl.name][

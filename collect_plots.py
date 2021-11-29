@@ -5,12 +5,13 @@ import sys
 from argparse import ArgumentParser
 from enum import Enum
 from pathlib import Path
+import logging
 
 from termcolor import colored, cprint
 
 from plot_diagram import PlotMode
 from result_parser import Result
-from utils import create_relpath
+from utils import create_relpath, LOGGER
 
 
 class CollectMode(Enum):
@@ -85,16 +86,21 @@ def collect_plots(
     collect_dir.mkdir(parents=True, exist_ok=True)
 
     for result in results:
+        result.load_from_json()
+        LOGGER.info("Using %s", result)
         for meas_abbr in meas_abbrs:
+            LOGGER.info("Using %s", meas_abbr)
             for meas in result.get_all_measurements_of_type(meas_abbr, succeeding=True):
+                LOGGER.info("Found result for %s", meas.combination)
                 files = [
                     meas.log_dir_for_test.path / f"time_{mode.value}_plot.png"
                     for mode in plot_modes
                 ]
 
                 for png in files:
+                    LOGGER.info("Searching for %s", png)
                     if not png.is_file():
-                        cprint(f"Plot {png} does not exist.", color="red")
+                        LOGGER.error(f"Plot %s does not exist.", png)
 
                         continue
 
@@ -112,15 +118,10 @@ def collect_plots(
                             )
 
                     if collect_mode == CollectMode.SYMLINK:
-                        cprint(
-                            f"Symlinking {target} -> {create_relpath(png)}",
-                            color="green",
-                        )
+                        LOGGER.info("Symlinking %s -> %s", target, png)
                         target.symlink_to(png)
                     elif collect_mode == CollectMode.COPY:
-                        cprint(
-                            f"Copying {create_relpath(png)} -> {target}", color="green"
-                        )
+                        LOGGER.info("Copying %s -> %s", png, target)
                         shutil.copy(png, target)
 
 

@@ -10,13 +10,10 @@ from matplotlib import pyplot as plt
 from termcolor import colored
 
 from enums import Side
-from implementations import LOGGER
 from result_parser import MeasurementResultInfo, Result
 from tango_colors import Tango
 from trace_analyzer2 import Trace
-from utils import Statistics, Subplot, YaspinWrapper
-
-LOGGER = logging.getLogger("quic-interop-runner")
+from utils import Statistics, Subplot, YaspinWrapper, LOGGER
 
 
 def parse_args():

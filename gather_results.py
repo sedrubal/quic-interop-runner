@@ -17,7 +17,7 @@ from sqlalchemy_utils import UUIDType
 
 from enums import TestResult
 from result_parser import MeasurementResultInfo, Result, TestResultInfo
-from utils import LOGGER, TerminalFormatter
+from utils import LOGGER, CONSOLE_LOG_HANDLER
 
 Base = declarative_base()
 
@@ -371,11 +371,10 @@ class GatherResults:
 
 def main():
     args = parse_args()
-    LOGGER.setLevel(logging.DEBUG)
-    console_log_handler = logging.StreamHandler(stream=sys.stderr)
-    console_log_handler.setLevel(logging.DEBUG if args.debug else logging.INFO)
-    console_log_handler.setFormatter(TerminalFormatter())
-    LOGGER.addHandler(console_log_handler)
+
+    if not args.debug:
+        CONSOLE_LOG_HANDLER.setLevel(logging.INFO)
+
     cli = GatherResults(
         results=args.results,
         dburl=args.database,
