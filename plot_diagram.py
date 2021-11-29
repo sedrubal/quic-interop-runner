@@ -1003,7 +1003,7 @@ class PlotCli:
         )
 
         self._annotate_time_plot(ax, height=max_packet_number, spinner=spinner)
-        spinner.write(f"rtt: {self._main_analyze_result.extended_facts.get('rtt')}")
+        # spinner.write(f"rtt: {self._main_analyze_result.extended_facts.get('rtt')}")
 
     def plot_file_size(self, fig, ax, spinner):
         """Plot the file size diagram."""

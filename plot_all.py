@@ -3,9 +3,9 @@
 import argparse
 import sys
 from collections import defaultdict
-from enum import Enum
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Literal, Optional, Union
+from typing import Optional
 
 from termcolor import colored, cprint
 
@@ -78,6 +78,14 @@ def parse_args():
         action="store_true",
         help="Debug mode.",
     )
+    parser.add_argument(
+        "-j",
+        "--workers",
+        action="store",
+        type=int,
+        default=1,
+        help="Number of workers for plotting. NOTE: >1 breaks output",
+    )
 
     return parser.parse_args()
 
@@ -95,6 +103,7 @@ class PlotAllCli:
         include_failed=False,
         modes: list[PlotMode] = list(PlotMode),
         debug=False,
+        max_workers: int = 1,
     ):
         #  self.log_dirs = log_dirs
         self.result_files = result_files
@@ -107,6 +116,9 @@ class PlotAllCli:
         self.modes = modes
         self._current_log_dir: Optional[Path] = None
         self.debug = debug
+        self.max_workers = max_workers
+        if max_workers > 1 and debug:
+            sys.exit("Debug and max_workers > 1 is not advised")
 
     def plot_in_meas_run_dir(
         self,
@@ -291,32 +303,47 @@ class PlotAllCli:
 
         plot_results = defaultdict[str, set[str]](set[str])
 
-        for tmp1 in result.measurement_results.values():
-            for tmp2 in tmp1.values():
-                measurement_results = list[MeasurementResultInfo]()
+        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+            futures = []
+            for tmp1 in result.measurement_results.values():
+                for tmp2 in tmp1.values():
+                    measurement_results = list[MeasurementResultInfo]()
 
-                if self.only_sat:
-                    measurement_results = [tmp2["SAT"]]
-                else:
-                    measurement_results = list(tmp2.values())
+                    if self.only_sat:
+                        measurement_results = [tmp2["SAT"]]
+                    else:
+                        measurement_results = list(tmp2.values())
 
-                for measurement_result in measurement_results:
-                    results = self.plot_in_meas_run_dir(
-                        measurement_result,
-                        modes=self.modes,
+                    def job(measurement_result, modes):
+                        plot_results = self.plot_in_meas_run_dir(
+                            measurement_result, modes
+                        )
+                        return (
+                            measurement_result.combination,
+                            measurement_result.test.abbr,
+                            plot_results,
+                        )
+
+                    for measurement_result in measurement_results:
+                        future = executor.submit(
+                            job,
+                            measurement_result,
+                            self.modes,
+                        )
+                        futures.append(future)
+
+            for future in futures:
+                combi, test_abbr, results = future.result()
+
+                for plot_result in results:
+                    if plot_result == "already_exists":
+                        plot_result = colored(plot_result, color="green")
+                    plot_results[plot_result].add(f"{combi}-{test_abbr}")
+
+                if not results:
+                    plot_results[colored("success", color="green")].add(
+                        f"{combi}-{test_abbr}"
                     )
-
-                    for plot_result in results:
-                        if plot_result == "already_exists":
-                            plot_result = colored(plot_result, color="green")
-                        plot_results[plot_result].add(
-                            f"{measurement_result.combination}-{measurement_result.test.abbr}"
-                        )
-
-                    if not plot_results:
-                        plot_results[colored("success", color="green")].add(
-                            f"{measurement_result.combination}-{measurement_result.test.abbr}"
-                        )
 
         # Print a summary.
         print()
@@ -351,6 +378,7 @@ def main():
         include_failed=args.include_failed,
         modes=args.mode,
         debug=args.debug,
+        max_workers=args.workers,
     )
     try:
         cli.run()
