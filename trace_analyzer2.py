@@ -544,13 +544,19 @@ class Trace:
         elif src_tuple == server_tuple and dst_tuple == client_tuple:
             packet.direction = Direction.TO_CLIENT
         else:
-            raise ParsingError(
-                (
-                    f"Packet #{packet.quic.packet_number} has unknown source or destination: "
-                    f"{src_ip}:{src_port} -> {dst_ip}:{dst_port}"
-                ),
-                trace=self,
-            )
+            try:
+                raise ParsingError(
+                    (
+                        f"Packet #{packet.quic.packet_number} has unknown source or destination: "
+                        f"{src_ip}:{src_port} -> {dst_ip}:{dst_port}"
+                    ),
+                    trace=self,
+                )
+            except AttributeError:
+                raise ParsingError(
+                    f"Found a strayed QUIC packet that travels from {src_ip}:{src_port} -> {dst_ip}:{dst_port}",
+                    trace=self,
+                )
 
     def parse(self) -> None:
         """
@@ -593,13 +599,20 @@ class Trace:
         response_stream_packets = list[QuicStreamPacket]()
 
         for packet in self.packets:
-            self._set_packet_direction(
-                packet,
-                client_ip=client_ip,
-                client_port=client_port,
-                server_ip=server_ip,
-                server_port=server_port,
-            )
+            try:
+                self._set_packet_direction(
+                    packet,
+                    client_ip=client_ip,
+                    client_port=client_port,
+                    server_ip=server_ip,
+                    server_port=server_port,
+                )
+            except ParsingError as err:
+                LOGGER.error(err)
+                LOGGER.error("Ignoring packet")
+                self.packets.remove(packet)
+                continue
+
             if packet.direction == Direction.TO_CLIENT:
                 server_client_packets.append(packet)
 
@@ -822,6 +835,8 @@ class Trace:
 
             # search for packets
             for packet in right_trace.packets:
+                if not hasattr(packet, "direction"):
+                    continue
                 if packet.direction == direction:
                     last_in_dir_packet_left = left_trace.get_packet_by_fpr(
                         right_trace._packet_fingerprint(packet)

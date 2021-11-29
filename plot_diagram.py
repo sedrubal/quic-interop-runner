@@ -675,33 +675,37 @@ class PlotCli:
             "last_response_send_time"
         ]
 
-        for label, value, label_side in (
+        for text, value, label_side in (
             (
-                f"Req. Start = {req_start:.3f} s",
+                "Req. Start = {value:.3f} s",
                 req_start,
                 "left",
             ),
             (
-                f"TTFB = {ttfb:.3f} s",
+                "TTFB = {value:.3f} s",
                 ttfb,
                 "right",
             ),
             (
-                f"Last Resp. TX = {last_resp_tx_time:.3f} s",
+                "Last Resp. TX = {value:.3f} s",
                 last_resp_tx_time,
                 "left",
             ),
             (
-                f"PLT = {pglt:.3f} s",
+                "PLT = {value:.3f} s",
                 pglt,
                 "right",
             ),
         ):
+            if value is None:
+                # value was not calculated
+                continue
+            text = text.format(value=value)
             self._vline_annotate(
                 ax=ax,
                 x=value,
                 y=height / 2,
-                text=label,
+                text=text,
                 label_side=label_side,
             )
 
@@ -720,21 +724,23 @@ class PlotCli:
             alpha=0.75,
         )
 
-        self._vdim_annotate(
-            ax=ax,
-            left=self._main_analyze_result.extended_facts["request_start"],
-            right=self._main_analyze_result.extended_facts["ttfb"],
-            y=height * 3 / 4,
-            text=f"{resp_delay * 1000:.0f} ms",
-        )
-        end_ts = pglt - last_resp_tx_time
-        self._vdim_annotate(
-            ax=ax,
-            left=last_resp_tx_time,
-            right=pglt,
-            y=height * 3 / 4,
-            text=f"{end_ts * 1000:.0f} ms",
-        )
+        if req_start is not None and ttfb is not None and resp_delay is not None:
+            self._vdim_annotate(
+                ax=ax,
+                left=req_start,
+                right=ttfb,
+                y=height * 3 / 4,
+                text=f"{resp_delay * 1000:.0f} ms",
+            )
+        if last_resp_tx_time is not None and pglt is not None:
+            end_ts = pglt - last_resp_tx_time
+            self._vdim_annotate(
+                ax=ax,
+                left=last_resp_tx_time,
+                right=pglt,
+                y=height * 3 / 4,
+                text=f"{end_ts * 1000:.0f} ms",
+            )
 
     def plot_offset_number(self, fig, ax, spinner):
         """Plot the offset number diagram."""
