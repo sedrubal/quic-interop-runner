@@ -15,12 +15,14 @@ import numpy as np
 import prettytable
 from humanize.filesize import naturalsize
 from matplotlib import pyplot as plt
-from termcolor import colored, cprint
+from termcolor import colored
 
 from enums import CacheMode, PlotMode, Side
 from tango_colors import Tango
 from trace_analyzer2 import ParsingError, Trace
+from units import DataRate, FileSize
 from utils import (
+    LOGGER,
     Statistics,
     Subplot,
     TraceTriple,
@@ -29,21 +31,15 @@ from utils import (
     natural_data_rate,
 )
 
-if TYPE_CHECKING:
-    from collections.abc import Iterable
-
-    from pyshark.packet.packet import Packet
-
-
 DEFAULT_TITLES = {
-    PlotMode.OFFSET_NUMBER: "Time vs. Offset-Number",
-    PlotMode.PACKET_NUMBER: "Time vs. Packet-Number",
-    PlotMode.FILE_SIZE: "Time vs. Transmitted File Size",
-    PlotMode.PACKET_SIZE: "Time vs. Packet Size",
-    PlotMode.DATA_RATE: "Time vs. Data Rate",
-    PlotMode.RETURN_PATH: "Time vs. Return Path Data Rate",
+    PlotMode.OFFSET_NUMBER: "Offset vs. Time",
+    PlotMode.PACKET_NUMBER: "Time vs. Packet Number",
+    PlotMode.FILE_SIZE: "Transmitted File Size vs. Time",
+    PlotMode.PACKET_SIZE: "Packet Size vs. Time",
+    PlotMode.DATA_RATE: "Data Rate vs. Time",
+    PlotMode.RETURN_PATH: "Return Path Data Rate vs. Time",
     #  PlotMode.SIZE_HIST: "Size Histogram",
-    #  PlotMode.RTT: "Time vs. RTT",
+    #  PlotMode.RTT: "RTT vs. Time",
 }
 
 
@@ -99,6 +95,11 @@ def parse_args():
         "--debug",
         action="store_true",
         help="Debug mode.",
+    )
+    parser.add_argument(
+        "--ideal",
+        action="store_true",
+        help="Plot an ideal trace (only supported in offset vs time)",
     )
 
     args = parser.parse_args()
@@ -262,7 +263,8 @@ class PlotCli:
         annotate=True,
         mode: PlotMode = PlotMode.OFFSET_NUMBER,
         cache=CacheMode.BOTH,
-        debug=False,
+        debug: bool = False,
+        add_ideal: bool = False,
     ):
         self.output_file: Optional[Path] = output_file
         self.title = title if title else DEFAULT_TITLES[mode] if mode else None
@@ -302,6 +304,7 @@ class PlotCli:
 
         self._analyze_results = list[TraceAnalyzeResult]()
         self._median_duration_index: int = 0
+        self._add_ideal = add_ideal
 
     def analyze_traces(self):
         """Analyze the traces."""
@@ -309,18 +312,15 @@ class PlotCli:
             # LOGGER.debug("already analyzed")
             return
 
-        with YaspinWrapper(
-            debug=self.debug, text="analyzing...", color="cyan"
-        ) as spinner:
-            while True:
-                try:
-                    trace = self.traces.pop()
-                except IndexError:
-                    break
+        while True:
+            try:
+                trace = self.traces.pop()
+            except IndexError:
+                break
 
-                result = self.analyze_trace(trace, spinner)
-                self._analyze_results.append(result)
-                del trace
+            result = self.analyze_trace(trace)
+            self._analyze_results.append(result)
+            del trace
 
         # find index of trace with median plt
         plts = sorted(
@@ -329,24 +329,23 @@ class PlotCli:
         )
         self._median_duration_index = plts[len(plts) // 2][1]
 
-    def analyze_trace(self, trace: Trace, spinner):
+    def analyze_trace(self, trace: Trace):
 
         cache_file = (
             trace.input_file.parent / f".{trace.input_file.stem}_analyze_cache.json"
         )
         if cache_file.is_file() and cache_file.stat().st_size > 0:
-            spinner.write(colored(f"⚒ Loading cache from {cache_file}", color="grey"))
+            LOGGER.debug("⚒ Loading cache from %s", cache_file)
             with cache_file.open() as file:
                 try:
                     data = json.load(file)
                     return TraceAnalyzeResult.from_json(data)
                 except json.JSONDecodeError as err:
-                    spinner.write(f"Could not load cache: {err}")
+                    LOGGER.error("Could not load cache: %s", err)
 
-        with spinner.hidden():
-            assert trace.pair_trace
-            trace.parse()
-            trace.pair_trace.parse()
+        assert trace.pair_trace
+        trace.parse()
+        trace.pair_trace.parse()
 
         DATA_RATE_WINDOW = 1  # 1s
 
@@ -528,7 +527,7 @@ class PlotCli:
             calc_goodput=False,
         )
 
-        spinner.write(colored(f"⚒ Saving cache file {cache_file}", color="grey"))
+        LOGGER.debug("⚒ Saving cache file %s", cache_file)
         with cache_file.open("w") as file:
             json.dump(
                 {
@@ -649,17 +648,16 @@ class PlotCli:
         )
 
     def _annotate_time_plot(
-        self, ax: plt.Axes, height: Union[float, int], spinner: YaspinWrapper
+        self,
+        ax: plt.Axes,
+        height: Union[float, int],
     ):
         if not self.annotate:
             return
 
         if not self._main_analyze_result.extended_facts["is_http09"]:
-            spinner.write(
-                colored(
-                    f"⨯ Can't annotate plot, because HTTP could not be parsed.",
-                    color="red",
-                )
+            LOGGER.warning(
+                "⨯ Can't annotate plot, because HTTP could not be parsed.",
             )
 
             return
@@ -742,7 +740,7 @@ class PlotCli:
                 text=f"{end_ts * 1000:.0f} ms",
             )
 
-    def plot_offset_number(self, fig, ax, spinner):
+    def plot_offset_number(self, fig, ax):
         """Plot the offset number diagram."""
         ax.grid(True)
         ax.set_xlabel("Time (s)")
@@ -828,9 +826,58 @@ class PlotCli:
             markersize=self._markersize,
         )
 
-        self._annotate_time_plot(ax, height=max_offset, spinner=spinner)
+        if self._add_ideal:
+            # plot an ideal trace
+            ideal_start = self._main_analyze_result.extended_facts[
+                "first_response_send_time"
+            ]
+            LOGGER.info("Assuming file size = 10 MiB, data rate = 20 mbps")
+            file_size_byte = self._main_analyze_result.max_offset
+            # file_size_byte = 10 * FileSize.MiB
+            file_size_bit = file_size_byte * 8
+            max_data_rate = 20 * DataRate.MBPS
+            ideal_last_tx = ideal_start + file_size_bit / max_data_rate
+            ideal_plt = ideal_last_tx + self._main_analyze_result.extended_facts.get(
+                "rtt", 300
+            )
+            ax.plot(
+                [ideal_start, ideal_last_tx],
+                [0, file_size_byte],
+                color=self._colors.DarkChameleon,
+                # linestyle="--",
+                label="ideal trace",
+            )
+            ax.axvline(
+                x=ideal_last_tx,
+                color=self._colors.DarkChameleon,
+                alpha=0.75,
+                linestyle="dotted",
+            )
+            ax.axvline(
+                x=ideal_plt,
+                color=self._colors.DarkChameleon,
+                alpha=0.75,
+                linestyle="dotted",
+            )
+            ax.annotate(
+                f"ideal PLT = {ideal_plt:.3f} s",
+                xy=(ideal_plt, file_size_byte),
+                xytext=(12, 0),
+                textcoords="offset points",
+                va="top",
+                arrowprops=dict(
+                    arrowstyle="-",
+                    color=self._colors.DarkChameleon,
+                    alpha=0.75,
+                ),
+                rotation=90,
+                color=self._colors.DarkChameleon,
+                alpha=0.75,
+            )
 
-    def plot_data_rate(self, fig, ax, spinner):
+        self._annotate_time_plot(ax, height=max_offset)
+
+    def plot_data_rate(self, fig, ax):
         """Plot the data rate plot."""
 
         ax.grid(True)
@@ -888,9 +935,9 @@ class PlotCli:
         )
         ax.legend(loc="upper left", fontsize=8)
 
-        self._annotate_time_plot(ax, height=max_forward_data_rate, spinner=spinner)
+        self._annotate_time_plot(ax, height=max_forward_data_rate)
 
-    def plot_return_path(self, fig, ax, spinner):
+    def plot_return_path(self, fig, ax):
         """Plot the return path utilization."""
 
         ax.grid(True)
@@ -936,9 +983,9 @@ class PlotCli:
             markersize=self._markersize,
         )
 
-        self._annotate_time_plot(ax, height=max_return_data_rate, spinner=spinner)
+        self._annotate_time_plot(ax, height=max_return_data_rate)
 
-    def plot_packet_number(self, fig, ax, spinner):
+    def plot_packet_number(self, fig, ax):
         """Plot the packet number diagram."""
         ax.grid(True)
         ax.set_xlabel("Time (s)")
@@ -1002,10 +1049,10 @@ class PlotCli:
             markersize=self._markersize,
         )
 
-        self._annotate_time_plot(ax, height=max_packet_number, spinner=spinner)
+        self._annotate_time_plot(ax, height=max_packet_number)
         # spinner.write(f"rtt: {self._main_analyze_result.extended_facts.get('rtt')}")
 
-    def plot_file_size(self, fig, ax, spinner):
+    def plot_file_size(self, fig, ax):
         """Plot the file size diagram."""
 
         ax.grid(True)
@@ -1061,9 +1108,9 @@ class PlotCli:
             markersize=self._markersize,
         )
 
-        self._annotate_time_plot(ax, height=max_response_acc_file_size, spinner=spinner)
+        self._annotate_time_plot(ax, height=max_response_acc_file_size)
 
-    def plot_packet_size(self, fig, ax, spinner):
+    def plot_packet_size(self, fig, ax):
         """Plot the packet size diagram."""
         ax.grid(True)
         ax.set_xlabel("Time (s)")
@@ -1142,7 +1189,6 @@ class PlotCli:
         self._annotate_time_plot(
             ax,
             height=self._main_analyze_result.response_packet_stats.max,
-            spinner=spinner,
         )
 
     #  def plot_packet_hist(self, output_file: Optional[Path]):
@@ -1245,7 +1291,7 @@ class PlotCli:
     #                  ),
     #              )
     #
-    #              self._save(fig, output_file, spinner)
+    #              self._save(fig, output_file)
     #
     #  def plot_rtt(self, output_file: Optional[Path]):
     #      """Plot the rtt diagram."""
@@ -1372,13 +1418,11 @@ class PlotCli:
     #                  markersize=self._markersize,
     #              )
     #
-    #              self._annotate_time_plot(ax, height=1, spinner=spinner)
+    #              self._annotate_time_plot(ax, height=1)
     #
-    #              self._save(fig, output_file, spinner)
+    #              self._save(fig, output_file)
 
-    def _save(
-        self, figure: plt.Figure, output_file: Optional[Path], spinner: YaspinWrapper
-    ):
+    def _save(self, figure: plt.Figure, output_file: Optional[Path]):
         """Save or show the plot."""
 
         if output_file:
@@ -1388,13 +1432,9 @@ class PlotCli:
                 #  transparent=True,
                 bbox_inches="tight",
             )
-            spinner.text = colored(
-                f"{create_relpath(output_file)} written.", color="green"
-            )
+            LOGGER.info("%s written", output_file)
         else:
-            spinner.write(f"✔ {spinner.text}")
-            spinner.text = "Showing plot"
-            spinner.ok("✔")
+            LOGGER.info("✔ Showing plot")
             plt.show()
 
     def print_trace_table(self):
@@ -1424,7 +1464,7 @@ class PlotCli:
     def run(self):
         """Run command line interface."""
 
-        cprint(f"Plotting {len(self.traces)} traces", color="cyan", attrs=["bold"])
+        LOGGER.info("Plotting %d traces", len(self.traces))
 
         mapping = {
             PlotMode.OFFSET_NUMBER: {
@@ -1470,14 +1510,11 @@ class PlotCli:
         #     trace.parse()
         self.analyze_traces()
 
-        cprint(f"⚒ Plotting into a {desc} plot...", color="cyan")
+        LOGGER.info("⚒ Plotting into a %s plot...", desc)
 
-        with YaspinWrapper(
-            debug=self.debug, text="plotting...", color="cyan"
-        ) as spinner:
-            with Subplot() as (fig, ax):
-                callback(fig, ax, spinner)
-                self._save(fig, self.output_file, spinner)
+        with Subplot() as (fig, ax):
+            callback(fig, ax)
+            self._save(fig, self.output_file)
 
 
 def main():
@@ -1495,6 +1532,7 @@ def main():
         mode=args.mode,
         cache=args.cache,
         debug=args.debug,
+        add_ideal=args.ideal,
     )
     try:
         cli.run()
