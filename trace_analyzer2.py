@@ -16,7 +16,7 @@ from typing import Any, Iterator, Optional, TypedDict
 import nest_asyncio
 import pyshark  # type: ignore
 from prompt_toolkit.formatted_text import HTML
-from termcolor import colored, cprint
+from termcolor import cprint
 
 from conf import CONFIG
 from enums import CacheMode, Direction, Side
@@ -325,10 +325,10 @@ class Trace:
                 or not hasattr(packet, "quic")
             ):
                 clear_line(file=sys.stderr)
-                cprint(
-                    f"⨯ Skipping packet #{packet.number} without UDP or IP?!? ({packet.frame_info.protocols})",
-                    color="red",
-                    file=sys.stderr,
+                LOGGER.error(
+                    "⨯ Skipping packet #%s without UDP or IP?!? (%s)",
+                    packet.number,
+                    packet.frame_info.protocols,
                 )
 
                 continue
@@ -630,7 +630,7 @@ class Trace:
             if self._error_cfg[FinError] == "error":
                 raise err
             else:
-                cprint(f"⨯ Validation error: {err}", file=sys.stderr, color="red")
+                LOGGER.warning("⨯ Validation error: %s", err)
 
         try:
             request_raw = self.follow_stream(self._request_stream_packets)
@@ -675,7 +675,7 @@ class Trace:
                 raise err
             else:
                 self._facts["is_http09"] = False
-                cprint(f"⨯ Validation error: {err}", file=sys.stderr, color="red")
+                LOGGER.warning("⨯ Validation error: %s", err)
 
         try:
             # check fin bit
@@ -686,7 +686,7 @@ class Trace:
             if self._error_cfg[FinError] == "error":
                 raise err
             else:
-                cprint(f"⨯ Validation error: {err}", file=sys.stderr, color="red")
+                LOGGER.warning("⨯ Validation error: %s", err)
 
         self._parsed = True
 
@@ -1046,9 +1046,8 @@ class Trace:
             buf[offset:] = packet.stream_data.binary_value
 
         if not all(byte is not None for byte in buf):
-            cprint(
+            LOGGER.warning(
                 "⨯ Warning! Did not receive all bytes in follow_stream.",
-                color="yellow",
             )
 
         return bytes([byte or 0 for byte in buf])
@@ -1120,7 +1119,7 @@ class Trace:
             msg = "Last packet that contains a stream frame does not close stream."
 
             if warn_only:
-                cprint(f"⨯ {msg}", color="red", file=sys.stderr)
+                LOGGER.error("⨯ %s", msg)
 
                 return []
             else:
@@ -1138,7 +1137,7 @@ class Trace:
                 )
 
                 if warn_only:
-                    cprint(f"⨯ {msg}", color="red", file=sys.stderr)
+                    LOGGER.error(f"⨯ %s", msg)
 
                     return []
                 else:
@@ -1157,7 +1156,7 @@ class Trace:
                 msg = "There are multiple stream ids in this list. Is it HTTP/3?"
 
                 if warn_only:
-                    cprint(f"⨯ {msg}", color="red", file=sys.stderr)
+                    LOGGER.error("⨯ %s", msg)
 
                     return []
                 else:
@@ -1169,7 +1168,7 @@ class Trace:
                 msg = "Stream was closed multiple times."
 
                 if warn_only:
-                    cprint(f"⨯ {msg}", color="red", file=sys.stderr)
+                    LOGGER.error("⨯ %s", msg)
 
                     return []
                 else:
