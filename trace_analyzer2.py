@@ -285,22 +285,22 @@ class Trace:
                 except Exception as exc:
                     LOGGER.error("⚒ Could not load cache: %s", exc)
 
-            # 3. Load all packets from pcap
-            with ProgBarWrapper(hide=self.debug) as prog_bar:
-                _packet: "Packet"
+        # 3. Load all packets from pcap
+        with ProgBarWrapper(hide=self.debug) as prog_bar:
+            _packet: "Packet"
 
-                for _packet in prog_bar(
-                    self.packet_iter(),  # type: ignore
-                    label=HTML("<cyan>⚒ Parsing packets</cyan>"),
-                    total=self.num_packets,
-                ):
-                    # nothing to do as packet_iter stores packets
-                    pass
+            for _packet in prog_bar(
+                self.packet_iter(),  # type: ignore
+                label=HTML("<cyan>⚒ Parsing packets</cyan>"),
+                total=self.num_packets,
+            ):
+                # nothing to do as packet_iter stores packets
+                pass
 
-            if self._cache_mode.store and self._cache_file:
-                with self._cache_file.open("wb") as cache_file:
-                    LOGGER.debug("⚒ Saving parsed packets to %s", self._cache_file)
-                    pickle.dump(obj=self._packets, file=cache_file)
+        if self._cache_mode.store and self._cache_file:
+            with self._cache_file.open("wb") as cache_file:
+                LOGGER.debug("⚒ Saving parsed packets to %s", self._cache_file)
+                pickle.dump(obj=self._packets, file=cache_file)
 
         return self._packets
 
