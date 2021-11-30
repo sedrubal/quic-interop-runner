@@ -320,6 +320,7 @@ class PlotCli:
 
             result = self.analyze_trace(trace)
             self._analyze_results.append(result)
+            # free memory
             del trace
 
         # find index of trace with median plt

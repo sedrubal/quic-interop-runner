@@ -3,7 +3,7 @@
 import argparse
 import sys
 from collections import defaultdict
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
 
@@ -293,7 +293,13 @@ class PlotAllCli:
 
         plot_results = defaultdict[str, set[str]](set[str])
 
-        with ProcessPoolExecutor(max_workers=self.max_workers) as executor:
+        executor_factory = (
+            ThreadPoolExecutor
+            if self.debug or self.max_workers == 1
+            else ProcessPoolExecutor
+        )
+
+        with executor_factory(max_workers=self.max_workers) as executor:
             futures = []
             for tmp1 in result.measurement_results.values():
                 for tmp2 in tmp1.values():
