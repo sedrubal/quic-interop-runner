@@ -20,14 +20,7 @@ from termcolor import colored, cprint
 
 from conf import CONFIG
 from enums import CacheMode, Direction, Side
-from utils import (
-    LOGGER,
-    ProgBarWrapper,
-    TraceTriple,
-    YaspinWrapper,
-    clear_line,
-    create_relpath,
-)
+from utils import LOGGER, ProgBarWrapper, TraceTriple, clear_line, create_relpath
 
 if typing.TYPE_CHECKING:
     from pyshark.packet.packet import Packet  # type: ignore
@@ -273,60 +266,40 @@ class Trace:
             return self._packets
 
         input_file_rel_path = create_relpath(self.input_file)
-        with YaspinWrapper(
-            debug=self.debug,
-            text=f"Loading {input_file_rel_path}",
-            color="green",
-        ) as spinner:
-            if (
-                self._cache_mode.load
-                and self._cache_file
-                and self._cache_file.is_file()
-                and self._cache_file.stat().st_size
-            ):
-                # 2. Load all packets from cache
-                with self._cache_file.open("rb") as cache_file:
-                    spinner.write(
-                        colored(
-                            f"⚒ Using cache from {create_relpath(self._cache_file)}",
-                            color="grey",
-                        )
-                    )
-                    try:
-                        cached_packets = pickle.load(cache_file)
+        LOGGER.info("Loading %s", input_file_rel_path)
+        if (
+            self._cache_mode.load
+            and self._cache_file
+            and self._cache_file.is_file()
+            and self._cache_file.stat().st_size
+        ):
+            # 2. Load all packets from cache
+            with self._cache_file.open("rb") as cache_file:
+                LOGGER.debug("⚒ Using cache from %s", self._cache_file)
+                try:
+                    cached_packets = pickle.load(cache_file)
 
-                        self._packets = cached_packets
+                    self._packets = cached_packets
 
-                        return cached_packets
-                    except Exception as exc:
-                        spinner.write(
-                            colored(
-                                f"⚒ Could not load cache: {exc}",
-                                color="red",
-                            )
-                        )
+                    return cached_packets
+                except Exception as exc:
+                    LOGGER.error("⚒ Could not load cache: %s", exc)
 
             # 3. Load all packets from pcap
-            with spinner.hidden():
-                with ProgBarWrapper(hide=self.debug) as prog_bar:
-                    _packet: "Packet"
+            with ProgBarWrapper(hide=self.debug) as prog_bar:
+                _packet: "Packet"
 
-                    for _packet in prog_bar(
-                        self.packet_iter(),  # type: ignore
-                        label=HTML("<cyan>⚒ Parsing packets</cyan>"),
-                        total=self.num_packets,
-                    ):
-                        # nothing to do as packet_iter stores packets
-                        pass
+                for _packet in prog_bar(
+                    self.packet_iter(),  # type: ignore
+                    label=HTML("<cyan>⚒ Parsing packets</cyan>"),
+                    total=self.num_packets,
+                ):
+                    # nothing to do as packet_iter stores packets
+                    pass
 
             if self._cache_mode.store and self._cache_file:
                 with self._cache_file.open("wb") as cache_file:
-                    spinner.write(
-                        colored(
-                            f"⚒ Saving parsed packets to {create_relpath(self._cache_file)}",
-                            color="grey",
-                        )
-                    )
+                    LOGGER.debug("⚒ Saving parsed packets to %s", self._cache_file)
                     pickle.dump(obj=self._packets, file=cache_file)
 
         return self._packets
@@ -919,7 +892,7 @@ class Trace:
             if not first_opp_dir_packet_right or not last_in_dir_packet_right:
                 # we did not find the packets
                 LOGGER.warning(
-                    "No suitable packets found for RTT calculation."
+                    "No suitable packets found for RTT calculation. "
                     "Maybe normalization of capture time failed or clock drift in left and right trace is too large."
                 )
                 return None
