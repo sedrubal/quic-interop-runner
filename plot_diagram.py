@@ -101,6 +101,11 @@ def parse_args():
         action="store_true",
         help="Plot an ideal trace (only supported in offset vs time)",
     )
+    parser.add_argument(
+        "--no-shadow",
+        action="store_true",
+        help="Omit shadow traces",
+    )
 
     args = parser.parse_args()
 
@@ -265,6 +270,7 @@ class PlotCli:
         cache=CacheMode.BOTH,
         debug: bool = False,
         add_ideal: bool = False,
+        no_shadow: bool = False,
     ):
         self.output_file: Optional[Path] = output_file
         self.title = title if title else DEFAULT_TITLES[mode] if mode else None
@@ -305,6 +311,7 @@ class PlotCli:
         self._analyze_results = list[TraceAnalyzeResult]()
         self._median_duration_index: int = 0
         self._add_ideal = add_ideal
+        self._no_shadow = no_shadow
 
     def analyze_traces(self):
         """Analyze the traces."""
@@ -750,7 +757,6 @@ class PlotCli:
         ax.set_title(self.title)
         ax.yaxis.set_major_formatter(lambda val, _pos: naturalsize(val, binary=True))
 
-        # plot shadow traces (request and response separated)
         min_offset: int = 0
         max_offset: int = max(r.max_offset for r in self._analyze_results)
 
@@ -761,44 +767,50 @@ class PlotCli:
         ax.set_ylim(bottom=min_offset, top=max_offset)
         ax.set_yticks(np.arange(0, max_offset * 1.1, 1024 * 1024))
 
-        for trace_timestamps, trace_offsets in zip(
-            (r.request_stream_packet_timestamps for r in self._shadow_analyze_results),
-            (r.request_offsets for r in self._shadow_analyze_results),
-        ):
-            ax.plot(
-                trace_timestamps,
-                trace_offsets,
-                marker=".",
-                linestyle="",
-                color=self._colors.aluminium4,
-                markersize=self._markersize,
-            )
+        # plot shadow traces (request and response separated)
 
-        for (
-            trace_first_timestamps,
-            trace_first_offsets,
-            trace_retrans_timestamps,
-            trace_retrans_offsets,
-        ) in zip(
-            (
-                r.response_stream_layers_first_timestamps
-                for r in self._shadow_analyze_results
-            ),
-            (r.response_first_offsets for r in self._shadow_analyze_results),
-            (
-                r.response_stream_layers_retrans_timestamps
-                for r in self._shadow_analyze_results
-            ),
-            (r.response_retrans_offsets for r in self._shadow_analyze_results),
-        ):
-            ax.plot(
-                (*trace_first_timestamps, *trace_retrans_timestamps),
-                (*trace_first_offsets, *trace_retrans_offsets),
-                marker=".",
-                linestyle="",
-                color=self._colors.aluminium4,
-                markersize=self._markersize,
-            )
+        if not self._no_shadow:
+            for trace_timestamps, trace_offsets in zip(
+                (
+                    r.request_stream_packet_timestamps
+                    for r in self._shadow_analyze_results
+                ),
+                (r.request_offsets for r in self._shadow_analyze_results),
+            ):
+                ax.plot(
+                    trace_timestamps,
+                    trace_offsets,
+                    marker=".",
+                    linestyle="",
+                    color=self._colors.aluminium4,
+                    markersize=self._markersize,
+                )
+
+            for (
+                trace_first_timestamps,
+                trace_first_offsets,
+                trace_retrans_timestamps,
+                trace_retrans_offsets,
+            ) in zip(
+                (
+                    r.response_stream_layers_first_timestamps
+                    for r in self._shadow_analyze_results
+                ),
+                (r.response_first_offsets for r in self._shadow_analyze_results),
+                (
+                    r.response_stream_layers_retrans_timestamps
+                    for r in self._shadow_analyze_results
+                ),
+                (r.response_retrans_offsets for r in self._shadow_analyze_results),
+            ):
+                ax.plot(
+                    (*trace_first_timestamps, *trace_retrans_timestamps),
+                    (*trace_first_offsets, *trace_retrans_offsets),
+                    marker=".",
+                    linestyle="",
+                    color=self._colors.aluminium4,
+                    markersize=self._markersize,
+                )
 
         # plot main trace (request and response separated)
 
@@ -959,18 +971,19 @@ class PlotCli:
 
         # plot shadow traces (request and response separated)
 
-        for trace_timestamps, trace_goodput in zip(
-            (r.data_rate_timestamps for r in self._shadow_analyze_results),
-            (r.return_data_rates for r in self._shadow_analyze_results),
-        ):
-            ax.plot(
-                trace_timestamps,
-                trace_goodput,
-                #  marker="o",
-                linestyle="--",
-                color=self._colors.aluminium4,
-                markersize=self._markersize,
-            )
+        if not self._no_shadow:
+            for trace_timestamps, trace_goodput in zip(
+                (r.data_rate_timestamps for r in self._shadow_analyze_results),
+                (r.return_data_rates for r in self._shadow_analyze_results),
+            ):
+                ax.plot(
+                    trace_timestamps,
+                    trace_goodput,
+                    #  marker="o",
+                    linestyle="--",
+                    color=self._colors.aluminium4,
+                    markersize=self._markersize,
+                )
 
         # plot main trace
 
@@ -1005,31 +1018,38 @@ class PlotCli:
 
         # plot shadow traces (request and response separated)
 
-        for trace_timestamps, trace_packet_numbers in zip(
-            (r.request_stream_packet_timestamps for r in self._shadow_analyze_results),
-            (r.request_packet_numbers for r in self._shadow_analyze_results),
-        ):
-            ax.plot(
-                trace_timestamps,
-                trace_packet_numbers,
-                marker=".",
-                linestyle="",
-                color=self._colors.aluminium4,
-                markersize=self._markersize,
-            )
+        if not self._no_shadow:
+            for trace_timestamps, trace_packet_numbers in zip(
+                (
+                    r.request_stream_packet_timestamps
+                    for r in self._shadow_analyze_results
+                ),
+                (r.request_packet_numbers for r in self._shadow_analyze_results),
+            ):
+                ax.plot(
+                    trace_timestamps,
+                    trace_packet_numbers,
+                    marker=".",
+                    linestyle="",
+                    color=self._colors.aluminium4,
+                    markersize=self._markersize,
+                )
 
-        for trace_timestamps, trace_packet_numbers in zip(
-            (r.response_stream_packet_timestamps for r in self._shadow_analyze_results),
-            (r.response_packet_numbers for r in self._shadow_analyze_results),
-        ):
-            ax.plot(
-                trace_timestamps,
-                trace_packet_numbers,
-                marker=".",
-                linestyle="",
-                color=self._colors.aluminium4,
-                markersize=self._markersize,
-            )
+            for trace_timestamps, trace_packet_numbers in zip(
+                (
+                    r.response_stream_packet_timestamps
+                    for r in self._shadow_analyze_results
+                ),
+                (r.response_packet_numbers for r in self._shadow_analyze_results),
+            ):
+                ax.plot(
+                    trace_timestamps,
+                    trace_packet_numbers,
+                    marker=".",
+                    linestyle="",
+                    color=self._colors.aluminium4,
+                    markersize=self._markersize,
+                )
 
         # plot main trace (request and response separated)
 
@@ -1082,21 +1102,25 @@ class PlotCli:
 
         # plot shadow traces
 
-        for trace_timestamps, trace_file_sizes in zip(
-            (r.server_client_packet_timestamps for r in self._shadow_analyze_results),
-            (
-                r.response_accumulated_transmitted_file_sizes
-                for r in self._shadow_analyze_results
-            ),
-        ):
-            ax.plot(
-                trace_timestamps,
-                trace_file_sizes,
-                marker=".",
-                linestyle="",
-                color=self._colors.aluminium4,
-                markersize=self._markersize,
-            )
+        if not self._no_shadow:
+            for trace_timestamps, trace_file_sizes in zip(
+                (
+                    r.server_client_packet_timestamps
+                    for r in self._shadow_analyze_results
+                ),
+                (
+                    r.response_accumulated_transmitted_file_sizes
+                    for r in self._shadow_analyze_results
+                ),
+            ):
+                ax.plot(
+                    trace_timestamps,
+                    trace_file_sizes,
+                    marker=".",
+                    linestyle="",
+                    color=self._colors.aluminium4,
+                    markersize=self._markersize,
+                )
 
         # plot main trace
 
@@ -1534,6 +1558,7 @@ def main():
         cache=args.cache,
         debug=args.debug,
         add_ideal=args.ideal,
+        no_shadow=args.no_shadow,
     )
     try:
         cli.run()
