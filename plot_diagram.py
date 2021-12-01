@@ -319,16 +319,32 @@ class PlotCli:
             # LOGGER.debug("already analyzed")
             return
 
+        last_error: Optional[ParsingError] = None
         while True:
             try:
                 trace = self.traces.pop()
             except IndexError:
                 break
 
-            result = self.analyze_trace(trace)
+            try:
+                result = self.analyze_trace(trace)
+            except ParsingError as err:
+                last_error = err
+                LOGGER.error(
+                    "Trace %s raised an error: %s. Skipping this trace.",
+                    str(trace),
+                    err,
+                )
+                del trace
+                continue
+
             self._analyze_results.append(result)
             # free memory
             del trace
+
+        if not self._analyze_results and last_error:
+            LOGGER.error("Every trace contains errors. We can't plot anything.")
+            raise last_error
 
         # find index of trace with median plt
         plts = sorted(
