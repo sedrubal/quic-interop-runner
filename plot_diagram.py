@@ -765,7 +765,7 @@ class PlotCli:
             right=max(r.max_timestamp for r in self._analyze_results),
         )
         ax.set_ylim(bottom=min_offset, top=max_offset * 1.01)
-        ax.set_yticks(np.arange(0, max_offset * 1.1, 1024 * 1024))
+        ax.set_yticks(np.arange(0, max_offset * 1.1, 1 * FileSize.MiB))
 
         # plot shadow traces (request and response separated)
 
@@ -909,7 +909,7 @@ class PlotCli:
             right=max(r.max_timestamp for r in self._analyze_results),
         )
         ax.set_ylim(bottom=0, top=max_forward_data_rate)
-        #  ax.set_yticks(np.arange(0, max_offset * 1.1, 1024 * 1024))
+        #  ax.set_yticks(np.arange(0, max_offset * 1.1, 1 * FileSize.MiB))
 
         # plot shadow traces (request and response separated)
 
@@ -967,7 +967,7 @@ class PlotCli:
             r.max_return_data_rate for r in self._analyze_results
         )
         ax.set_ylim(bottom=0, top=max_return_data_rate)
-        #  ax.set_yticks(np.arange(0, max_offset * 1.1, 1024 * 1024))
+        #  ax.set_yticks(np.arange(0, max_offset * 1.1, 1 * FileSize.MiB))
 
         # plot shadow traces (request and response separated)
 
@@ -1098,7 +1098,7 @@ class PlotCli:
             bottom=min(0, min_response_acc_file_size),
             top=max_response_acc_file_size,
         )
-        ax.set_yticks(np.arange(0, max_response_acc_file_size * 1.1, 1024 * 1024))
+        ax.set_yticks(np.arange(0, max_response_acc_file_size * 1.1, 1 * FileSize.MiB))
 
         # plot shadow traces
 
