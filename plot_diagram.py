@@ -764,7 +764,7 @@ class PlotCli:
             left=min(0, *(r.min_timestamp for r in self._analyze_results)),
             right=max(r.max_timestamp for r in self._analyze_results),
         )
-        ax.set_ylim(bottom=min_offset, top=max_offset)
+        ax.set_ylim(bottom=min_offset, top=max_offset * 1.01)
         ax.set_yticks(np.arange(0, max_offset * 1.1, 1024 * 1024))
 
         # plot shadow traces (request and response separated)
