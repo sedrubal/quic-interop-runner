@@ -70,7 +70,7 @@ def parse_args():
         choices=PlotMode,
         nargs="+",
         type=PlotMode,
-        default=[mode for mode in PlotMode],
+        default=list(PlotMode),
         help="The mode of plotting (time vs. packet-number or time vs. file-size or both)",
     )
     parser.add_argument(
@@ -133,7 +133,7 @@ def plot_in_meas_run_dir(
 
         if not trace_triple.left_pcap_path.is_file():
             LOGGER.error(
-                f"⨯ %s does not exist",
+                "⨯ %s does not exist",
                 trace_triple.left_pcap_path,
             )
 
@@ -141,7 +141,7 @@ def plot_in_meas_run_dir(
 
         if not trace_triple.right_pcap_path.is_file():
             LOGGER.error(
-                f"⨯ %s does not exist",
+                "⨯ %s does not exist",
                 trace_triple.right_pcap_path,
             )
 
@@ -151,7 +151,7 @@ def plot_in_meas_run_dir(
 
     if not trace_triples:
         LOGGER.error(
-            f"⨯ no pcapng files found for %s. Skipping...",
+            "⨯ no pcapng files found for %s. Skipping...",
             test_case_dir,
         )
 
@@ -185,6 +185,7 @@ def plot_in_meas_run_dir(
                 with err_output_file.open("r") as file:
                     err_msg = file.read().strip()
 
+                broken_pcap: Optional[str] = None
                 try:
                     broken_pcap, err_msg = err_msg.splitlines()
                 except ValueError:
@@ -192,13 +193,10 @@ def plot_in_meas_run_dir(
                         "Error message %s has invalid format.",
                         err_output_file,
                     )
-                    broken_pcap = None
 
                 LOGGER.error(
-                    (
-                        "⨯ Trace could not be plotted in previous run. "
-                        f"{err_output_file.relative_to(current_log_dir)} exists: "
-                    ),
+                    "⨯ Trace could not be plotted in previous run. %s exists: ",
+                    err_output_file,
                 )
                 if broken_pcap:
                     LOGGER.error(broken_pcap)
@@ -238,7 +236,7 @@ def plot_in_meas_run_dir(
                 err.trace,
                 test_case_dir,
             )
-            LOGGER.error(f"⨯ %s", err)
+            LOGGER.error("⨯ %s", err)
 
             with err_output_file.open("w") as file:
                 print(
