@@ -6,7 +6,6 @@
 import argparse
 import logging
 import sys
-from collections import defaultdict
 from enum import Enum
 from pathlib import Path
 from typing import Any, Callable, Literal, Optional, Union

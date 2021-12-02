@@ -13,10 +13,10 @@ from typing import TYPE_CHECKING, Any, Optional, Sequence, Union
 
 import numpy as np
 import prettytable
+import seaborn as sns
 from humanize.filesize import naturalsize
 from matplotlib import pyplot as plt
 from termcolor import colored
-import seaborn as sns
 
 from enums import CacheMode, PlotMode, Side
 from tango_colors import Tango
@@ -928,6 +928,7 @@ class PlotCli:
     def plot_data_rate(self, fig, ax):
         """Plot the data rate plot."""
 
+        sns.set_theme(style="whitegrid")
         ax.grid(True)
         ax.set_xlabel("Time (s)")
         ax.set_ylabel("Data Rate")
@@ -952,36 +953,43 @@ class PlotCli:
             (r.data_rate_timestamps for r in self._shadow_analyze_results),
             (r.forward_goodput_data_rates for r in self._shadow_analyze_results),
         ):
-            ax.plot(
-                trace_timestamps,
-                trace_goodput,
-                #  marker="o",
+            sns.lineplot(
+                x=trace_timestamps,
+                y=trace_goodput,
+                ax=ax,
+                # marker="o",
                 linestyle="--",
                 color=self._colors.aluminium4,
-                markersize=self._markersize,
+                size=self._markersize,
+                legend=None,
             )
 
         # plot main trace
 
-        ax.plot(
-            self._main_analyze_result.data_rate_timestamps,
-            self._main_analyze_result.forward_goodput_data_rates,
+        sns.lineplot(
+            x=self._main_analyze_result.data_rate_timestamps,
+            y=self._main_analyze_result.forward_goodput_data_rates,
+            ax=ax,
             label=r"Goodput (recv'd payload rate delayed by $\frac{-RTT}{2}$)",
             #  marker="o",
             linestyle="--",
             color=self._colors.orange1,
-            markersize=self._markersize,
+            size=self._markersize,
+            legend=None,
         )
-        ax.plot(
-            self._main_analyze_result.data_rate_timestamps,
-            self._main_analyze_result.forward_tx_data_rates,
+        sns.lineplot(
+            x=self._main_analyze_result.data_rate_timestamps,
+            y=self._main_analyze_result.forward_tx_data_rates,
+            ax=ax,
             label="Data Rate of Transmitted Packets",
             #  marker="o",
             linestyle="--",
             color=self._colors.orange3,
-            markersize=self._markersize,
+            size=self._markersize,
+            legend=None,
         )
-        ax.legend(loc="upper left", fontsize=8)
+        ax.legend(fontsize=8)
+        # ax.legend(loc="upper left", fontsize=8)
 
         self._annotate_time_plot(ax, height=max_forward_data_rate)
 
