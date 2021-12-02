@@ -120,34 +120,37 @@ def plot_in_meas_run_dir(
 
     trace_triples = list[TraceTriple]()
 
-    for repetition_dir in measurement_result.repetition_log_dirs:
-        base_sim_path = repetition_dir / "sim"
-        trace_triple = TraceTriple(
-            left_pcap_path=(
-                base_sim_path / f"trace_node_{Side.LEFT.value}_with_secrets.pcapng"
-            ).resolve(),
-            right_pcap_path=(
-                base_sim_path / f"trace_node_{Side.RIGHT.value}_with_secrets.pcapng"
-            ).resolve(),
-        )
-
-        if not trace_triple.left_pcap_path.is_file():
-            LOGGER.error(
-                "⨯ %s does not exist",
-                trace_triple.left_pcap_path,
+    try:
+        for repetition_dir in measurement_result.repetition_log_dirs:
+            base_sim_path = repetition_dir / "sim"
+            trace_triple = TraceTriple(
+                left_pcap_path=(
+                    base_sim_path / f"trace_node_{Side.LEFT.value}_with_secrets.pcapng"
+                ).resolve(),
+                right_pcap_path=(
+                    base_sim_path / f"trace_node_{Side.RIGHT.value}_with_secrets.pcapng"
+                ).resolve(),
             )
 
-            continue
+            if not trace_triple.left_pcap_path.is_file():
+                LOGGER.error(
+                    "⨯ %s does not exist",
+                    trace_triple.left_pcap_path,
+                )
 
-        if not trace_triple.right_pcap_path.is_file():
-            LOGGER.error(
-                "⨯ %s does not exist",
-                trace_triple.right_pcap_path,
-            )
+                continue
 
-            continue
+            if not trace_triple.right_pcap_path.is_file():
+                LOGGER.error(
+                    "⨯ %s does not exist",
+                    trace_triple.right_pcap_path,
+                )
 
-        trace_triples.append(trace_triple)
+                continue
+
+            trace_triples.append(trace_triple)
+    except FileNotFoundError as err:
+        LOGGER.error(err)
 
     if not trace_triples:
         LOGGER.error(
