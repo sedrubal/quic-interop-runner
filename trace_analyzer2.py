@@ -592,7 +592,13 @@ class Trace:
         request_stream_packets = list[QuicStreamPacket]()
         response_stream_packets = list[QuicStreamPacket]()
 
-        packets_with_wrong_direction = defaultdict(int)
+        packets_with_wrong_direction = defaultdict[
+            tuple[
+                str,
+                str,
+            ],
+            int,
+        ](int)
         for packet in self.packets:
             try:
                 self._set_packet_direction(
@@ -602,7 +608,7 @@ class Trace:
                     server_ip=server_ip,
                     server_port=server_port,
                 )
-            except WrongSrcDst as err:
+            except WrongSrcDstError as err:
                 packets_with_wrong_direction[(err.src, err.dst)] += 1
                 self.packets.remove(packet)
                 continue
@@ -631,7 +637,7 @@ class Trace:
                 num_wrong += num
 
             LOGGER.error(
-                "%d packets ignore, %d packets remaining", num_wrong, len(selfpackets)
+                "%d packets ignored, %d packets remaining", num_wrong, len(self.packets)
             )
 
         self._client_server_packets = client_server_packets
@@ -988,14 +994,14 @@ class Trace:
                 )
             elif small_delay > small_delay_threshold["error"]:
                 LOGGER.error(
-                    f"The delay in direction to the server should be very small"
+                    "The delay in direction to the server should be very small"
                     f" (<{small_delay_threshold['error']}, because of norm time), but it was {small_delay}."
-                    f" Can't calculate RTT."
+                    " Can't calculate RTT."
                 )
                 return None
             elif small_delay > small_delay_threshold["warn"]:
                 LOGGER.warning(
-                    f"The delay in direction to the server should be very small"
+                    "The delay in direction to the server should be very small"
                     f" (<{small_delay_threshold['warn']}, because of norm time), but it was {small_delay}."
                 )
 
@@ -1174,7 +1180,7 @@ class Trace:
                 )
 
                 if warn_only:
-                    LOGGER.error(f"⨯ %s", msg)
+                    LOGGER.error("⨯ %s", msg)
 
                     return []
                 else:
