@@ -16,6 +16,7 @@ import pandas as pd
 import seaborn as sns
 from matplotlib import pyplot as plt
 from matplotlib.ticker import FuncFormatter
+from pandas.api.types import CategoricalDtype
 from pandas.core.frame import DataFrame
 from termcolor import colored
 
@@ -63,6 +64,7 @@ def parse_args():
         "--prop",
         action="store",
         choices={"efficiency", "goodput"},
+        default="goodput",
         help="Use efficiencies or goodput (/avg).",
     )
     parser.add_argument(
@@ -139,13 +141,20 @@ class PlotStatsCli:
     @property
     def measurements(self) -> list[MeasurementDescription]:
         """The measurements to use."""
+        default_order = ["G", "SAT", "SATL", "AST", "EUT"]
+
+        def sort_key(value: str):
+            try:
+                return str(default_order.index(value))
+            except IndexError:
+                return value
 
         measurements = list[MeasurementDescription]()
         available_measurements = set[str]()
         for result in self.results:
             available_measurements.update(result.measurement_descriptions.keys())
         if not self.meas_abbrs:
-            self.meas_abbrs = sorted(available_measurements)
+            self.meas_abbrs = sorted(available_measurements, key=sort_key)
         for test_abbr in self.meas_abbrs:
             for result in self.results:
                 test_desc = result.measurement_descriptions.get(test_abbr, None)
@@ -157,7 +166,7 @@ class PlotStatsCli:
             else:
                 sys.exit(
                     f"Unknown measurement in {', '.join(self.meas_abbrs)}. "
-                    f"Known ones are: {', '.join(sorted(available_measurements))}"
+                    f"Known ones are: {', '.join(sorted(available_measurements, key=sort_key))}"
                 )
 
         return measurements
@@ -593,6 +602,11 @@ class PlotStatsCli:
 
         # use mean values of iterations
         df = df.groupby(["server", "client", "measurement"]).mean().reset_index()
+
+        meas_order = CategoricalDtype(
+            [meas.name for meas in self.measurements], ordered=True
+        )
+        df["measurement"] = df["measurement"].astype(meas_order)
 
         # sort by measurement
         df.sort_values(by=["measurement", "server"], inplace=True)

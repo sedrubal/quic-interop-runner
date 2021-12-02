@@ -48,7 +48,7 @@ for prop in "goodput" "efficiency"; do
         "--img-path=${IMG_PATH}" \
         "--img-format=${FORMAT}" \
         --plot-type=swarm \
-        --measurement "${NEW_MEASUREMENTS[@]}" \
+        --measurement "${MEASUREMENTS[@]}" \
         "--prop=${prop}" \
         "${RESULT_SIM}" \
         "${RESULT_REAL}"
