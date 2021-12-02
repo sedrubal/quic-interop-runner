@@ -86,20 +86,20 @@ class PlotPltsCli:
         self._log(f"✔ Using {len(measurement_results)} measurement results")
         return measurement_results
 
-    def get_plt(self, log_dir: Path) -> float:
+    def get_ttlb(self, log_dir: Path) -> float:
         left_trace_file = log_dir / "sim" / "trace_node_left_with_secrets.pcapng"
         right_trace_file = log_dir / "sim" / "trace_node_right_with_secrets.pcapng"
         left_trace = Trace(left_trace_file, side=Side.LEFT)
         right_trace = Trace(right_trace_file, side=Side.RIGHT)
         right_trace.pair_trace = left_trace
-        plt = float(right_trace.extended_facts["plt"])
-        return plt
+        ttlb = float(right_trace.extended_facts["ttlb"])
+        return ttlb
 
-    def get_average_plt(self, measurement_result: MeasurementResultInfo) -> float:
-        plts = [
-            self.get_plt(log_dir) for log_dir in measurement_result.repetition_log_dirs
+    def get_average_ttlb(self, measurement_result: MeasurementResultInfo) -> float:
+        ttlbs = [
+            self.get_ttlb(log_dir) for log_dir in measurement_result.repetition_log_dirs
         ]
-        return sum(plts) / len(plts)
+        return sum(ttlbs) / len(ttlbs)
 
     def get_timeout(self) -> int:
         self._log("Loading test timeouts")
@@ -125,7 +125,7 @@ class PlotPltsCli:
             timeout = self.get_timeout()
 
             values = [
-                self.get_average_plt(measurement_result)
+                self.get_average_ttlb(measurement_result)
                 for measurement_result in measurement_results
             ]
 

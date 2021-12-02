@@ -49,7 +49,7 @@ def parse_args():
     parser.add_argument(
         "--no-annotation",
         action="store_true",
-        help="Hide TTFB, PLT, ... markers.",
+        help="Hide TTFB, TTLB, ... markers.",
     )
     parser.add_argument(
         "--format",

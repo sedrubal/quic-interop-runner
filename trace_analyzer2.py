@@ -817,18 +817,18 @@ class Trace:
         if rtt is None:
             req_start = None
             ttfb = None
-            pglt = None
+            ttlb = None
             resp_delay = None
         else:
             req_start = self._request_stream_packets[0].norm_time - rtt / 2
             ttfb = self._response_stream_packets[0].norm_time + rtt / 2
-            pglt = self._response_stream_packets[-1].norm_time + rtt / 2
+            ttlb = self._response_stream_packets[-1].norm_time + rtt / 2
             resp_delay = ttfb - req_start
 
         facts["request_start"] = req_start
         facts["ttfb"] = ttfb
         facts["response_delay"] = resp_delay
-        facts["plt"] = pglt
+        facts["ttlb"] = ttlb
         facts["rtt"] = rtt
         self._extended_facts = facts
 

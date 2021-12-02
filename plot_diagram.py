@@ -74,7 +74,7 @@ def parse_args():
     parser.add_argument(
         "--no-annotation",
         action="store_true",
-        help="Hide TTFB, PLT, ... markers.",
+        help="Hide TTFB, TTLB, ... markers.",
     )
     parser.add_argument(
         "--mode",
@@ -199,7 +199,7 @@ class TraceAnalyzeResult:
     def max_timestamp(self) -> float:
         """The maximum packet timestamp we have ever seen."""
         assert self.extended_facts
-        plt = self.extended_facts["plt"] or 0
+        ttlb = self.extended_facts["ttlb"] or 0
         timestamp_series = [
             self.request_stream_packet_timestamps,
             self.response_stream_packet_timestamps,
@@ -208,7 +208,7 @@ class TraceAnalyzeResult:
             self.server_client_packet_timestamps,
         ]
 
-        return max(plt, *(ts[-1] for ts in timestamp_series if ts))
+        return max(ttlb, *(ts[-1] for ts in timestamp_series if ts))
 
     @cached_property
     def max_forward_data_rate(self) -> float:
@@ -389,7 +389,7 @@ class PlotCli:
 
         result.extended_facts = trace.extended_facts
 
-        data_rate_timestamps = np.arange(0, trace.extended_facts["plt"], 0.1).tolist()
+        data_rate_timestamps = np.arange(0, trace.extended_facts["ttlb"], 0.1).tolist()
         result.data_rate_timestamps = data_rate_timestamps
 
         # -- offset number --
@@ -689,7 +689,7 @@ class PlotCli:
 
         ttfb = self._main_analyze_result.extended_facts["ttfb"]
         req_start = self._main_analyze_result.extended_facts["request_start"]
-        pglt = self._main_analyze_result.extended_facts["plt"]
+        ttlb = self._main_analyze_result.extended_facts["ttlb"]
         resp_delay = self._main_analyze_result.extended_facts["response_delay"]
         first_resp_tx_time = self._main_analyze_result.extended_facts[
             "first_response_send_time"
@@ -715,8 +715,8 @@ class PlotCli:
                 "left",
             ),
             (
-                "PLT = {value:.3f} s",
-                pglt,
+                "TTLB = {value:.3f} s",
+                ttlb,
                 "right",
             ),
         ):
@@ -755,12 +755,12 @@ class PlotCli:
                 y=height * 3 / 4,
                 text=f"{resp_delay * 1000:.0f} ms",
             )
-        if last_resp_tx_time is not None and pglt is not None:
-            end_ts = pglt - last_resp_tx_time
+        if last_resp_tx_time is not None and ttlb is not None:
+            end_ts = ttlb - last_resp_tx_time
             self._vdim_annotate(
                 ax=ax,
                 left=last_resp_tx_time,
-                right=pglt,
+                right=ttlb,
                 y=height * 3 / 4,
                 text=f"{end_ts * 1000:.0f} ms",
             )
@@ -884,7 +884,7 @@ class PlotCli:
             file_size_bit = file_size_byte * 8
             max_data_rate = 20 * DataRate.MBPS
             ideal_last_tx = ideal_start + file_size_bit / max_data_rate
-            ideal_plt = ideal_last_tx + self._main_analyze_result.extended_facts.get(
+            ideal_ttlb = ideal_last_tx + self._main_analyze_result.extended_facts.get(
                 "rtt", 300
             )
             sns.lineplot(
@@ -902,14 +902,14 @@ class PlotCli:
                 linestyle="dotted",
             )
             ax.axvline(
-                x=ideal_plt,
+                x=ideal_ttlb,
                 color=self._colors.DarkChameleon,
                 alpha=0.75,
                 linestyle="dotted",
             )
             ax.annotate(
-                f"ideal PLT = {ideal_plt:.3f} s",
-                xy=(ideal_plt, file_size_byte),
+                f"ideal TTLB = {ideal_ttlb:.3f} s",
+                xy=(ideal_ttlb, file_size_byte),
                 xytext=(12, 0),
                 textcoords="offset points",
                 va="top",
@@ -1417,7 +1417,7 @@ class PlotCli:
     #                  min, [self._request_timestamps, response_timestamps]
     #              )
     #              max_timestamp: float = max(
-    #                  trace.extended_facts["plt"] for trace in self.traces
+    #                  trace.extended_facts["ttlb"] for trace in self.traces
     #              )
     #
     #              self._request_timestamps = list[list[float]]()
