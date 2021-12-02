@@ -10,6 +10,7 @@ import subprocess
 import sys
 import typing
 from functools import cached_property
+from collections import defaultdict
 from pathlib import Path
 from typing import Any, Iterator, Optional, TypedDict
 
@@ -54,6 +55,15 @@ class HTTP09Error(ParsingError):
 
 class CryptoError(ParsingError):
     """Error with crypto detected."""
+
+
+class WrongSrcDstError(ParsingError):
+    """Error when packet has invalid source or destination."""
+
+    def __init__(self, msg: str, trace: "Trace", src: str, dst: str):
+        super().__init__(msg, trace)
+        self.src = src
+        self.dst = dst
 
 
 #  def get_frame_prop_from_all_frames(
@@ -524,18 +534,19 @@ class Trace:
             packet.direction = Direction.TO_CLIENT
         else:
             try:
-                raise ParsingError(
-                    (
-                        f"Packet #{packet.quic.packet_number} has unknown source or destination: "
-                        f"{src_ip}:{src_port} -> {dst_ip}:{dst_port}"
-                    ),
-                    trace=self,
+                msg = (
+                    f"Packet #{packet.quic.packet_number} has unknown source or destination: "
+                    f"{src_ip}:{src_port} -> {dst_ip}:{dst_port}"
                 )
             except AttributeError:
-                raise ParsingError(
-                    f"Found a strayed QUIC packet that travels from {src_ip}:{src_port} -> {dst_ip}:{dst_port}",
-                    trace=self,
-                )
+                msg = f"Found a strayed QUIC packet that travels from {src_ip}:{src_port} -> {dst_ip}:{dst_port}"
+
+            raise WrongSrcDstError(
+                msg,
+                trace=self,
+                src=f"{src_ip}:{src_port}",
+                dst=f"{dst_ip}:{dst_port}",
+            )
 
     def parse(self) -> None:
         """
@@ -577,6 +588,7 @@ class Trace:
         request_stream_packets = list[QuicStreamPacket]()
         response_stream_packets = list[QuicStreamPacket]()
 
+        packets_with_wrong_direction = defaultdict(int)
         for packet in self.packets:
             try:
                 self._set_packet_direction(
@@ -586,6 +598,10 @@ class Trace:
                     server_ip=server_ip,
                     server_port=server_port,
                 )
+            except WrongSrcDst as err:
+                packets_with_wrong_direction[(err.src, err.dst)] += 1
+                self.packets.remove(packet)
+                continue
             except ParsingError as err:
                 LOGGER.error(err)
                 LOGGER.error("Ignoring packet")
@@ -602,6 +618,17 @@ class Trace:
 
                 for inner_packet in self.iter_stream_packets(packet):
                     request_stream_packets.append(inner_packet)
+
+        if packets_with_wrong_direction:
+            LOGGER.error("Ignoring packets with wrong direction:")
+            num_wrong = 0
+            for (src, dst), num in packets_with_wrong_direction.items():
+                LOGGER.error("src=%s dst=%s: %d", src, dst, num)
+                num_wrong += num
+
+            LOGGER.error(
+                "%d packets ignore, %d packets remaining", num_wrong, len(selfpackets)
+            )
 
         self._client_server_packets = client_server_packets
         self._server_client_packets = server_client_packets
