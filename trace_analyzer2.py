@@ -33,6 +33,10 @@ nest_asyncio.apply()
 QuicStreamPacket = Any
 
 
+# Use the first n packets to search for packets usable to calculate RTT:
+CALC_RTT_FIND_PKG_LIMIT = 10
+
+
 class ParsingError(Exception):
     """Exception that will be thrown when we can't parse the trace."""
 
@@ -840,9 +844,12 @@ class Trace:
             first_opp_dir_packet_left: Optional["Packet"] = None
 
             # search for packets
-            for packet in right_trace.packets:
+            for i, packet in enumerate(right_trace.packets):
                 if not hasattr(packet, "direction"):
                     continue
+                elif i > CALC_RTT_FIND_PKG_LIMIT:
+                    return None
+
                 if packet.direction == direction:
                     last_in_dir_packet_left = left_trace.get_packet_by_fpr(
                         right_trace._packet_fingerprint(packet)
