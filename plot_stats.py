@@ -23,7 +23,7 @@ from enums import TestResult
 from result_parser import MeasurementDescription, Result, TestResultInfo
 from tango_colors import Tango
 from units import DataRate
-from utils import Statistics, Subplot, YaspinWrapper, natural_data_rate, LOGGER
+from utils import LOGGER, Statistics, Subplot, YaspinWrapper, natural_data_rate
 
 
 class PlotType(Enum):
@@ -452,6 +452,14 @@ class PlotStatsCli:
             ax.xaxis.set_ticks_position("top")
             ax.xaxis.set_label_position("top")
 
+            # remove tick marks
+            ax.tick_params(
+                left=False,
+                bottom=False,
+                top=False,
+                right=False,
+            )
+
             self._save(
                 fig,
                 f"heatmap_test_{test_abbr}",
@@ -542,6 +550,12 @@ class PlotStatsCli:
 
             ax.xaxis.set_ticks_position("top")
             ax.xaxis.set_label_position("top")
+            ax.tick_params(
+                left=False,
+                bottom=False,
+                top=False,
+                right=False,
+            )
 
             ax.legend(
                 *scatter.legend_elements(
