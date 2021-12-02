@@ -1077,7 +1077,10 @@ class Trace:
             if extend_buf > 0:
                 buf += [None] * extend_buf
 
-            buf[offset:] = packet.stream_data.binary_value
+            try:
+                buf[offset:] = packet.stream_data.binary_value
+            except Exception as exc:
+                LOGGER.warning("Error while decoding packet payload: %s", exc)
 
         if not all(byte is not None for byte in buf):
             LOGGER.warning(
