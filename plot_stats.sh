@@ -42,10 +42,20 @@ run ./plot_stats.py \
     "${RESULT_SIM}" \
     "${RESULT_REAL}"
 
-for extra_arg in "" "--efficiency"; do
+for prop in "goodput" "efficiency"; do
     run ./plot_stats.py \
         --no-interactive \
-        "${extra_arg}" \
+        "--img-path=${IMG_PATH}" \
+        "--img-format=${FORMAT}" \
+        --plot-type=swarm \
+        --measurement "${NEW_MEASUREMENTS[@]}" \
+        "--prop=${prop}" \
+        "${RESULT_SIM}" \
+        "${RESULT_REAL}"
+
+    run ./plot_stats.py \
+        --no-interactive \
+        "--prop=${prop}" \
         "--img-path=${IMG_PATH}" \
         "--img-format=${FORMAT}" \
         --plot-type=kdes \
@@ -55,7 +65,7 @@ for extra_arg in "" "--efficiency"; do
     for measurement in "${MEASUREMENTS[@]}"; do
         run ./plot_stats.py \
             --no-interactive \
-            ${extra_arg} \
+            "--prop=${prop}" \
             "--measurement=${measurement}" \
             "--img-path=${IMG_PATH}" \
             "--img-format=${FORMAT}" \
@@ -64,7 +74,7 @@ for extra_arg in "" "--efficiency"; do
             "${RESULT_REAL}"
         run ./plot_stats.py \
             --no-interactive \
-            ${extra_arg} \
+            "--prop=${prop}" \
             "--measurement=${measurement}" \
             "--img-path=${IMG_PATH}" \
             "--img-format=${FORMAT}" \

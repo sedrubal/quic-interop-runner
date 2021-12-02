@@ -32,6 +32,7 @@ class PlotType(Enum):
     HEATMAP = "heatmap"
     RIDGELINE = "ridgeline"
     ANALYZE = "analyze"
+    SWARM = "swarm"
 
 
 def parse_args():
@@ -59,9 +60,10 @@ def parse_args():
         help="Result file to use.",
     )
     parser.add_argument(
-        "--efficiency",
-        action="store_true",
-        help="Use efficiencies instead of goodput (/avg).",
+        "--prop",
+        action="store",
+        choices={"efficiency", "goodput"},
+        help="Use efficiencies or goodput (/avg).",
     )
     parser.add_argument(
         "-t",
@@ -579,6 +581,63 @@ class PlotStatsCli:
                 f"heatmap_{self.meas_prop_name.lower()}_{measurement.abbr}",
             )
 
+    def plot_swarmplot(self):
+        df = self.get_dataframe(include_failed=False)
+        sns.set_theme(style="whitegrid")
+
+        # filter by measurement
+        meas_name_set = {meas.name for meas in self.measurements}
+        df = df[df.measurement.isin(meas_name_set)]
+        # filter columns
+        df = df[["server", "client", "measurement", self.meas_prop_key]]
+
+        # use mean values of iterations
+        df = df.groupby(["server", "client", "measurement"]).mean().reset_index()
+
+        # sort by measurement
+        df.sort_values(by=["measurement", "server"], inplace=True)
+
+        max_goodput = df[self.meas_prop_key].max()
+
+        # rename columns
+        df.rename(
+            columns={
+                "server": "Server",
+                "client": "Client",
+                "measurement": "Measurement",
+                self.meas_prop_key: self.meas_prop_name.title(),
+            },
+            inplace=True,
+        )
+
+        with Subplot() as (fig, ax):
+            assert isinstance(ax, plt.Axes)
+
+            ax = sns.swarmplot(
+                data=df,
+                x="Measurement",
+                y=self.meas_prop_name.title(),
+                hue="Server",
+                size=3,
+                ax=ax,
+            )
+
+            ax.yaxis.set_major_formatter(self.format_value)
+
+            ax.legend(
+                loc="center left",
+                # ncol=3,
+                bbox_to_anchor=(1, 0.5),
+            )
+
+            ax.set_ylim(ymin=0, ymax=1 if self.efficiency else max_goodput * 1.1)
+
+            meas_abbrs = "-".join(meas.abbr for meas in self.measurements)
+            self._save(
+                fig,
+                f"swarmplot_{self.meas_prop_name.lower()}_{meas_abbrs}",
+            )
+
     def plot_ridgeline(
         self, dimension: Union[Literal["server"], Literal["client"]], meas_abbr: str
     ):
@@ -805,6 +864,8 @@ class PlotStatsCli:
                     self.plot_ridgeline("client", meas_abbr)
             elif self.plot_type == PlotType.ANALYZE:
                 self.print_analyze()
+            elif self.plot_type == PlotType.SWARM:
+                self.plot_swarmplot()
             else:
                 assert False
 
@@ -847,7 +908,7 @@ def main():
         test_abbrs=args.tests,
         results=args.results,
         plot_type=args.plot_type,
-        efficiency=args.efficiency,
+        efficiency=args.prop == "efficiency",
         debug=args.debug,
         img_path=args.img_path,
         img_format=args.img_format,
