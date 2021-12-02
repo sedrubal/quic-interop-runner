@@ -16,6 +16,7 @@ import prettytable
 from humanize.filesize import naturalsize
 from matplotlib import pyplot as plt
 from termcolor import colored
+import seaborn as sns
 
 from enums import CacheMode, PlotMode, Side
 from tango_colors import Tango
@@ -34,7 +35,7 @@ from utils import (
 DEFAULT_TITLES = {
     PlotMode.OFFSET_NUMBER: "Offset vs. Time",
     PlotMode.PACKET_NUMBER: "Time vs. Packet Number",
-    PlotMode.FILE_SIZE: "Transmitted File Size vs. Time",
+    PlotMode.FILE_SIZE: "Transmitted Data Size vs. Time",
     PlotMode.PACKET_SIZE: "Packet Size vs. Time",
     PlotMode.DATA_RATE: "Data Rate vs. Time",
     PlotMode.RETURN_PATH: "Return Path Data Rate vs. Time",
@@ -233,12 +234,12 @@ class TraceAnalyzeResult:
 
     @cached_property
     def min_response_acc_file_size(self) -> int:
-        """The minimum file size."""
+        """The minimum data size."""
         return min(self.response_accumulated_transmitted_file_sizes)
 
     @cached_property
     def max_response_acc_file_size(self) -> int:
-        """The maximum file size."""
+        """The maximum data size."""
         return max(self.response_accumulated_transmitted_file_sizes)
 
     @cached_property
@@ -498,7 +499,7 @@ class PlotCli:
         for packet in trace.server_client_packets:
             result.server_client_packet_timestamps.append(packet.norm_time)
 
-            # file size (only in response direction)
+            # data size (only in response direction)
             file_size = trace.get_quic_payload_size(packet)
             result.response_transmitted_file_sizes.append(file_size)
             acc_file_size = sum(result.response_transmitted_file_sizes)
@@ -766,6 +767,8 @@ class PlotCli:
 
     def plot_offset_number(self, fig, ax):
         """Plot the offset number diagram."""
+
+        sns.set_theme(style="whitegrid")
         ax.grid(True)
         ax.set_xlabel("Time (s)")
         ax.set_ylabel("Offset")
@@ -793,13 +796,16 @@ class PlotCli:
                 ),
                 (r.request_offsets for r in self._shadow_analyze_results),
             ):
-                ax.plot(
-                    trace_timestamps,
-                    trace_offsets,
+                sns.scatterplot(
+                    x=trace_timestamps,
+                    y=trace_offsets,
+                    ax=ax,
                     marker=".",
-                    linestyle="",
+                    # linestyle="",
                     color=self._colors.aluminium4,
-                    markersize=self._markersize,
+                    size=self._markersize,
+                    edgecolor="none",
+                    legend=None,
                 )
 
             for (
@@ -819,40 +825,52 @@ class PlotCli:
                 ),
                 (r.response_retrans_offsets for r in self._shadow_analyze_results),
             ):
-                ax.plot(
-                    (*trace_first_timestamps, *trace_retrans_timestamps),
-                    (*trace_first_offsets, *trace_retrans_offsets),
+                sns.scatterplot(
+                    x=(*trace_first_timestamps, *trace_retrans_timestamps),
+                    y=(*trace_first_offsets, *trace_retrans_offsets),
+                    ax=ax,
                     marker=".",
-                    linestyle="",
+                    # linestyle="",
                     color=self._colors.aluminium4,
-                    markersize=self._markersize,
+                    size=self._markersize,
+                    edgecolor="none",
+                    legend=None,
                 )
 
         # plot main trace (request and response separated)
 
-        ax.plot(
-            self._main_analyze_result.request_stream_packet_timestamps,
-            self._main_analyze_result.request_offsets,
+        sns.scatterplot(
+            x=self._main_analyze_result.request_stream_packet_timestamps,
+            y=self._main_analyze_result.request_offsets,
+            ax=ax,
             marker="o",
-            linestyle="",
+            # linestyle="",
             color=self._colors.Chameleon,
-            markersize=self._markersize,
+            size=self._markersize,
+            edgecolor="none",
+            legend=None,
         )
-        ax.plot(
-            self._main_analyze_result.response_stream_layers_first_timestamps,
-            self._main_analyze_result.response_first_offsets,
+        sns.scatterplot(
+            x=self._main_analyze_result.response_stream_layers_first_timestamps,
+            y=self._main_analyze_result.response_first_offsets,
+            ax=ax,
             marker="o",
-            linestyle="",
+            # linestyle="",
             color=self._colors.SkyBlue,
-            markersize=self._markersize,
+            size=self._markersize,
+            edgecolor="none",
+            legend=None,
         )
-        ax.plot(
-            self._main_analyze_result.response_stream_layers_retrans_timestamps,
-            self._main_analyze_result.response_retrans_offsets,
+        sns.scatterplot(
+            x=self._main_analyze_result.response_stream_layers_retrans_timestamps,
+            y=self._main_analyze_result.response_retrans_offsets,
+            ax=ax,
             marker="o",
-            linestyle="",
+            # linestyle="",
             color=self._colors.Orange,
-            markersize=self._markersize,
+            size=self._markersize * 2,
+            edgecolor="none",
+            legend=None,
         )
 
         if self._add_ideal:
@@ -869,9 +887,10 @@ class PlotCli:
             ideal_plt = ideal_last_tx + self._main_analyze_result.extended_facts.get(
                 "rtt", 300
             )
-            ax.plot(
-                [ideal_start, ideal_last_tx],
-                [0, file_size_byte],
+            sns.lineplot(
+                x=[ideal_start, ideal_last_tx],
+                y=[0, file_size_byte],
+                ax=ax,
                 color=self._colors.DarkChameleon,
                 # linestyle="--",
                 label="ideal trace",
@@ -983,7 +1002,7 @@ class PlotCli:
             r.max_return_data_rate for r in self._analyze_results
         )
         ax.set_ylim(bottom=0, top=max_return_data_rate)
-        #  ax.set_yticks(np.arange(0, max_offset * 1.1, 1 * FileSize.MiB))
+        # ax.set_yticks(np.arange(0, max_return_data_rate * 1.1, 1 * FileSize.MiB))
 
         # plot shadow traces (request and response separated)
 
@@ -1089,12 +1108,13 @@ class PlotCli:
         self._annotate_time_plot(ax, height=max_packet_number)
         # spinner.write(f"rtt: {self._main_analyze_result.extended_facts.get('rtt')}")
 
-    def plot_file_size(self, fig, ax):
-        """Plot the file size diagram."""
+    def plot_data_size(self, fig, ax):
+        """Plot the data size diagram."""
 
+        sns.set_theme(style="whitegrid")
         ax.grid(True)
         ax.set_xlabel("Time (s)")
-        ax.set_ylabel("Transmitted File Size")
+        ax.set_ylabel("Transmitted Data Size")
         assert self.title
         ax.set_title(self.title)
         ax.yaxis.set_major_formatter(lambda val, _pos: naturalsize(val, binary=True))
@@ -1129,24 +1149,30 @@ class PlotCli:
                     for r in self._shadow_analyze_results
                 ),
             ):
-                ax.plot(
-                    trace_timestamps,
-                    trace_file_sizes,
+                sns.scatterplot(
+                    x=trace_timestamps,
+                    y=trace_file_sizes,
+                    ax=ax,
                     marker=".",
-                    linestyle="",
+                    # linestyle="",
                     color=self._colors.aluminium4,
-                    markersize=self._markersize,
+                    size=self._markersize,
+                    edgecolor="none",
+                    legend=None,
                 )
 
         # plot main trace
 
-        ax.plot(
-            self._main_analyze_result.server_client_packet_timestamps,
-            self._main_analyze_result.response_accumulated_transmitted_file_sizes,
+        sns.scatterplot(
+            x=self._main_analyze_result.server_client_packet_timestamps,
+            y=self._main_analyze_result.response_accumulated_transmitted_file_sizes,
+            ax=ax,
             marker="o",
-            linestyle="",
+            # linestyle="",
             color=self._colors.SkyBlue,
-            markersize=self._markersize,
+            size=self._markersize,
+            edgecolor="none",
+            legend=None,
         )
 
         self._annotate_time_plot(ax, height=max_response_acc_file_size)
@@ -1515,7 +1541,7 @@ class PlotCli:
                 "callback": self.plot_packet_number,
             },
             PlotMode.FILE_SIZE: {
-                "callback": self.plot_file_size,
+                "callback": self.plot_data_size,
             },
             PlotMode.PACKET_SIZE: {
                 "callback": self.plot_packet_size,
