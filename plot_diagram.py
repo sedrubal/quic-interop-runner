@@ -320,6 +320,9 @@ class PlotCli:
             # LOGGER.debug("already analyzed")
             return
 
+        if not self.traces:
+            breakpoint()
+
         last_error: Optional[ParsingError] = None
         while True:
             try:
@@ -352,7 +355,8 @@ class PlotCli:
             (r.max_timestamp - r.min_timestamp, i)
             for i, r in enumerate(self._analyze_results)
         )
-        self._median_duration_index = plts[len(plts) // 2][1]
+        median_pos = len(plts) // 2
+        _med_time_to_completion, self._median_duration_index = plts[median_pos]
 
     def analyze_trace(self, trace: Trace):
 
@@ -1576,13 +1580,6 @@ class PlotCli:
         desc = DEFAULT_TITLES[self.mode]
         # num_traces = 1 if single else len(self.traces)
 
-        # avoid lazy result parsing:
-
-        # if single:
-        #     self.traces[0].parse()
-        # else:
-        # for trace in self.traces:
-        #     trace.parse()
         self.analyze_traces()
 
         LOGGER.info("⚒ Plotting into a %s plot...", desc)
