@@ -567,6 +567,9 @@ class Deployment:
         # check client
         containers = list[Container]()
 
+        image = implementation.image
+        assert image
+
         if role == Role.CLIENT:
             containers.append(
                 self._create_sim(
@@ -575,7 +578,7 @@ class Deployment:
             )
         containers.append(
             self._create_implementation_sim(
-                image=implementation.image,
+                image=image,
                 role=role,
                 local_certs_path=local_certs_path,
                 testcase=testcase_name,
@@ -614,6 +617,10 @@ class Deployment:
         client = IMPLEMENTATIONS[client_name]
         server = IMPLEMENTATIONS[server_name]
 
+        server_image = server.image
+        client_image = client.image
+        assert server_image and client_image
+
         timeout = 60 * 60 * 1  # 1h
         testcase_lookup: dict[str, Type[TestCase]] = {
             **{tc.name: tc for tc in TESTCASES},
@@ -628,7 +635,7 @@ class Deployment:
         )
         LOGGER.debug("Creating server container")
         server_container = self._create_implementation_sim(
-            image=server.image,
+            image=server_image,
             role=Role.SERVER,
             local_certs_path=local_certs_path,
             testcase=testcase.testname(Perspective.SERVER),
@@ -638,7 +645,7 @@ class Deployment:
         )
         LOGGER.debug("Creating client container")
         client_container = self._create_implementation_sim(
-            image=client.image,
+            image=client_image,
             role=Role.CLIENT,
             local_certs_path=local_certs_path,
             testcase=testcase.testname(Perspective.CLIENT),
@@ -724,6 +731,9 @@ class Deployment:
         request_urls: str,
         version: int,
     ) -> ExecResult:
+        server_image = server.image
+        client_image = client.image
+        assert server_image and client_image
         with concurrent.futures.ThreadPoolExecutor() as executor:
             create_sim_t = executor.submit(
                 lambda: self._create_sim(
@@ -733,7 +743,7 @@ class Deployment:
             )
             create_server_t = executor.submit(
                 lambda: self._create_implementation_sim(
-                    image=server.image,
+                    image=server_image,
                     role=Role.SERVER,
                     local_certs_path=local_certs_path,
                     testcase=testcase.testname(Perspective.SERVER),
@@ -744,7 +754,7 @@ class Deployment:
             )
             create_client_t = executor.submit(
                 lambda: self._create_implementation_sim(
-                    image=client.image,
+                    image=client_image,
                     role=Role.CLIENT,
                     local_certs_path=local_certs_path,
                     testcase=testcase.testname(Perspective.CLIENT),
