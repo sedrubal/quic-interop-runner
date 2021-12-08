@@ -774,15 +774,7 @@ class Deployment:
                     image=TCPDUMP_IMG,
                     service_name="right_tcpdump",
                     stage=Stage.SERVER_POST,
-                    entrypoint=[
-                        "tcpdump",
-                        "-q",
-                        "-w",
-                        str(TRACE_PATH),
-                        "udp",
-                        "port",
-                        str(server_port),
-                    ],
+                    entrypoint=self._get_tcpdump_cmd(server_port),
                     network=f"container:{server_container.name}",
                 ),
             )
@@ -930,15 +922,7 @@ class Deployment:
                 image=TCPDUMP_IMG,
                 service_name="right_tcpdump",
                 stage=Stage.SERVER_POST,
-                entrypoint=[
-                    "tcpdump",
-                    "-q",
-                    "-w",
-                    str(TRACE_PATH),
-                    "udp",
-                    "port",
-                    str(server_port),
-                ],
+                entrypoint=self._get_tcpdump_cmd(server_port),
                 network=f"container:{server_container.name}",
             )
             create_left_tcpdump_t = executor.submit(
@@ -947,15 +931,7 @@ class Deployment:
                 image=TCPDUMP_IMG,
                 service_name="left_tcpdump",
                 stage=Stage.CLIENT_POST,
-                entrypoint=[
-                    "tcpdump",
-                    "-q",
-                    "-w",
-                    str(TRACE_PATH),
-                    "udp",
-                    "port",
-                    str(server_port),
-                ],
+                entrypoint=self._get_tcpdump_cmd(server_port),
                 network=f"container:{client_container.name}",
             )
 
@@ -1165,6 +1141,18 @@ class Deployment:
             "sim46": self.get_sim_ipv4(role).exploded,
             "sim46 ": self.get_sim_ipv6(role).exploded,
         }
+
+    def _get_tcpdump_cmd(self, port: int) -> list[str]:
+        # TODO more specific filtering?
+        return [
+            "tcpdump",
+            "-q",
+            "-w",
+            str(TRACE_PATH),
+            "udp",
+            "port",
+            str(port),
+        ]
 
     def _create_sim(
         self,
