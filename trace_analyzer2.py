@@ -937,10 +937,12 @@ class Trace:
                 )
                 return None
 
-            assert (
+            if (
                 first_opp_dir_packet_right.norm_time
-                > last_in_dir_packet_right.norm_time
-            )
+                <= last_in_dir_packet_right.norm_time
+            ):
+                # assert False
+                return None
 
             if (
                 not last_in_dir_packet_right
