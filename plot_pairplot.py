@@ -2,13 +2,14 @@
 
 """Plot some statistics about a result file."""
 
+# TODO merge into plot_stats?
+
 
 import argparse
 import logging
 import sys
-from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Literal, Optional, Union
+from typing import Any, Optional, Union
 
 import numpy as np
 import pandas as pd
@@ -16,12 +17,10 @@ import seaborn as sns
 from matplotlib import pyplot as plt
 from termcolor import colored
 
-from enums import ImplementationRole
 from implementations import LOGGER
 from result_parser import MeasurementDescription, Result
 from tango_colors import Tango
-from units import DataRate
-from utils import Statistics, Subplot, YaspinWrapper, natural_data_rate
+from utils import YaspinWrapper
 
 LOGGER = logging.getLogger("quic-interop-runner")
 

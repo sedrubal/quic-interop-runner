@@ -42,6 +42,22 @@ run ./plot_stats.py \
     "${RESULT_SIM}" \
     "${RESULT_REAL}"
 
+run ./plot_stats.py \
+    --no-interactive \
+    "--img-path=${IMG_PATH}" \
+    "--img-format=${FORMAT}" \
+    --plot-type ccas \
+    --measurement SAT SATL \
+    "${RESULT_SIM}"
+run ./plot_stats.py \
+    --no-interactive \
+    "--img-path=${IMG_PATH}" \
+    "--img-format=${FORMAT}" \
+    --plot-type ccas \
+    --measurement G SAT \
+    "${RESULT_SIM}"
+# "${RESULT_REAL}"
+
 for prop in "goodput" "efficiency"; do
     run ./plot_stats.py \
         --no-interactive \

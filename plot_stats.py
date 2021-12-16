@@ -9,8 +9,9 @@ import sys
 from enum import Enum
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Literal, Optional, Union
+from typing import Any, Counter, Literal, Optional, Union
 
+import matplotlib
 import numpy as np
 import pandas as pd
 import seaborn as sns
@@ -26,6 +27,119 @@ from tango_colors import Tango
 from units import DataRate
 from utils import LOGGER, Statistics, Subplot, YaspinWrapper, natural_data_rate
 
+IMPL_CCAS = {
+    "aioquic": {
+        "cca": "NewReno",
+    },
+    "chrome": {
+        "supported ccas": ["BBRv2", "CUBIC"],
+    },
+    "kwik": {
+        "cca": "NewReno",
+    },
+    "lsquic": {
+        "cca": "BBR",
+    },
+    "msquic": {
+        "cca": "CUBIC",
+    },
+    "mvfst": {
+        "supported ccas": [
+            "BBR",
+            "NewReno",
+            "CUBIC",
+            "(Copa)",
+            "(Copa2)",
+            "(CCP)",
+        ],
+        "cca": "CUBIC",
+    },
+    "neqo": {
+        "supported ccas": ["CUBIC", "NewReno"],
+        "cca": "NewReno",
+    },
+    "nginx": {},
+    "ngtcp2": {
+        "cca": "CUBIC",
+    },
+    "picoquic": {
+        "cca": "BBR",
+    },
+    "quant": {
+        "cca": "NewReno",
+    },
+    "quic-go": {
+        "cca": "Reno",
+    },
+    "quiche": {
+        "cca": "CUBIC",
+    },
+    "quicly": {
+        "cca": "Reno",
+    },
+    "xquic": {
+        "supported ccas": ["Reno", "BBR", "CUBIC"],
+        "cca": "BBR",
+    },
+}
+
+CAT_CCA_ORDER = CategoricalDtype(
+    ["Reno", "NewReno", "CUBIC", "BBR", "unknown"], ordered=True
+)
+
+CCA_PALETTE = {
+    "Reno": Tango().Plum,
+    "NewReno": Tango().DarkSkyBlue,
+    "CUBIC": Tango().Chameleon,
+    "BBR": Tango().Orange,
+    "unknown": Tango().aluminium4,
+}
+
+
+def meas_tex_format(measurement: MeasurementDescription) -> str:
+    keyword = measurement.abbr.lower()
+    return fr"\textsc{{\{keyword}/}}"
+
+
+PGF_PREAMBLE = r"""
+\usepackage{acronym}
+\usepackage{lmodern}
+\usepackage{helvet}
+\usepackage[bitstream-charter,sfscaled=false]{mathdesign}
+% More encoding and typesetting fixes and tweaks
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{textcomp}
+% \input{latex_cmds}
+
+\RequirePackage[%
+	binary-units,
+    % range-phrase={--},
+	range-units=single,
+    per-mode=symbol,
+    detect-all,
+    load-configurations=binary,
+    forbid-literal-units,
+]{siunitx}
+\DeclareSIUnit\byte{Byte}
+\DeclareSIUnit\bit{bit}
+\DeclareSIUnit\decibelm{dBm}
+\DeclareSIUnit\mph{mph}
+\DeclareSIUnit\month{month}
+\DeclareSIUnit\year{yr}
+\catcode`\%=12\relax
+\DeclareSIUnit[number-unit-product=]\percent{%}
+\catcode`\%=14\relax
+
+\def\lr/{\mbox{\textsc{LongRTT}}}
+\def\g/{\mbox{\textsc{Goodput}}}
+\def\sat/{\mbox{\textsc{Sat}}}
+\def\satl/{\mbox{\textsc{SatLoss}}}
+\def\eut/{\mbox{\textsc{Eutelsat}}}
+\def\ast/{\mbox{\textsc{Astra}}}
+\def\crosstraffic/{\mbox{\textsc{CrossTraffic}}}
+"""
+
 
 class PlotType(Enum):
     BOXPLOT = "boxplot"
@@ -34,6 +148,10 @@ class PlotType(Enum):
     RIDGELINE = "ridgeline"
     ANALYZE = "analyze"
     SWARM = "swarm"
+    CCAS = "ccas"
+
+    def __str__(self) -> str:
+        return self.value
 
 
 def parse_args():
@@ -129,6 +247,41 @@ class PlotStatsCli:
         self.no_interactive = no_interactive
         self._colors = Tango(model="HTML")
 
+        if self.img_format in {"tex", "pgf", "pdf"}:
+            self.tex_mode = True
+            if self.img_format == "pdf":
+                matplotlib.use("pgf")
+            # latex_cmds = Path("../../thesis/99-cmds.tex").resolve().absolute()
+
+            sns.set(
+                "paper",
+                "white",
+                rc={
+                    # "font.size": 10,
+                    # "axes.labelsize": 10,
+                    # "legend.fontsize": 8,
+                    # "axes.titlesize": 10,
+                    # "xtick.labelsize": 8,
+                    # "ytick.labelsize": 8,
+                    "pgf.rcfonts": False,
+                },
+            )
+            plt.rcParams.update(
+                {
+                    "text.usetex": True,
+                    "font.family": "serif",
+                    #  # don't setup fonts from rc parameters
+                    "pgf.rcfonts": False,
+                    # Use LaTeX default serif font.
+                    "font.serif": [],
+                    # "font.sans-serif": [],
+                    "pgf.texsystem": "pdflatex",
+                    "pgf.preamble": PGF_PREAMBLE,
+                }
+            )
+        else:
+            self.tex_mode = False
+
         for result in self.results:
             result.load_from_json()
 
@@ -198,7 +351,10 @@ class PlotStatsCli:
         return "%" if self.efficiency else "kbps"
 
     def format_percentage(self, value: Union[float, int], _pos=None) -> str:
-        return f"{value * 100:.0f} %"
+        if self.tex_mode:
+            return fr"\SI{{{value * 100:.0f}}}{{\percent}}"
+        else:
+            return f"{value * 100:.0f} %"
 
     def format_data_rate(self, value: Union[float, int], _pos=None) -> str:
         """A formatter for the current unit."""
@@ -296,7 +452,7 @@ class PlotStatsCli:
     def plot_kdes(self):
         with Subplot() as (fig, ax):
             assert isinstance(ax, plt.Axes)
-            sns.set_theme(style="whitegrid")
+            # sns.set_theme(style="whitegrid")
             fig.suptitle(
                 f"KDE of {self.meas_prop_name} for Different Measurement Cases"
             )
@@ -424,7 +580,7 @@ class PlotStatsCli:
             columns=["server", "client", "succeeded"],
         )
 
-        sns.set_theme(style="whitegrid")
+        # sns.set_theme(style="whitegrid")
 
         with Subplot() as (fig, ax):
             assert isinstance(ax, plt.Axes)
@@ -479,7 +635,7 @@ class PlotStatsCli:
     def plot_heatmap(self, meas_abbr: str):
         measurement = [meas for meas in self.measurements if meas.abbr == meas_abbr][0]
         df = self.get_dataframe(include_failed=False)
-        sns.set_theme(style="whitegrid")
+        # sns.set_theme(style="whitegrid")
 
         # use the min/max for all measurements as reference
         max_val = df[self.meas_prop_key].max()
@@ -592,7 +748,7 @@ class PlotStatsCli:
 
     def plot_swarmplot(self):
         df = self.get_dataframe(include_failed=False)
-        sns.set_theme(style="whitegrid")
+        # sns.set_theme(style="whitegrid")
 
         # filter by measurement
         meas_name_set = {meas.name for meas in self.measurements}
@@ -655,7 +811,8 @@ class PlotStatsCli:
     def plot_ridgeline(
         self, dimension: Union[Literal["server"], Literal["client"]], meas_abbr: str
     ):
-        sns.set_theme(style="white", rc={"axes.facecolor": (0, 0, 0, 0)})
+        # sns.set_theme(style="white", rc={"axes.facecolor": (0, 0, 0, 0)})
+        sns.set_theme(rc={"axes.facecolor": (0, 0, 0, 0)})
 
         measurement = [meas for meas in self.measurements if meas.abbr == meas_abbr][0]
 
@@ -777,6 +934,101 @@ class PlotStatsCli:
             tight=False,
         )
 
+    def plot_ccas(self):
+        meas1, meas2, *_ = self.measurements
+        print(f"Using {meas1.name} and {meas2.name}")
+
+        df = self.get_dataframe()
+        # calculate mean values for efficiencies / values per server-client-measurement triple
+        # could also use avg_efficiency / avg_value
+        df = (
+            df[["server", "client", "measurement", "efficiency"]]
+            .groupby(["server", "client", "measurement"])
+            .mean("efficiency")
+            .reset_index()
+        )
+        # drop client columns which is now unnecessary
+        del df["client"]
+        # filter by measurement
+        df_meas1 = df[df["measurement"] == meas1.name].reset_index()
+        df_meas2 = df[df["measurement"] == meas2.name].reset_index()
+        # remove measurement column, which is now unnecessary
+        del df_meas1["measurement"]
+        del df_meas2["measurement"]
+        del df_meas1["index"]
+        del df_meas2["index"]
+        # rename efficiency column
+        if self.tex_mode:
+            eff_lbl_1 = f"Efficiency in {meas_tex_format(meas1)}"
+            eff_lbl_2 = f"Efficiency in {meas_tex_format(meas2)}"
+            cca_lbl = r"Server \acs{CCA}"
+        else:
+            eff_lbl_1 = f"Efficiency in {meas1.name}"
+            eff_lbl_2 = f"Efficiency in {meas2.name}"
+            cca_lbl = "Server CCA"
+        df_meas1.rename(columns={"efficiency": eff_lbl_1}, inplace=True)
+        df_meas2.rename(columns={"efficiency": eff_lbl_2}, inplace=True)
+
+        # map server names to congestion controls
+        def get_cca_from_server_name(server_name: str) -> str:
+            data = IMPL_CCAS[server_name]
+            if "cca" in data:
+                return data["cca"]
+            else:
+                return "unknown"
+
+        ccas = (
+            df_meas1["server"]
+            .map(get_cca_from_server_name)
+            .astype(CAT_CCA_ORDER)
+            .to_frame(name=cca_lbl)
+        )
+        print(Counter(ccas[cca_lbl]))
+
+        # join the dataframes
+        df = pd.concat([ccas, df_meas1[eff_lbl_1], df_meas2[eff_lbl_2]], axis=1)
+
+        # sort by cca:
+        df.sort_values(by=cca_lbl, inplace=True)
+
+        # sns.set_theme(style="whitegrid")
+
+        # plot
+        with Subplot() as (fig, ax):
+            assert isinstance(ax, plt.Axes)
+
+            ax.set_xlim(xmin=0, xmax=1)
+            ax.set_ylim(ymin=0, ymax=1)
+            ax.set_aspect("equal")
+
+            ax = sns.scatterplot(
+                data=df,
+                x=eff_lbl_1,
+                y=eff_lbl_2,
+                hue=cca_lbl,
+                legend="full",
+                palette=CCA_PALETTE,
+                ax=ax,
+            )
+
+            # ax.xaxis.label.set_text(ax.xaxis.label.get_text() + r" in \si{\percent}")
+            # ax.yaxis.label.set_text(ax.yaxis.label.get_text() + r" in \si{\percent}")
+
+            ax.xaxis.set_major_formatter(self.format_percentage)
+            # rotate labels at the bottom
+            for label in ax.get_xticklabels():
+                label.set_rotation(90)
+
+            ax.yaxis.set_major_formatter(self.format_percentage)
+
+            # despine
+            # ax.spines["top"].set_visible(False)
+            # ax.spines["right"].set_visible(False)
+            # ax.spines["bottom"].set_visible(False)
+            # ax.spines["left"].set_visible(False)
+
+            self._save(fig, f"cca-plot-{meas1.abbr}-{meas2.abbr}")
+
     def print_analyze(self):
         df = self.get_dataframe(include_failed=True)[
             ["server", "client", "measurement", "value", "efficiency"]
@@ -880,8 +1132,10 @@ class PlotStatsCli:
                 self.print_analyze()
             elif self.plot_type == PlotType.SWARM:
                 self.plot_swarmplot()
+            elif self.plot_type == PlotType.CCAS:
+                self.plot_ccas()
             else:
-                assert False
+                assert False, f"Invalid plot type {self.plot_type}"
 
             self._spinner.ok("✔")
 
