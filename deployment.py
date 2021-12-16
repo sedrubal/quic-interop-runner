@@ -1497,6 +1497,11 @@ def main():
         "Starting dev setup. "
         "Use docker exec to execute a shell inside the containers as soon as they are running."
     )
+    for container in ("client", "sim", "server"):
+        LOGGER.info("$ docker exec -it %s_%s bash", deployment.project_name, container)
+
+    LOGGER.info("Stop with Ctrl+C")
+
     result = deployment.run_debug_setup(
         client_name=args.client,
         server_name=args.server,

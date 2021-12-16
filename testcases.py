@@ -7,7 +7,7 @@ import re
 import subprocess
 import sys
 import tempfile
-from datetime import timedelta, datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import ClassVar, Optional, Type, Union
 
@@ -1915,6 +1915,7 @@ class MeasurementSatelliteLoss(MeasurementSatellite):
 class MeasurementRealLink(MeasurementGoodput):
     forward_data_rate: int
     return_data_rate: int
+    rtt = None
 
     @classmethod
     @property
