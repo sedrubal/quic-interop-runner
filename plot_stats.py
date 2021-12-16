@@ -149,6 +149,7 @@ class PlotType(Enum):
     ANALYZE = "analyze"
     SWARM = "swarm"
     CCAS = "ccas"
+    VIOLINES = "violines"
 
     def __str__(self) -> str:
         return self.value
@@ -247,6 +248,18 @@ class PlotStatsCli:
         self.no_interactive = no_interactive
         self._colors = Tango(model="HTML")
 
+        self.set_theme()
+
+        for result in self.results:
+            result.load_from_json()
+
+    def _log(self, msg: str, log_level: int = logging.INFO):
+        if self._spinner:
+            self._spinner.write(msg)
+        else:
+            LOGGER.log(level=log_level, msg=msg)
+
+    def set_theme(self):
         if self.img_format in {"tex", "pgf", "pdf"}:
             self.tex_mode = True
             if self.img_format == "pdf":
@@ -280,16 +293,8 @@ class PlotStatsCli:
                 }
             )
         else:
+            sns.set("paper", "white")
             self.tex_mode = False
-
-        for result in self.results:
-            result.load_from_json()
-
-    def _log(self, msg: str, log_level: int = logging.INFO):
-        if self._spinner:
-            self._spinner.write(msg)
-        else:
-            LOGGER.log(level=log_level, msg=msg)
 
     @property
     def measurements(self) -> list[MeasurementDescription]:
@@ -396,7 +401,7 @@ class PlotStatsCli:
         return pd.concat(dfs)
 
     def plot_boxplot(self):
-        # sns.set_theme(style="whitegrid")
+        self.set_theme()
         df = self.get_dataframe()
         df = df[["measurement", "value", "efficiency"]]
 
@@ -449,10 +454,76 @@ class PlotStatsCli:
                 f"boxplots-{'-'.join(meas.abbr for meas in sorted(self.measurements))}",
             )
 
-    def plot_kdes(self):
+    def plot_violines(self, meas_abbr: str):
+        self.set_theme()
+
+        measurement = [meas for meas in self.measurements if meas.abbr == meas_abbr][0]
+
+        df = self.get_dataframe(include_failed=False)
+        # filter by measurement
+        df = df[df["measurement"] == measurement.name]
+        # filter by columns
+        df = df[["server", "client", self.meas_prop_key]]
+
+        # collect all implementations
+        implementations = sorted({*df.server.unique(), *df.client.unique()})
+
+        # restructure dataframe
+        partial_dfs = list[pd.DataFrame]()
+        for implementation in implementations:
+            by_impl = df.loc[
+                (df["server"] == implementation) | (df["client"] == implementation)
+            ]
+            is_server = by_impl["server"].map(
+                lambda server: "Server" if server == implementation else "Client"
+            )
+            values_by_impl = by_impl[self.meas_prop_key]
+            by_impl = pd.concat(
+                [
+                    is_server.to_frame("Role"),
+                    values_by_impl.to_frame(self.meas_prop_name),
+                ],
+                axis=1,
+            )
+            by_impl["Implementation"] = implementation
+            partial_dfs.append(by_impl)
+
+        df = pd.concat(partial_dfs)
+
         with Subplot() as (fig, ax):
             assert isinstance(ax, plt.Axes)
-            # sns.set_theme(style="whitegrid")
+
+            sns.violinplot(
+                ax=ax,
+                data=df,
+                x="Implementation",
+                y=self.meas_prop_name,
+                hue="Role",
+                split=True,
+                clip=[0, 1] if self.efficiency else 0,
+            )
+            ax.yaxis.set_major_formatter(self.format_value)
+
+            if self.efficiency:
+                ax.set_ylim(ymin=0, ymax=1)
+            else:
+                ax.set_ylim(
+                    ymin=0, ymax=measurement.theoretical_max_value * DataRate.KBPS
+                )
+
+            # rotate x tick labels
+            for tick in ax.get_xticklabels():
+                tick.set_rotation(45)
+
+            self._save(
+                fig,
+                f"violines-{self.meas_prop_name.lower()}-{meas_abbr.lower()}",
+            )
+
+    def plot_kdes(self):
+        self.set_theme()
+        with Subplot() as (fig, ax):
+            assert isinstance(ax, plt.Axes)
             fig.suptitle(
                 f"KDE of {self.meas_prop_name} for Different Measurement Cases"
             )
@@ -580,7 +651,7 @@ class PlotStatsCli:
             columns=["server", "client", "succeeded"],
         )
 
-        # sns.set_theme(style="whitegrid")
+        self.set_theme()
 
         with Subplot() as (fig, ax):
             assert isinstance(ax, plt.Axes)
@@ -635,7 +706,7 @@ class PlotStatsCli:
     def plot_heatmap(self, meas_abbr: str):
         measurement = [meas for meas in self.measurements if meas.abbr == meas_abbr][0]
         df = self.get_dataframe(include_failed=False)
-        # sns.set_theme(style="whitegrid")
+        self.set_theme()
 
         # use the min/max for all measurements as reference
         max_val = df[self.meas_prop_key].max()
@@ -748,7 +819,7 @@ class PlotStatsCli:
 
     def plot_swarmplot(self):
         df = self.get_dataframe(include_failed=False)
-        # sns.set_theme(style="whitegrid")
+        self.set_theme()
 
         # filter by measurement
         meas_name_set = {meas.name for meas in self.measurements}
@@ -811,7 +882,7 @@ class PlotStatsCli:
     def plot_ridgeline(
         self, dimension: Union[Literal["server"], Literal["client"]], meas_abbr: str
     ):
-        # sns.set_theme(style="white", rc={"axes.facecolor": (0, 0, 0, 0)})
+        self.set_theme()
         sns.set_theme(rc={"axes.facecolor": (0, 0, 0, 0)})
 
         measurement = [meas for meas in self.measurements if meas.abbr == meas_abbr][0]
@@ -935,6 +1006,8 @@ class PlotStatsCli:
         )
 
     def plot_ccas(self):
+        self.set_theme()
+
         meas1, meas2, *_ = self.measurements
         print(f"Using {meas1.name} and {meas2.name}")
 
@@ -990,8 +1063,6 @@ class PlotStatsCli:
 
         # sort by cca:
         df.sort_values(by=cca_lbl, inplace=True)
-
-        # sns.set_theme(style="whitegrid")
 
         # plot
         with Subplot() as (fig, ax):
@@ -1134,6 +1205,9 @@ class PlotStatsCli:
                 self.plot_swarmplot()
             elif self.plot_type == PlotType.CCAS:
                 self.plot_ccas()
+            elif self.plot_type == PlotType.VIOLINES:
+                for meas_abbr in self.meas_abbrs:
+                    self.plot_violines(meas_abbr)
             else:
                 assert False, f"Invalid plot type {self.plot_type}"
 
