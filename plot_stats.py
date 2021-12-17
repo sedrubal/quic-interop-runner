@@ -433,7 +433,16 @@ class PlotStatsCli:
             # ax.set_title(f"{self.meas_prop_name.title()} by Measurement")
             ax1.yaxis.set_major_formatter(self.format_data_rate)
             ax2.yaxis.set_major_formatter(self.format_percentage)
-            ax1.set_ylim(ymin=0)
+            # don't use AST or EUT max values, because they are too high
+            max_values = [
+                meas.theoretical_max_value
+                for meas in self.measurements
+                if meas.abbr not in ("AST", "EUT") and meas.theoretical_max_value
+            ]
+            max_goodput_to_show = (
+                max(max_values) * DataRate.KBPS * 1.01 if max_values else None
+            )
+            ax1.set_ylim(ymin=0, ymax=max_goodput_to_show)
             ax2.set_ylim(ymin=0, ymax=1)
             # no labels, will be explained in titles
             ax1.set_xlabel("")
@@ -447,6 +456,16 @@ class PlotStatsCli:
             ax2.yaxis.tick_right()
             # padding between subplots
             fig.subplots_adjust(wspace=0.1)
+
+            for i, measurement in enumerate(self.measurements):
+                assert measurement.theoretical_max_value
+                ax1.axhline(
+                    y=measurement.theoretical_max_value * DataRate.KBPS,
+                    xmin=i / len(self.measurements),
+                    xmax=(i + 1) / len(self.measurements),
+                    color=self._colors.ScarletRed,
+                    linestyle="--",
+                )
 
             # TODO: Use ax.violinplot?
             self._save(
@@ -471,10 +490,16 @@ class PlotStatsCli:
         # restructure dataframe
         partial_dfs = list[pd.DataFrame]()
         IGNORE_RATIO_LT = 0.3
+        IGNORE_AMOUNT_LT = len(implementations) * (len(implementations) / 5)
         for implementation in implementations:
             by_impl = df.loc[
                 (df["server"] == implementation) | (df["client"] == implementation)
             ]
+            if len(by_impl) < IGNORE_AMOUNT_LT:
+                print(
+                    f"Skipping {implementation}, which is only represented by less than {IGNORE_AMOUNT_LT} entries"
+                )
+                continue
             roles = by_impl["server"].map(
                 lambda server: "Server" if server == implementation else "Client"
             )
@@ -524,6 +549,11 @@ class PlotStatsCli:
                 inner="quartile",
                 bw=0.2,
                 cut=0,
+                palette={
+                    "Server": self._colors.LightOrange,
+                    "Client": self._colors.LightSkyBlue,
+                },
+                hue_order=["Server", "Client"],
             )
             ax.yaxis.set_major_formatter(self.format_value)
 
