@@ -9,7 +9,7 @@ import sys
 from enum import Enum
 from functools import cached_property
 from pathlib import Path
-from typing import Any, Counter, Literal, Optional, Union
+from typing import Any, Literal, Optional, Union
 
 import matplotlib
 import numpy as np
@@ -470,17 +470,36 @@ class PlotStatsCli:
 
         # restructure dataframe
         partial_dfs = list[pd.DataFrame]()
+        IGNORE_RATIO_LT = 0.3
         for implementation in implementations:
             by_impl = df.loc[
                 (df["server"] == implementation) | (df["client"] == implementation)
             ]
-            is_server = by_impl["server"].map(
+            roles = by_impl["server"].map(
                 lambda server: "Server" if server == implementation else "Client"
             )
+            role_counts_normalized = roles.value_counts(normalize=True)
+            if role_counts_normalized.get("Client") is None:
+                print(f"Skipping {implementation}, which is only a server")
+                continue
+            elif role_counts_normalized.get("Server", 0) < IGNORE_RATIO_LT:
+                print(
+                    f"Skipping {implementation}, which has less than {IGNORE_RATIO_LT * 100:.0f} % entries for servers"
+                )
+                continue
+            elif role_counts_normalized.get("Server") is None:
+                print(f"Skipping {implementation}, which is only a clients")
+                continue
+            elif role_counts_normalized.get("Client", 0) < IGNORE_RATIO_LT:
+                print(
+                    f"Skipping {implementation}, which has less than {IGNORE_RATIO_LT * 100:.0f} % entries for client"
+                )
+                continue
+
             values_by_impl = by_impl[self.meas_prop_key]
             by_impl = pd.concat(
                 [
-                    is_server.to_frame("Role"),
+                    roles.to_frame("Role"),
                     values_by_impl.to_frame(self.meas_prop_name),
                 ],
                 axis=1,
@@ -501,6 +520,10 @@ class PlotStatsCli:
                 hue="Role",
                 split=True,
                 clip=[0, 1] if self.efficiency else 0,
+                scale="count",
+                inner="quartile",
+                bw=0.2,
+                cut=0,
             )
             ax.yaxis.set_major_formatter(self.format_value)
 
@@ -514,6 +537,18 @@ class PlotStatsCli:
             # rotate x tick labels
             for tick in ax.get_xticklabels():
                 tick.set_rotation(45)
+
+            ax.text(
+                0.5,
+                0.25 if meas_abbr == "G" else 0.75,
+                meas_abbr.upper(),
+                transform=ax.transAxes,
+                fontsize=50,
+                color="grey",
+                alpha=0.25,
+                ha="center",
+                va="center",
+            )
 
             self._save(
                 fig,
@@ -1056,7 +1091,7 @@ class PlotStatsCli:
             .astype(CAT_CCA_ORDER)
             .to_frame(name=cca_lbl)
         )
-        print(Counter(ccas[cca_lbl]))
+        print(ccas[cca_lbl].value_counts())
 
         # join the dataframes
         df = pd.concat([ccas, df_meas1[eff_lbl_1], df_meas2[eff_lbl_2]], axis=1)

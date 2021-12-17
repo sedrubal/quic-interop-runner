@@ -63,6 +63,16 @@ for prop in "goodput" "efficiency"; do
         --no-interactive \
         "--img-path=${IMG_PATH}" \
         "--img-format=${FORMAT}" \
+        --plot-type violines \
+        --measurement "${MEASUREMENTS[@]}" \
+        "--prop=${prop}" \
+        "${RESULT_SIM}" \
+        "${RESULT_REAL}"
+
+    run ./plot_stats.py \
+        --no-interactive \
+        "--img-path=${IMG_PATH}" \
+        "--img-format=${FORMAT}" \
         --plot-type=swarm \
         --measurement "${MEASUREMENTS[@]}" \
         "--prop=${prop}" \
