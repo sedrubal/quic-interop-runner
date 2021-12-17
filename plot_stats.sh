@@ -58,16 +58,16 @@ run ./plot_stats.py \
     "${RESULT_SIM}"
 # "${RESULT_REAL}"
 
+run ./plot_stats.py \
+    --no-interactive \
+    "--img-path=${IMG_PATH}" \
+    "--img-format=${FORMAT}" \
+    --plot-type violins \
+    --measurement "${MEASUREMENTS[@]}" \
+    "${RESULT_SIM}" \
+    "${RESULT_REAL}"
+
 for prop in "goodput" "efficiency"; do
-    run ./plot_stats.py \
-        --no-interactive \
-        "--img-path=${IMG_PATH}" \
-        "--img-format=${FORMAT}" \
-        --plot-type violines \
-        --measurement "${MEASUREMENTS[@]}" \
-        "--prop=${prop}" \
-        "${RESULT_SIM}" \
-        "${RESULT_REAL}"
 
     run ./plot_stats.py \
         --no-interactive \

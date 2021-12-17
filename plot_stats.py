@@ -149,7 +149,7 @@ class PlotType(Enum):
     ANALYZE = "analyze"
     SWARM = "swarm"
     CCAS = "ccas"
-    VIOLINES = "violines"
+    VIOLINS = "violins"
 
     def __str__(self) -> str:
         return self.value
@@ -454,7 +454,7 @@ class PlotStatsCli:
                 f"boxplots-{'-'.join(meas.abbr for meas in sorted(self.measurements))}",
             )
 
-    def plot_violines(self, meas_abbr: str):
+    def plot_violins(self, meas_abbr: str):
         self.set_theme()
 
         measurement = [meas for meas in self.measurements if meas.abbr == meas_abbr][0]
@@ -463,7 +463,7 @@ class PlotStatsCli:
         # filter by measurement
         df = df[df["measurement"] == measurement.name]
         # filter by columns
-        df = df[["server", "client", self.meas_prop_key]]
+        df = df[["server", "client", "value"]]
 
         # collect all implementations
         implementations = sorted({*df.server.unique(), *df.client.unique()})
@@ -496,7 +496,7 @@ class PlotStatsCli:
                 )
                 continue
 
-            values_by_impl = by_impl[self.meas_prop_key]
+            values_by_impl = by_impl["value"]
             by_impl = pd.concat(
                 [
                     roles.to_frame("Role"),
@@ -550,9 +550,43 @@ class PlotStatsCli:
                 va="center",
             )
 
+            # add additional efficiency axis and style it like the original seaborn plot
+            # add a second x-axis to last subplot
+            y_axis_eff = ax.twinx()
+            # force position = bottom
+            # y_axis_eff.yaxis.set_ticks_position("right")
+            # y_axis_eff.yaxis.set_label_position("right")
+            # set 0% 100% as limits
+            y_axis_eff.set_ylim(ymin=0, ymax=1)
+            # format auto generated labels (don't set the ticks manually, as this does not work...)
+            for label in y_axis_eff.get_yticklabels():
+                label.set_fontproperties(ax.get_xticklabels()[0].get_fontproperties())
+            # use percentage formatter
+            y_axis_eff.yaxis.set_major_formatter(self.format_percentage)
+            # increase distance between frame and axis
+            # add spines again (???)
+            color = ax.yaxis.label.get_color()
+            for pos in ("left", "right", "top", "bottom"):
+                y_axis_eff.spines[pos].set_color(color)
+            # remove tick marks
+            for axis in (ax, y_axis_eff):
+                axis.tick_params(
+                    left=False,
+                    bottom=False,
+                    top=False,
+                    right=False,
+                )
+            # set label and hide title
+            y_axis_eff.set_ylabel(
+                "Efficiency",
+                fontproperties=ax.yaxis.label.get_font_properties(),
+            )
+            # y_axis_eff.set_title("")
+            y_axis_eff.grid(False)
+
             self._save(
                 fig,
-                f"violines-{self.meas_prop_name.lower()}-{meas_abbr.lower()}",
+                f"violins-{meas_abbr.lower()}",
             )
 
     def plot_kdes(self):
@@ -1240,9 +1274,9 @@ class PlotStatsCli:
                 self.plot_swarmplot()
             elif self.plot_type == PlotType.CCAS:
                 self.plot_ccas()
-            elif self.plot_type == PlotType.VIOLINES:
+            elif self.plot_type == PlotType.VIOLINS:
                 for meas_abbr in self.meas_abbrs:
-                    self.plot_violines(meas_abbr)
+                    self.plot_violins(meas_abbr)
             else:
                 assert False, f"Invalid plot type {self.plot_type}"
 
