@@ -1371,8 +1371,13 @@ class PlotStatsCli:
         text = colored(f"{output_file} written.", color="green")
         self._spinner.write(f"✔ {text}")
         if not self.no_interactive:
-            self._spinner.text = "Showing plot"
-            plt.show()
+            if self.tex_mode:
+                self._spinner.fail(
+                    "Skipping showing plot, because it does not work in tex mode."
+                )
+            else:
+                self._spinner.text = "Showing plot"
+                plt.show()
 
 
 def main():
