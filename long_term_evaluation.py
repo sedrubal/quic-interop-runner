@@ -434,7 +434,16 @@ class LTECli:
                 )
                 ax.xaxis.set_major_locator(MonthLocator())
 
-                ax.legend(title="Server")
+                # place legend below plot
+                ax.legend(
+                    title="Server",
+                    loc="upper left",
+                    bbox_to_anchor=(1, 1),
+                    # ncol=(len(df.columns) + 1) // 2,
+                    fancybox=False,
+                    shadow=False,
+                )
+                # ax.legend(title="Server")
 
             testcases_str = "-".join(sorted(analyze_results.keys()))
             fig.savefig(
