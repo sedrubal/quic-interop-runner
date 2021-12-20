@@ -467,7 +467,6 @@ class PlotStatsCli:
                     linestyle="--",
                 )
 
-            # TODO: Use ax.violinplot?
             self._save(
                 fig,
                 f"boxplots-{'-'.join(meas.abbr for meas in sorted(self.measurements))}",
@@ -805,11 +804,16 @@ class PlotStatsCli:
     def plot_heatmap(self, meas_abbr: str):
         measurement = [meas for meas in self.measurements if meas.abbr == meas_abbr][0]
         df = self.get_dataframe(include_failed=False)
+        df_timeouts = pd.read_csv("timeouts.csv")
         self.set_theme()
 
         # use the min/max for all measurements as reference
         max_val = df[self.meas_prop_key].max()
         min_val = df[self.meas_prop_key].min()
+
+        # filter timeouts
+        df_timeouts = df_timeouts[df_timeouts["test_abbr"] == measurement.abbr]
+        del df_timeouts["test_abbr"]
 
         # filter by measurement
         df = df[df.measurement == measurement.name]
@@ -818,6 +822,29 @@ class PlotStatsCli:
         # use mean values of same experiments
         df = df.groupby(["server", "client"]).mean().reset_index()
 
+        if meas_abbr == "G":
+            x_labels = list(sorted(self.results[-1].servers.keys()))
+            y_labels = list(reversed(sorted(self.results[-1].clients.keys())))
+        else:
+            x_labels = list(sorted(df.server.unique()))
+            y_labels = list(reversed(sorted(df.client.unique())))
+        x_to_num = {name: i for i, name in enumerate(x_labels)}
+        y_to_num = {name: i for i, name in enumerate(y_labels)}
+
+        # use datasets as lookups
+        succeeded_indices = frozenset(
+            df.set_index(["server", "client"]).index.to_list()
+        )
+        timeout_indices = frozenset(
+            (
+                (server, client)
+                for server, client in df_timeouts.set_index(
+                    ["server", "client"]
+                ).index.to_list()
+                if server in x_labels and client in y_labels
+            )
+        )
+
         with Subplot() as (fig, ax):
             assert isinstance(ax, plt.Axes)
 
@@ -825,15 +852,6 @@ class PlotStatsCli:
             # fig.suptitle(
             #     f"Average {self.meas_prop_name.title()} of Measurement {measurement.name.title()}"
             # )
-
-            if meas_abbr == "G":
-                x_labels = list(sorted(self.results[-1].servers.keys()))
-                y_labels = list(reversed(sorted(self.results[-1].clients.keys())))
-            else:
-                x_labels = list(sorted(df.server.unique()))
-                y_labels = list(reversed(sorted(df.client.unique())))
-            x_to_num = {name: i for i, name in enumerate(x_labels)}
-            y_to_num = {name: i for i, name in enumerate(y_labels)}
 
             hue_scale = 250
 
@@ -857,18 +875,24 @@ class PlotStatsCli:
                 cmap=color_palette,
             )
 
-            indices = df.set_index(["server", "client"]).index
             missing_indices = list[tuple[str, str]]()
             for server in x_labels:
                 for client in y_labels:
-                    if (server, client) not in indices:
-                        missing_indices.append((server, client))
-            ax.scatter(
-                x=[x_to_num[e[0]] for e in missing_indices],
-                y=[y_to_num[e[1]] for e in missing_indices],
-                c=self._colors.ScarletRed,
-                marker="x",
-            )
+                    impl_tuple = (server, client)
+                    if impl_tuple in succeeded_indices:
+                        continue
+                    elif impl_tuple in timeout_indices:
+                        continue
+                    else:
+                        missing_indices.append(impl_tuple)
+
+            for (marker, indices) in (("x", missing_indices), ("$T$", timeout_indices)):
+                ax.scatter(
+                    x=[x_to_num[e[0]] for e in indices],
+                    y=[y_to_num[e[1]] for e in indices],
+                    c=self._colors.ScarletRed,
+                    marker=marker,
+                )
 
             ax.set_xticks([x_to_num[name] for name in x_labels])
             ax.set_yticks([y_to_num[name] for name in y_labels])
