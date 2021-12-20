@@ -996,6 +996,16 @@ class PlotStatsCli:
 
             ax.set_ylim(ymin=0, ymax=1 if self.efficiency else max_goodput * 1.1)
 
+            for i, measurement in enumerate(self.measurements):
+                assert measurement.theoretical_max_value
+                ax.axhline(
+                    y=measurement.theoretical_max_value * DataRate.KBPS,
+                    xmin=i / len(self.measurements),
+                    xmax=(i + 1) / len(self.measurements),
+                    color=self._colors.ScarletRed,
+                    linestyle="--",
+                )
+
             meas_abbrs = "-".join(meas.abbr for meas in self.measurements)
             self._save(
                 fig,
