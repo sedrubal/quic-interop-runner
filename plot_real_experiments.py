@@ -2,7 +2,7 @@
 
 import argparse
 import sys
-from datetime import datetime
+from datetime import datetime, time, timedelta
 from pathlib import Path
 
 import matplotlib.dates as mdates
@@ -13,6 +13,7 @@ from matplotlib import pyplot as plt
 from termcolor import colored
 
 from result_parser import MeasurementDescription, Result
+from tango_colors import Tango
 from utils import Subplot, natural_data_rate
 
 TIMESTAMPS_CSV = Path("experiment-datetimes.csv")
@@ -72,7 +73,7 @@ class PlotSatCli:
         self._meas_abbrs = measurements
         self.img_path = img_path
         self.img_format = img_format
-        # self._colors = Tango()
+        self._colors = Tango()
         self.no_interactive = no_interactive
 
     @property
@@ -128,6 +129,26 @@ class PlotSatCli:
 
             # cmap = sns.color_palette(as_cmap=True)
 
+            # mark pause
+            pause_start_time = time(18, 0)
+            pause_end_time = time(23, 0)
+            min_dt = df["Time"].min()
+            max_dt = df["Time"].max()
+            pause_date = min_dt.date()
+            while datetime.combine(pause_date, pause_start_time) <= max_dt:
+                ax1.axvspan(
+                    xmin=datetime.combine(pause_date, pause_start_time),
+                    xmax=datetime.combine(pause_date, pause_end_time),
+                    color=self._colors.aluminium2,
+                )
+                pause_date = pause_date + timedelta(hours=24)
+
+            ax2.axvspan(
+                xmin=datetime(1970, 1, 1, 18, 0),
+                xmax=datetime(1970, 1, 1, 23, 0),
+                color=self._colors.aluminium2,
+            )
+
             sns.scatterplot(
                 data=df,
                 x="Time",
@@ -135,7 +156,7 @@ class PlotSatCli:
                 hue="Measurement",
                 edgecolors="white",
                 linewidth=0.5,
-                legend=False,
+                legend=True,
                 ax=ax1,
             )
             sns.scatterplot(
@@ -149,6 +170,39 @@ class PlotSatCli:
                 ax=ax2,
             )
 
+            # ax2.xaxis.set_major_locator(mdates.HourLocator())
+            ax2.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
+            ax2.set_xlim(xmin=datetime(1970, 1, 1, 0, 0), xmax=datetime(1970, 1, 2))
+
+            ax1.set_title("Time")
+            ax2.set_title("Time of Day")
+
+            for label in (*ax1.get_xticklabels(), *ax2.get_xticklabels()):
+                label.set_rotation(45)
+
+            # lines, labels = fig.axes[-1].get_legend_handles_labels()
+            # fig.legend(
+            #     lines,
+            #     labels,
+            #     title="Measurement",
+            #     loc="lower center",
+            #     ncol=3,
+            #     bbox_to_anchor=(0.5, -0.2),
+            # )
+            # ax1.legend(
+            #     title="Measurement",
+            #     loc="lower left",
+            #     bbox_to_anchor=(1.1, -0.2),
+            #     ncol=3,
+            #     fancybox=False,
+            #     shadow=False,
+            # )
+
+            ax1.set(xlabel=None)
+            ax2.set(xlabel=None)
+            ax1.set(ylabel=None)
+
+            # determine regression
             drop = {
                 "eutelsat": {
                     "Time": {
@@ -171,7 +225,6 @@ class PlotSatCli:
                     },
                 },
             }
-            # determine regression
             for meas in df["Measurement"].unique():
                 # ... for each measurement
                 for (ax, col, resample_freq) in (
@@ -225,47 +278,6 @@ class PlotSatCli:
                         linestyle="--",
                         ax=ax,
                     )
-
-                    # fake fit
-                    # xs = [
-                    #     data[col].min(),
-                    #     data[col].max(),
-                    # ]
-                    # ys = [
-                    #     data[:100]["Goodput"].mean(),
-                    #     data[-100:]["Goodput"].mean(),
-                    # ]
-                    # sns.lineplot(
-                    #     x=xs,
-                    #     y=ys,
-                    #     linestyle="--",
-                    #     ax=ax,
-                    # )
-
-            # ax2.xaxis.set_major_locator(mdates.HourLocator())
-            ax2.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
-            ax2.set_xlim(xmin=datetime(1970, 1, 1, 0, 0), xmax=datetime(1970, 1, 2))
-
-            ax1.set_title("Time")
-            ax2.set_title("Time of Day")
-
-            for label in (*ax1.get_xticklabels(), *ax2.get_xticklabels()):
-                label.set_rotation(45)
-
-            lines, labels = fig.axes[-1].get_legend_handles_labels()
-            fig.legend(
-                lines,
-                labels,
-                title="Measurement",
-                loc="lower center",
-                ncol=3,
-                bbox_to_anchor=(0.5, -0.2),
-            )
-            ax1.set(xlabel=None)
-            ax2.set(xlabel=None)
-            ax1.set(ylabel=None)
-
-            # fig.tight_layout()
 
             meas_abbrs = "-".join(meas.abbr for meas in self.measurements)
             self._save(
