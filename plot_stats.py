@@ -136,7 +136,7 @@ PGF_PREAMBLE = r"""
 \def\sat/{\mbox{\textsc{Sat}}}
 \def\satl/{\mbox{\textsc{SatLoss}}}
 \def\eut/{\mbox{\textsc{Eutelsat}}}
-\def\ast/{\mbox{\textsc{Astra}}}
+\def\astra/{\mbox{\textsc{Astra}}}
 \def\crosstraffic/{\mbox{\textsc{CrossTraffic}}}
 """
 
