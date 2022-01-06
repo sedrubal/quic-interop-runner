@@ -168,6 +168,7 @@ def parse_args():
     )
     parser.add_argument(
         "--test",
+        "--test-cases",
         dest="tests",
         nargs="*",
         type=str,
@@ -236,8 +237,8 @@ class PlotStatsCli:
         debug: bool = False,
         no_interactive: bool = False,
     ) -> None:
-        self.meas_abbrs = meas_abbrs
-        self.test_abbrs = test_abbrs
+        self.meas_abbrs = meas_abbrs or []
+        self.test_abbrs = test_abbrs or []
         self.results = results
         self.plot_type = plot_type
         self.efficiency = efficiency
@@ -276,6 +277,8 @@ class PlotStatsCli:
                     # "axes.titlesize": 10,
                     # "xtick.labelsize": 8,
                     # "ytick.labelsize": 8,
+                    "font.family": "serif",
+                    "font.serif": [],
                     "pgf.rcfonts": False,
                 },
             )
@@ -363,7 +366,19 @@ class PlotStatsCli:
 
     def format_data_rate(self, value: Union[float, int], _pos=None) -> str:
         """A formatter for the current unit."""
-        return natural_data_rate(int(value))
+        formatted = natural_data_rate(int(value))
+        if self.tex_mode:
+            value, unit = formatted.rsplit(" ", 1)
+            unit = {
+                "bit/s": r"\bit\per\second",
+                "kbit/s": r"\kilo\bit\per\second",
+                "Mbit/s": r"\mega\bit\per\second",
+                "Gbit/s": r"\giga\bit\per\second",
+                "Tbit/s": r"\terra\bit\per\second",
+            }[unit]
+            return fr"\SI{{{value}}}{{{unit}}}"
+        else:
+            return formatted
 
     def _format_latex(self, text: str) -> str:
         return str.translate(
@@ -385,7 +400,7 @@ class PlotStatsCli:
             if self.efficiency
             else self.format_data_rate(value)
         )
-        if latex:
+        if latex and not self.tex_mode:
             return self._format_latex(text)
         return text
 
@@ -917,7 +932,9 @@ class PlotStatsCli:
                 top=False,
                 right=False,
             )
+            import matplotlib.font_manager as font_manager
 
+            font = font_manager.FontProperties(family="serif")
             ax.legend(
                 *scatter.legend_elements(
                     num=5,
@@ -933,6 +950,7 @@ class PlotStatsCli:
                 facecolor="white",
                 edgecolor="white",
                 ncol=3,
+                prop=font,
             )
 
             self._save(
