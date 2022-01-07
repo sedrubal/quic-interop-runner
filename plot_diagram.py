@@ -899,6 +899,7 @@ class PlotCli:
                 # linestyle="--",
                 label="ideal trace",
             )
+            ax.legend(loc="upper center")
             ax.axvline(
                 x=ideal_last_tx,
                 color=self._colors.DarkChameleon,
@@ -992,7 +993,7 @@ class PlotCli:
             size=self._markersize,
             legend=None,
         )
-        ax.legend(fontsize=8)
+        ax.legend(fontsize=8, loc="upper right")
         # ax.legend(loc="upper left", fontsize=8)
 
         self._annotate_time_plot(ax, height=max_forward_data_rate)

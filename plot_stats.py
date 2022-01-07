@@ -121,12 +121,6 @@ PGF_PREAMBLE = r"""
     load-configurations=binary,
     forbid-literal-units,
 ]{siunitx}
-\DeclareSIUnit\byte{Byte}
-\DeclareSIUnit\bit{bit}
-\DeclareSIUnit\decibelm{dBm}
-\DeclareSIUnit\mph{mph}
-\DeclareSIUnit\month{month}
-\DeclareSIUnit\year{yr}
 \catcode`\%=12\relax
 \DeclareSIUnit[number-unit-product=]\percent{%}
 \catcode`\%=14\relax

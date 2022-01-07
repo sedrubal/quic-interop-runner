@@ -86,6 +86,11 @@ def parse_args():
         default=1,
         help="Number of workers for plotting. NOTE: >1 breaks output",
     )
+    parser.add_argument(
+        "--ideal",
+        action="store_true",
+        help="Add an ideal trace",
+    )
 
     return parser.parse_args()
 
@@ -99,6 +104,7 @@ def plot_in_meas_run_dir(
     interruptable_logging: bool,
     output_format: str,
     title: str,
+    add_ideal: bool,
     force: bool,
 ) -> tuple[str, str, list[str]]:
     """Generate plot for for this test case."""
@@ -168,6 +174,7 @@ def plot_in_meas_run_dir(
         # enable debug mode with interruptable terminal logging when we use more than 1 worker
         # debug=debug or self.max_workers > 1,
         debug=interruptable_logging,
+        add_ideal=add_ideal,
     )
 
     for mode in modes:
@@ -269,6 +276,7 @@ class PlotAllCli:
         modes: list[PlotMode] = list(PlotMode),
         debug=False,
         max_workers: int = 1,
+        add_ideal: bool = False,
     ):
         #  self.log_dirs = log_dirs
         self.result_files = result_files
@@ -280,6 +288,7 @@ class PlotAllCli:
         self.include_failed = include_failed
         self.modes = modes
         self.debug = debug
+        self.add_ideal = add_ideal
         self.max_workers = max_workers
         if max_workers > 1 and debug:
             sys.exit("Debug and max_workers > 1 is not advised")
@@ -322,6 +331,7 @@ class PlotAllCli:
                             self.debug or self.max_workers > 1,
                             self.output_format,
                             self.title,
+                            self.add_ideal,
                             self.force,
                         )
                         futures.append(future)
@@ -373,6 +383,7 @@ def main():
         modes=args.mode,
         debug=args.debug,
         max_workers=args.workers,
+        add_ideal=args.ideal,
     )
     try:
         cli.run()
