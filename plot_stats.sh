@@ -48,6 +48,7 @@ run ./plot_stats.py \
     "--img-format=${FORMAT}" \
     --plot-type ccas \
     --measurement SAT SATL \
+    -- \
     "${RESULT_SIM}"
 run ./plot_stats.py \
     --no-interactive \
@@ -55,6 +56,7 @@ run ./plot_stats.py \
     "--img-format=${FORMAT}" \
     --plot-type ccas \
     --measurement G SAT \
+    -- \
     "${RESULT_SIM}"
 # "${RESULT_REAL}"
 
@@ -64,6 +66,7 @@ run ./plot_stats.py \
     "--img-format=${FORMAT}" \
     --plot-type violins \
     --measurement "${MEASUREMENTS[@]}" \
+    -- \
     "${RESULT_SIM}" \
     "${RESULT_REAL}"
 
@@ -74,8 +77,9 @@ for prop in "goodput" "efficiency"; do
         "--img-path=${IMG_PATH}" \
         "--img-format=${FORMAT}" \
         --plot-type=swarm \
-        --measurement "${MEASUREMENTS[@]}" \
         "--prop=${prop}" \
+        --measurement "${MEASUREMENTS[@]}" \
+        -- \
         "${RESULT_SIM}" \
         "${RESULT_REAL}"
 
