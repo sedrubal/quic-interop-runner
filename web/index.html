@@ -1,104 +1,205 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="X-UA-Compatible" content="ie=edge">
-  <title>QUIC Interop Runner - Satellite Edition</title>
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/css/bootstrap.min.css" integrity="sha384-B0vP5xmATw1+K9KRQjQERJvTumQW0nPEzvF6L/Z6nronJ3oUOFUFpCjEUQouq2+l" crossorigin="anonymous">
-  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-fork-ribbon-css/0.2.3/gh-fork-ribbon.min.css" integrity="sha512-TktJbycEG5Van9KvrSHFUcYOKBroD7QCYkEe73HAutODCw9QTFcvF6fuxioYM1h6THNudK1GjVidazj6EslK4A==" crossorigin="anonymous" />
-  <link rel="stylesheet" href="styles.css">
-  <link rel="shortcut icon" type="image/svg+xml" href="satellite-gs.svg">
-</head>
-<body>
-  <a class="github-fork-ribbon" href="https://github.com/sedrubal/quic-interop-runner/tree/sat" data-ribbon="Fork me on GitHub" title="Fork me on GitHub">Fork me on GitHub</a>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="X-UA-Compatible" content="ie=edge" />
+    <title>QUIC Interop Runner - Satellite Edition</title>
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/css/bootstrap.min.css"
+      integrity="sha384-B0vP5xmATw1+K9KRQjQERJvTumQW0nPEzvF6L/Z6nronJ3oUOFUFpCjEUQouq2+l"
+      crossorigin="anonymous"
+    />
+    <link
+      rel="stylesheet"
+      href="https://cdnjs.cloudflare.com/ajax/libs/github-fork-ribbon-css/0.2.3/gh-fork-ribbon.min.css"
+      integrity="sha512-TktJbycEG5Van9KvrSHFUcYOKBroD7QCYkEe73HAutODCw9QTFcvF6fuxioYM1h6THNudK1GjVidazj6EslK4A=="
+      crossorigin="anonymous"
+    />
+    <link rel="stylesheet" href="styles.css" />
+    <link rel="shortcut icon" type="image/svg+xml" href="satellite-gs.svg" />
+  </head>
+  <body>
+    <a
+      class="github-fork-ribbon"
+      href="https://github.com/sedrubal/quic-interop-runner/tree/sat"
+      data-ribbon="Fork me on GitHub"
+      title="Fork me on GitHub"
+      >Fork me on GitHub</a
+    >
 
-  <nav class="navbar navbar-expand-lg navbar-light bg-light">
-    <a href="https://github.com/sedrubal/quic-interop-runner/tree/sat">
-      <span class="navbar-brand">
-        <img src="satellite-gs.svg" height="45" class="d-inline-block align-middle" alt="SAT" loading="lazy" style="filter:brightness(0);transform:scaleX(-1);">
-        QUIC Interop Runner - Satellite Edition
-      </span>
-    </a>
-    <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
-      <span class="navbar-toggler-icon"></span>
-    </button>
-    <div class="collapse navbar-collapse" id="navbarNav">
-      <ul class="navbar-nav">
-        <div class="navbar-text px-4">
-            <span class="font-weight-bold">Run:</span><br>
+    <nav class="navbar navbar-expand-lg navbar-light bg-light">
+      <a href="https://github.com/sedrubal/quic-interop-runner/tree/sat">
+        <span class="navbar-brand">
+          <img
+            src="satellite-gs.svg"
+            height="45"
+            class="d-inline-block align-middle"
+            alt="SAT"
+            loading="lazy"
+            style="filter: brightness(0); transform: scaleX(-1)"
+          />
+          QUIC Interop Runner - Satellite Edition
+        </span>
+      </a>
+      <button
+        class="navbar-toggler"
+        type="button"
+        data-toggle="collapse"
+        data-target="#navbarNav"
+        aria-controls="navbarNav"
+        aria-expanded="false"
+        aria-label="Toggle navigation"
+      >
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navbarNav">
+        <nav class="navbar-nav">
+          <div class="navbar-text px-4">
+            <span class="font-weight-bold">Run:</span><br />
             <span id="available-runs"></span>
-        </div>
-        <div class="navbar-text start-time px-4">
-          <span class="font-weight-bold">Start Time:</span><br>
-          <span id="lastrun-start"></span>
-        </div>
-        <div class="navbar-text duration px-4">
-          <span class="font-weight-bold">Duration:</span><br>
-          <span id="duration"></span>
-        </div>
-        <div class="navbar-text end-time px-4">
-          <span class="font-weight-bold">End Time:</span><br>
-          <span id="lastrun-end"></span>
-        </div>
-      </ul>
-    </div>
-  </nav>
+          </div>
+          <div class="navbar-text start-time px-4">
+            <span class="font-weight-bold">Start Time:</span><br />
+            <span id="lastrun-start"></span>
+          </div>
+          <div class="navbar-text duration px-4">
+            <span class="font-weight-bold">Duration:</span><br />
+            <span id="duration"></span>
+          </div>
+          <div class="navbar-text end-time px-4">
+            <span class="font-weight-bold">End Time:</span><br />
+            <span id="lastrun-end"></span>
+          </div>
+        </nav>
+      </div>
+    </nav>
 
-  <div class="container-fluid">
+    <div class="container-fluid">
+      <section id="about">
+        <h3 class="mt-5">About</h3>
+        <p>
+          This is a specialized variant of the
+          <a href="https://interop.seemann.io/" target="_blank"
+            >QUIC Interop Runner</a
+          >. Usually it is used to test the interoperability of
+          <a href="https://quicwg.org/" target="_blank">QUIC</a>
+          implementations. Here we exploit the great work of
+          <a href="https://github.com/marten-seemann" target="_blank"
+            >Marten Seemann</a
+          >
+          to run satellite measurements on all of these client and server
+          <a
+            href="https://github.com/quicwg/base-drafts/wiki/Implementations"
+            target="_blank"
+            >implementations</a
+          >.
+        </p>
 
-    <section id="about">
-      <h3 class="mt-5">About</h3>
-      <p>
-        This is a specialized variant of the <a href="https://interop.seemann.io/" target="_blank">QUIC Interop Runner</a>. Usually it is used to test the interoperability of <a href="https://quicwg.org/" target="_blank">QUIC</a> implementations. Here we exploit the great work of <a href="https://github.com/marten-seemann" target="_blank">Marten Seemann</a> to run satellite measurements on all of these client and server <a href="https://github.com/quicwg/base-drafts/wiki/Implementations" target="_blank">implementations</a>.
-      </p>
+        <p>
+          The satellite link emulation uses
+          <a
+            href="https://github.com/sedrubal/quic-network-simulator/tree/feature-asymmetric-p2p/sim/scenarios/asymmetric-p2p"
+            target="_blank"
+            >this</a
+          >
+          ns-3 scenario. Parameters are:
+        </p>
 
-      <p>
-        The satellite link emulation uses <a href="https://github.com/sedrubal/quic-network-simulator/tree/feature-asymmetric-p2p/sim/scenarios/asymmetric-p2p" target="_blank">this</a> ns-3 scenario. Parameters are:
         <ul>
           <li>File size: 10 MB</li>
           <li>RTT: 600 ms</li>
           <li>Data Rate: 20 Mbps forward link, 2 Mbps return link</li>
           <li>Loss Rate (in SATLOSS test case): 1 %</li>
         </ul>
-      </p>
 
+        <p>
+          The efficiency is calculated as <code>goodput / link data rate</code>.
+        </p>
+
+        <p>
+          In the following tables, results for
+          <strong>client implementations</strong> are shown
+          <em>horizontally</em>, results for
+          <strong>server implementations</strong> are shown <em>vertically</em>.
+          The results were obtained with QUIC version
+          <span id="quic-vers"></span>.
+        </p>
+      </section>
+
+      <h3 class="mt-5">Results Filter</h3>
+
+      <div class="mt-2 row">
+        <div class="col-2 col-sm-1">Client:</div>
+        <div
+          id="client"
+          class="col-10 col-sm-11 btn-group flex-wrap btn-group-sm"
+          role="group"
+          aria-label="Filter client implementations"
+        ></div>
+      </div>
+
+      <div class="mt-2 row">
+        <div class="col-2 col-sm-1">Server:</div>
+        <div
+          id="server"
+          class="col-10 col-sm-11 btn-group flex-wrap btn-group-sm"
+          role="group"
+          aria-label="Filter server implementations"
+        ></div>
+      </div>
+
+      <div class="mt-2 row">
+        <div class="col-2 col-sm-1">Test:</div>
+        <div
+          id="test"
+          class="col-10 col-sm-11 btn-group flex-wrap btn-group-sm"
+          role="group"
+          aria-label="Filter test cases"
+        ></div>
+      </div>
+
+      <h3 class="mt-5">Interop Status</h3>
+      <table id="interop" class="result table text-center"></table>
+
+      <h3 class="mt-5">Measurement Results</h3>
+      <table id="measurements" class="result table text-center"></table>
+
+      <h3 class="mt-5">
+        Plots&nbsp;
+        <small>
+          for&nbsp;
+          <select class="custom-select" id="plot-measurement-select"></select>
+        </small>
+      </h3>
       <p>
-        The efficiency is calculated as <code>goodput / link data rate</code>.
+        <a
+          class="btn btn-outline-secondary btn-sm"
+          href="/plots/plots.html"
+          target="_blank"
+          >More plots</a
+        >
       </p>
-
-      <p>
-        In the following tables, results for <strong>client implementations</strong> are shown <em>horizontally</em>, results for <strong>server implementations</strong> are shown <em>vertically</em>. The results were obtained with QUIC version <span id="quic-vers"></span>.
-      </p>
-    </section>
-
-    <h3 class="mt-5">Results Filter</h3>
-
-    <div class="mt-2 row">
-      <div class="col-2 col-sm-1">Client:</div>
-      <div id="client" class="col-10 col-sm-11 btn-group flex-wrap btn-group-sm" role="group" aria-label="Filter client implementations"></div>
+      <p class="text-muted">🚫 means that there was an error while plotting or the plot has not been created yet.</p>
+      <table id="plots" class="table text-center"></table>
     </div>
 
-    <div class="mt-2 row">
-      <div class="col-2 col-sm-1">Server:</div>
-      <div id="server" class="col-10 col-sm-11 btn-group flex-wrap btn-group-sm" role="group" aria-label="Filter server implementations"></div>
-    </div>
-
-    <div class="mt-2 row">
-      <div class="col-2 col-sm-1">Test:</div>
-      <div id="test" class="col-10 col-sm-11 btn-group flex-wrap btn-group-sm" role="group" aria-label="Filter test cases"></div>
-    </div>
-
-    <h3 class="mt-5">Interop Status</h3>
-    <table id="interop" class="result table text-center"></table>
-
-    <h3 class="mt-5">Measurement Results</h3>
-    <table id="measurements" class="result table text-center"></table>
-  </div>
-
-  <script src="https://code.jquery.com/jquery-3.5.1.slim.min.js" integrity="sha384-DfXdz2htPH0lsSSs5nCTpuj/zy4C+OGpamoFVy38MVBnE+IbbVYUew+OrCXaRkfj" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/popper.js@1.16.1/dist/umd/popper.min.js" integrity="sha384-9/reFTGAW83EW2RDu2S0VKaIzap3H66lZH81PoYlFhbGU+6BZp6G7niu735Sk7lN" crossorigin="anonymous"></script>
-  <script src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/js/bootstrap.min.js" integrity="sha384-+YQ4JLhjyBLPDQt//I+STsc9iw4uQqACwlvpslubQzn4u2UU2UFM80nGisd026JF" crossorigin="anonymous"></script>
-  <script src="script.js"></script>
-</body>
+    <script
+      src="https://code.jquery.com/jquery-3.5.1.slim.min.js"
+      integrity="sha384-DfXdz2htPH0lsSSs5nCTpuj/zy4C+OGpamoFVy38MVBnE+IbbVYUew+OrCXaRkfj"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/popper.js@1.16.1/dist/umd/popper.min.js"
+      integrity="sha384-9/reFTGAW83EW2RDu2S0VKaIzap3H66lZH81PoYlFhbGU+6BZp6G7niu735Sk7lN"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://cdn.jsdelivr.net/npm/bootstrap@4.6.0/dist/js/bootstrap.min.js"
+      integrity="sha384-+YQ4JLhjyBLPDQt//I+STsc9iw4uQqACwlvpslubQzn4u2UU2UFM80nGisd026JF"
+      crossorigin="anonymous"
+    ></script>
+    <script src="script.js"></script>
+  </body>
 </html>

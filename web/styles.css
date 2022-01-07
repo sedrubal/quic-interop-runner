@@ -9,9 +9,9 @@ body.loading {
 }
 
 .btn-xs {
-  margin: 0 .1rem .1rem 0;
-  padding: .01rem .025rem .01rem .025rem;
-  font-size: .7rem;
+  margin: 0 0.1rem 0.1rem 0;
+  padding: 0.01rem 0.025rem 0.01rem 0.025rem;
+  font-size: 0.7rem;
   border-width: 2px;
   border-radius: 4px;
   font-weight: bold;
@@ -30,7 +30,8 @@ body.loading {
 .table th {
   vertical-align: middle;
 }
-tr.hover-xy > th, th.hover-xy {
+tr.hover-xy > th,
+th.hover-xy {
   background-color: #cfd9db;
   color: #e74c3c;
 }
@@ -46,7 +47,11 @@ tr.hover-xy > th, th.hover-xy {
   --rating-red: calc(24 + 207 * (1 - var(--rating)));
   --rating-green: calc(76 + 112 * var(--rating));
   --rating-blue: calc(60 + 96 * var(--rating));
-  --rating-color: rgb(var(--rating-red), var(--rating-green), var(--rating-blue));
+  --rating-color: rgb(
+    var(--rating-red),
+    var(--rating-green),
+    var(--rating-blue)
+  );
 }
 .calc-rating.btn-rating {
   background-color: var(--rating-color);
@@ -56,4 +61,17 @@ tr.hover-xy > th, th.hover-xy {
 .calc-rating.rating-color {
   color: var(--rating-color);
   filter: brightness(1.2) saturate(5);
+}
+
+#plot-measurement-select {
+  width: auto;
+  display: inline;
+}
+.plot {
+  max-width: 25rem;
+  display: block;
+}
+#plots.table td,
+#plots.table th {
+  vertical-align: middle;
 }
