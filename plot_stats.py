@@ -96,6 +96,10 @@ CCA_PALETTE = {
 }
 
 
+HEATMAP_OMIT_SERVER_IMPLS = {"quicly"}
+HEATMAP_OMIT_CLIENT_IMPLS = {"chrome", "quicly"}
+
+
 def meas_tex_format(measurement: MeasurementDescription) -> str:
     keyword = measurement.abbr.lower()
     return fr"\textsc{{\{keyword}/}}"
@@ -831,12 +835,16 @@ class PlotStatsCli:
         # use mean values of same experiments
         df = df.groupby(["server", "client"]).mean().reset_index()
 
-        if meas_abbr == "G":
-            x_labels = list(sorted(self.results[-1].servers.keys()))
-            y_labels = list(reversed(sorted(self.results[-1].clients.keys())))
-        else:
-            x_labels = list(sorted(df.server.unique()))
-            y_labels = list(reversed(sorted(df.client.unique())))
+        x_labels = [
+            impl
+            for impl in sorted(self.results[-1].servers.keys())
+            if impl not in HEATMAP_OMIT_SERVER_IMPLS
+        ]
+        y_labels = [
+            impl
+            for impl in reversed(sorted(self.results[-1].clients.keys()))
+            if impl not in HEATMAP_OMIT_CLIENT_IMPLS
+        ]
         x_to_num = {name: i for i, name in enumerate(x_labels)}
         y_to_num = {name: i for i, name in enumerate(y_labels)}
 
