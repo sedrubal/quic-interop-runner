@@ -19,6 +19,41 @@ from utils import Subplot, natural_data_rate
 TIMESTAMPS_CSV = Path("experiment-datetimes.csv")
 
 
+PGF_PREAMBLE = r"""
+\usepackage{acronym}
+\usepackage{lmodern}
+\usepackage{helvet}
+\usepackage[bitstream-charter,sfscaled=false]{mathdesign}
+% More encoding and typesetting fixes and tweaks
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{textcomp}
+% \input{latex_cmds}
+\usepackage{datetime2}
+
+\RequirePackage[%
+	binary-units,
+    % range-phrase={--},
+	range-units=single,
+    per-mode=symbol,
+    detect-all,
+    load-configurations=binary,
+    forbid-literal-units,
+]{siunitx}
+\catcode`\%=12\relax
+\DeclareSIUnit[number-unit-product=]\percent{%}
+\catcode`\%=14\relax
+
+\def\lr/{\mbox{\textsc{LongRTT}}}
+\def\g/{\mbox{\textsc{Goodput}}}
+\def\sat/{\mbox{\textsc{Sat}}}
+\def\satl/{\mbox{\textsc{SatLoss}}}
+\def\eut/{\mbox{\textsc{Eutelsat}}}
+\def\astra/{\mbox{\textsc{Astra}}}
+\def\crosstraffic/{\mbox{\textsc{CrossTraffic}}}
+"""
+
+
 def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -76,6 +111,40 @@ class PlotSatCli:
         self._colors = Tango()
         self.no_interactive = no_interactive
 
+        if self.img_format in {"tex", "pgf", "pdf"}:
+            self.tex_mode = True
+            sns.set(
+                "paper",
+                "white",
+                rc={
+                    # "font.size": 10,
+                    # "axes.labelsize": 10,
+                    # "legend.fontsize": 8,
+                    # "axes.titlesize": 10,
+                    # "xtick.labelsize": 8,
+                    # "ytick.labelsize": 8,
+                    "font.family": "serif",
+                    "font.serif": [],
+                    "pgf.rcfonts": False,
+                },
+            )
+            plt.rcParams.update(
+                {
+                    "text.usetex": True,
+                    "font.family": "serif",
+                    #  # don't setup fonts from rc parameters
+                    "pgf.rcfonts": False,
+                    # Use LaTeX default serif font.
+                    "font.serif": [],
+                    # "font.sans-serif": [],
+                    "pgf.texsystem": "pdflatex",
+                    "pgf.preamble": PGF_PREAMBLE,
+                }
+            )
+        else:
+            sns.set("paper", "white")
+            self.tex_mode = False
+
     @property
     def measurements(self) -> list[MeasurementDescription]:
         """The measurements to use."""
@@ -114,6 +183,23 @@ class PlotSatCli:
             plt.show()
 
     def plot_data(self, df: pd.DataFrame):
+        def format_data_rate(val, _pos=None):
+            value = natural_data_rate(val)
+            if self.tex_mode:
+                number, unit = value.split(" ")
+                unit = {
+                    "bit/s": r"\bit\per\second",
+                    "kbit/s": r"\kilo\bit\per\second",
+                    "Mbit/s": r"\mega\bit\per\second",
+                    "Gbit/s": r"\giga\bit\per\second",
+                }[unit]
+                value = fr"\SI{{{number}}}{{{unit}}}"
+
+            return value
+
+        def format_date_time(val, _pos=None):
+            return fr"\DTMdate{{{val}}}"
+
         with Subplot(ncols=2, sharey=True) as (fig, axs):
             assert not isinstance(axs, plt.Axes)
             [ax1, ax2] = axs
@@ -121,11 +207,12 @@ class PlotSatCli:
             assert isinstance(ax2, plt.Axes)
 
             # ax1.yaxis.tick_right()
-            ax1.yaxis.set_major_formatter(lambda val, _pos: natural_data_rate(val))
+            ax1.yaxis.set_major_formatter(format_data_rate)
             ax1.yaxis.set_label_coords(1, y=1)
             ax1.yaxis.label.set_rotation(0)
+            #  ax1.xaxis.set_major_formatter(format_date_time)
 
-            fig.suptitle("Measurement Results using Real Satellite Links over Time")
+            #  fig.suptitle("Measurement Results using Real Satellite Links over Time")
 
             # cmap = sns.color_palette(as_cmap=True)
 
@@ -139,14 +226,14 @@ class PlotSatCli:
                 ax1.axvspan(
                     xmin=datetime.combine(pause_date, pause_start_time),
                     xmax=datetime.combine(pause_date, pause_end_time),
-                    color=self._colors.aluminium2,
+                    color=self._colors.aluminium1,
                 )
                 pause_date = pause_date + timedelta(hours=24)
 
             ax2.axvspan(
                 xmin=datetime(1970, 1, 1, 18, 0),
                 xmax=datetime(1970, 1, 1, 23, 0),
-                color=self._colors.aluminium2,
+                color=self._colors.aluminium1,
             )
 
             sns.scatterplot(

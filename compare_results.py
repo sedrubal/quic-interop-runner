@@ -24,6 +24,40 @@ HIGH_AVG_DEVIATION_PERC = 0.2
 HIGH_STDEV_DEVIATION_PERC = 0.2
 
 
+PGF_PREAMBLE = r"""
+\usepackage{acronym}
+\usepackage{lmodern}
+\usepackage{helvet}
+\usepackage[bitstream-charter,sfscaled=false]{mathdesign}
+% More encoding and typesetting fixes and tweaks
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{textcomp}
+% \input{latex_cmds}
+
+\RequirePackage[%
+	binary-units,
+    % range-phrase={--},
+	range-units=single,
+    per-mode=symbol,
+    detect-all,
+    load-configurations=binary,
+    forbid-literal-units,
+]{siunitx}
+\catcode`\%=12\relax
+\DeclareSIUnit[number-unit-product=]\percent{%}
+\catcode`\%=14\relax
+
+\def\lr/{\mbox{\textsc{LongRTT}}}
+\def\g/{\mbox{\textsc{Goodput}}}
+\def\sat/{\mbox{\textsc{Sat}}}
+\def\satl/{\mbox{\textsc{SatLoss}}}
+\def\eut/{\mbox{\textsc{Eutelsat}}}
+\def\astra/{\mbox{\textsc{Astra}}}
+\def\crosstraffic/{\mbox{\textsc{CrossTraffic}}}
+"""
+
+
 def parse_args():
     """Parse command line args."""
     parser = argparse.ArgumentParser()
@@ -87,6 +121,23 @@ class CompareCli:
         self.plot = plot
         self.output = output
         self._unit = ""
+        if self.output.suffix == ".pgf":
+            self._latex_mode = True
+            plt.rcParams.update(
+                {
+                    "text.usetex": True,
+                    "font.family": "serif",
+                    #  # don't setup fonts from rc parameters
+                    "pgf.rcfonts": False,
+                    # Use LaTeX default serif font.
+                    "font.serif": [],
+                    # "font.sans-serif": [],
+                    "pgf.texsystem": "pdflatex",
+                    "pgf.preamble": PGF_PREAMBLE,
+                }
+            )
+        else:
+            self._latex_mode = False
 
     @property
     def measurement(self) -> MeasurementDescription:
@@ -358,8 +409,22 @@ class CompareCli:
             label1 = str(self.result1.file_path)
             label2 = str(self.result2.file_path)
 
-        label1 = f"{label1}\n{stats1.mpl_label_narrow(natural_data_rate)}"
-        label2 = f"{label2}\n{stats2.mpl_label_narrow(natural_data_rate)}"
+        def format_data_rate(val, _pos=None):
+            value = natural_data_rate(val)
+            if self._latex_mode:
+                number, unit = value.split(" ")
+                unit = {
+                    "bit/s": r"\bit\per\second",
+                    "kbit/s": r"\kilo\bit\per\second",
+                    "Mbit/s": r"\mega\bit\per\second",
+                    "Gbit/s": r"\giga\bit\per\second",
+                }[unit]
+                value = fr"\SI{{{number}}}{{{unit}}}"
+
+            return value
+
+        label1 = f"{label1}\n{stats1.mpl_label_narrow(format_data_rate)}"
+        label2 = f"{label2}\n{stats2.mpl_label_narrow(format_data_rate)}"
 
         df1 = pd.DataFrame(avgs1, columns=["avg. Goodput"])
         df2 = pd.DataFrame(avgs2, columns=["avg. Goodput"])
@@ -375,7 +440,7 @@ class CompareCli:
                 f"Comparison of Results of Measurement {self.measurement.name.title()}"
                 f"\n({len(avgs1)} Combinations)"
             )
-            ax.yaxis.set_major_formatter(lambda val, _pos: natural_data_rate(val))
+            ax.yaxis.set_major_formatter(format_data_rate)
             ax.set_ylim(ymin=0, ymax=10 * DataRate.MBPS)
             sns.boxplot(
                 data=df,
