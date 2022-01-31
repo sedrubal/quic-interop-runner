@@ -18,4 +18,5 @@ good-names=i,
            y,
            T,
            ax,
-           id
+           id,
+           df

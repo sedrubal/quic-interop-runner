@@ -92,6 +92,18 @@ for prop in "goodput" "efficiency"; do
         "${RESULT_SIM}" \
         "${RESULT_REAL}"
 
+    for include_failed in "true" "false"; do
+        run ./plot_stats.py \
+            --no-interactive \
+            "--prop=${prop}" \
+            "--img-path=${IMG_PATH}" \
+            "--img-format=${FORMAT}" \
+            "--include-failed=${include_failed}" \
+            --plot-type=cdf \
+            "${RESULT_SIM}" \
+            "${RESULT_REAL}"
+    done
+
     for measurement in "${MEASUREMENTS[@]}"; do
         run ./plot_stats.py \
             --no-interactive \

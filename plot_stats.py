@@ -25,7 +25,17 @@ from enums import TestResult
 from result_parser import MeasurementDescription, Result, TestResultInfo
 from tango_colors import Tango
 from units import DataRate
-from utils import LOGGER, Statistics, Subplot, YaspinWrapper, natural_data_rate
+from utils import (
+    ARGPARSE_BOOLEAN_CHOICES,
+    LOGGER,
+    Statistics,
+    Subplot,
+    YaspinWrapper,
+    argparse_boolean_type,
+    natural_data_rate,
+)
+
+DEFAULT_MEAS_ORDER = ["G", "SAT", "SATL", "AST", "EUT"]
 
 IMPL_CCAS = {
     "aioquic": {
@@ -102,6 +112,7 @@ HEATMAP_OMIT_CLIENT_IMPLS = {"chrome", "quicly"}
 
 def meas_tex_format(measurement: MeasurementDescription) -> str:
     keyword = measurement.abbr.lower()
+
     return fr"\textsc{{\{keyword}/}}"
 
 
@@ -148,6 +159,7 @@ class PlotType(Enum):
     SWARM = "swarm"
     CCAS = "ccas"
     VIOLINS = "violins"
+    CDF = "cdf"
 
     def __str__(self) -> str:
         return self.value
@@ -219,6 +231,13 @@ def parse_args():
         default="png",
         help="The format of the image to save",
     )
+    parser.add_argument(
+        "--include-failed",
+        type=argparse_boolean_type,
+        default=None,
+        help="Include failed experiments",
+    )
+
     return parser.parse_args()
 
 
@@ -234,6 +253,7 @@ class PlotStatsCli:
         efficiency: bool = False,
         debug: bool = False,
         no_interactive: bool = False,
+        include_failed: Optional[bool] = None,
     ) -> None:
         self.meas_abbrs = meas_abbrs or []
         self.test_abbrs = test_abbrs or []
@@ -245,6 +265,7 @@ class PlotStatsCli:
         self.img_path = img_path
         self.img_format = img_format
         self.no_interactive = no_interactive
+        self.include_failed = include_failed
         self._colors = Tango(model="HTML")
 
         self.set_theme()
@@ -261,6 +282,7 @@ class PlotStatsCli:
     def set_theme(self):
         if self.img_format in {"tex", "pgf", "pdf"}:
             self.tex_mode = True
+
             if self.img_format == "pdf":
                 matplotlib.use("pgf")
             # latex_cmds = Path("../../thesis/99-cmds.tex").resolve().absolute()
@@ -300,27 +322,31 @@ class PlotStatsCli:
     @property
     def measurements(self) -> list[MeasurementDescription]:
         """The measurements to use."""
-        default_order = ["G", "SAT", "SATL", "AST", "EUT"]
 
         def sort_key(value: str):
             try:
-                return str(default_order.index(value))
+                return str(DEFAULT_MEAS_ORDER.index(value))
             except IndexError:
                 return value
 
         measurements = list[MeasurementDescription]()
         available_measurements = set[str]()
+
         for result in self.results:
             available_measurements.update(result.measurement_descriptions.keys())
+
         if not self.meas_abbrs:
             self.meas_abbrs = sorted(available_measurements, key=sort_key)
+
         for test_abbr in self.meas_abbrs:
             for result in self.results:
                 test_desc = result.measurement_descriptions.get(test_abbr, None)
+
                 if test_desc is None:
                     continue
                 else:
                     measurements.append(test_desc)
+
                     break
             else:
                 sys.exit(
@@ -336,6 +362,7 @@ class PlotStatsCli:
         measurement = self.measurements[0]
         assert self._spinner
         self._spinner.write(f"⚒ Using measurement {measurement.name}...")
+
         return measurement
 
     @property
@@ -365,6 +392,7 @@ class PlotStatsCli:
     def format_data_rate(self, value: Union[float, int], _pos=None) -> str:
         """A formatter for the current unit."""
         formatted = natural_data_rate(int(value))
+
         if self.tex_mode:
             value, unit = formatted.rsplit(" ", 1)
             unit = {
@@ -374,6 +402,7 @@ class PlotStatsCli:
                 "Gbit/s": r"\giga\bit\per\second",
                 "Tbit/s": r"\terra\bit\per\second",
             }[unit]
+
             return fr"\SI{{{value}}}{{{unit}}}"
         else:
             return formatted
@@ -398,27 +427,39 @@ class PlotStatsCli:
             if self.efficiency
             else self.format_data_rate(value)
         )
+
         if latex and not self.tex_mode:
             return self._format_latex(text)
+
         return text
 
     @property
     def formatter(self):
         return FuncFormatter(self.format_value)
 
-    def get_dataframe(self, include_failed: bool = True) -> pd.DataFrame:
+    def get_dataframe(self, default_include_failed: bool = True) -> pd.DataFrame:
+        include_failed = (
+            default_include_failed
+            if self.include_failed is None
+            else self.include_failed
+        )
         dfs = [
             result.get_measurement_results_as_dataframe(include_failed=include_failed)
             for result in self.results
         ]
-        return pd.concat(dfs)
+        df = pd.concat(dfs)
+        df.reset_index(inplace=True, drop=True)
+
+        return df
 
     def plot_boxplot(self):
         self.set_theme()
-        df = self.get_dataframe()
+        include_failed = False if self.include_failed is None else self.include_failed
+        df = self.get_dataframe(default_include_failed=False)
         df = df[["measurement", "value", "efficiency"]]
 
         # replace measurements with abbreviations
+
         for measurement in self.measurements:
             df.loc[df.measurement == measurement.name, "measurement"] = measurement.abbr
 
@@ -480,9 +521,10 @@ class PlotStatsCli:
                     linestyle="--",
                 )
 
+            no_failed_str = "" if include_failed else "-no-failed"
             self._save(
                 fig,
-                f"boxplots-{'-'.join(meas.abbr for meas in sorted(self.measurements))}",
+                f"boxplots{no_failed_str}-{'-'.join(meas.abbr for meas in sorted(self.measurements))}",
             )
 
     def plot_violins(self, meas_abbr: str):
@@ -490,7 +532,7 @@ class PlotStatsCli:
 
         measurement = [meas for meas in self.measurements if meas.abbr == meas_abbr][0]
 
-        df = self.get_dataframe(include_failed=False)
+        df = self.get_dataframe(default_include_failed=False)
         # filter by measurement
         df = df[df["measurement"] == measurement.name]
         # filter by columns
@@ -503,34 +545,42 @@ class PlotStatsCli:
         partial_dfs = list[pd.DataFrame]()
         IGNORE_RATIO_LT = 0.3
         IGNORE_AMOUNT_LT = len(implementations) * (len(implementations) / 5)
+
         for implementation in implementations:
             by_impl = df.loc[
                 (df["server"] == implementation) | (df["client"] == implementation)
             ]
+
             if len(by_impl) < IGNORE_AMOUNT_LT:
                 print(
                     f"Skipping {implementation}, which is only represented by less than {IGNORE_AMOUNT_LT} entries"
                 )
+
                 continue
             roles = by_impl["server"].map(
                 lambda server: "Server" if server == implementation else "Client"
             )
             role_counts_normalized = roles.value_counts(normalize=True)
+
             if role_counts_normalized.get("Client") is None:
                 print(f"Skipping {implementation}, which is only a server")
+
                 continue
             elif role_counts_normalized.get("Server", 0) < IGNORE_RATIO_LT:
                 print(
                     f"Skipping {implementation}, which has less than {IGNORE_RATIO_LT * 100:.0f} % entries for servers"
                 )
+
                 continue
             elif role_counts_normalized.get("Server") is None:
                 print(f"Skipping {implementation}, which is only a clients")
+
                 continue
             elif role_counts_normalized.get("Client", 0) < IGNORE_RATIO_LT:
                 print(
                     f"Skipping {implementation}, which has less than {IGNORE_RATIO_LT * 100:.0f} % entries for client"
                 )
+
                 continue
 
             values_by_impl = by_impl["value"]
@@ -577,6 +627,7 @@ class PlotStatsCli:
                 )
 
             # rotate x tick labels
+
             for tick in ax.get_xticklabels():
                 tick.set_rotation(45)
 
@@ -601,6 +652,7 @@ class PlotStatsCli:
             # set 0% 100% as limits
             y_axis_eff.set_ylim(ymin=0, ymax=1)
             # format auto generated labels (don't set the ticks manually, as this does not work...)
+
             for label in y_axis_eff.get_yticklabels():
                 label.set_fontproperties(ax.get_xticklabels()[0].get_fontproperties())
             # use percentage formatter
@@ -608,9 +660,11 @@ class PlotStatsCli:
             # increase distance between frame and axis
             # add spines again (???)
             color = ax.yaxis.label.get_color()
+
             for pos in ("left", "right", "top", "bottom"):
                 y_axis_eff.spines[pos].set_color(color)
             # remove tick marks
+
             for axis in (ax, y_axis_eff):
                 axis.tick_params(
                     left=False,
@@ -724,6 +778,7 @@ class PlotStatsCli:
             ax.set_xlabel("")
             ax.set_ylabel("")
             ax.yaxis.set_major_formatter(self.format_value)
+
             if self.efficiency:
                 ax.set_ylim(ymin=0, ymax=1)
             else:
@@ -746,6 +801,7 @@ class PlotStatsCli:
             if test_abbr in result.test_descriptions.keys():
                 # test_case = result.test_descriptions[test_abbr]
                 data = result.get_all_tests_of_type(test_abbr)
+
                 break
         else:
             raise ValueError(f"No test case with abbr {test_abbr} found")
@@ -816,7 +872,7 @@ class PlotStatsCli:
 
     def plot_heatmap(self, meas_abbr: str):
         measurement = [meas for meas in self.measurements if meas.abbr == meas_abbr][0]
-        df = self.get_dataframe(include_failed=False)
+        df = self.get_dataframe(default_include_failed=False)
         df_timeouts = pd.read_csv("timeouts.csv")
         self.set_theme()
 
@@ -893,9 +949,11 @@ class PlotStatsCli:
             )
 
             missing_indices = list[tuple[str, str]]()
+
             for server in x_labels:
                 for client in y_labels:
                     impl_tuple = (server, client)
+
                     if impl_tuple in succeeded_indices:
                         continue
                     elif impl_tuple in timeout_indices:
@@ -961,7 +1019,7 @@ class PlotStatsCli:
             )
 
     def plot_swarmplot(self):
-        df = self.get_dataframe(include_failed=False)
+        df = self.get_dataframe(default_include_failed=False)
         self.set_theme()
 
         # filter by measurement
@@ -1040,7 +1098,7 @@ class PlotStatsCli:
 
         measurement = [meas for meas in self.measurements if meas.abbr == meas_abbr][0]
 
-        df = self.get_dataframe(include_failed=True)
+        df = self.get_dataframe(default_include_failed=True)
         # filter by measurement
         df = df[df.measurement == measurement.name]
         # filter columns
@@ -1097,6 +1155,7 @@ class PlotStatsCli:
 
         # we loop over the FacetGrid figure axes (g.axes.flat) and add the month as text with the right color
         # notice how ax.lines[-1].get_color() enables you to access the last line's color in each matplotlib.Axes
+
         for ax, impl_name in zip(g.axes.flat, df[dimension].unique()):
             ax.text(
                 0.01 if measurement.abbr == "G" else 0.99,
@@ -1184,6 +1243,7 @@ class PlotStatsCli:
         del df_meas1["index"]
         del df_meas2["index"]
         # rename efficiency column
+
         if self.tex_mode:
             eff_lbl_1 = f"Efficiency in {meas_tex_format(meas1)}"
             eff_lbl_2 = f"Efficiency in {meas_tex_format(meas2)}"
@@ -1198,6 +1258,7 @@ class PlotStatsCli:
         # map server names to congestion controls
         def get_cca_from_server_name(server_name: str) -> str:
             data = IMPL_CCAS[server_name]
+
             if "cca" in data:
                 return data["cca"]
             else:
@@ -1240,6 +1301,7 @@ class PlotStatsCli:
 
             ax.xaxis.set_major_formatter(self.format_percentage)
             # rotate labels at the bottom
+
             for label in ax.get_xticklabels():
                 label.set_rotation(90)
 
@@ -1253,8 +1315,80 @@ class PlotStatsCli:
 
             self._save(fig, f"cca-plot-{meas1.abbr}-{meas2.abbr}")
 
+    def plot_cdf(self):
+        self.set_theme()
+        include_failed = False if self.include_failed is None else self.include_failed
+        df = self.get_dataframe(default_include_failed=False)
+        df = df[["measurement", self.meas_prop_key]]
+        df.rename(
+            columns={
+                self.meas_prop_key: self.meas_prop_name,
+                "measurement": "Measurement",
+            },
+            inplace=True,
+        )
+
+        # replace measurements with abbreviations
+
+        for measurement in self.measurements:
+            df.loc[df.Measurement == measurement.name, "Measurement"] = measurement.abbr
+
+        with Subplot() as (fig, ax):
+            assert isinstance(ax, plt.Axes)
+
+            ax.grid()
+            sns.ecdfplot(
+                data=df,
+                #  ax=ax,
+                x=self.meas_prop_name,
+                hue="Measurement",
+                #  stat="count",
+                hue_order=DEFAULT_MEAS_ORDER,
+            )
+            # ax.set_title(f"{self.meas_prop_name.title()} by Measurement")
+            ax.xaxis.set_major_formatter(self.format_value)
+            ax.yaxis.set_major_formatter(self.format_percentage)
+
+            if self.meas_prop_key == "value":
+                # don't use AST or EUT max values, because they are too high
+                max_value = (
+                    max(
+                        [
+                            meas.theoretical_max_value
+                            for meas in self.measurements
+                            if meas.abbr not in ("AST", "EUT")
+                            and meas.theoretical_max_value
+                        ]
+                    )
+                    * DataRate.KBPS
+                    * 1.01
+                )
+                ax.set_xlim(xmin=0, xmax=max_value)
+
+                limits = frozenset(
+                    meas.theoretical_max_value for meas in self.measurements
+                )
+                for limit in limits:
+                    ax.axvline(
+                        x=limit * DataRate.KBPS,
+                        #  ymin=i / len(self.measurements),
+                        #  ymax=(i + 1) / len(self.measurements),
+                        color=self._colors.ScarletRed,
+                        linestyle="--",
+                    )
+                for tick in ax.get_xticklabels():
+                    tick.set_rotation(45)
+            else:
+                ax.set_xlim(xmin=0, xmax=1)
+
+            no_failed_str = "" if include_failed else "-no-failed"
+            self._save(
+                fig,
+                f"cdf-{self.meas_prop_key}{no_failed_str}-{'-'.join(meas.abbr for meas in sorted(self.measurements))}",
+            )
+
     def print_analyze(self):
-        df = self.get_dataframe(include_failed=True)[
+        df = self.get_dataframe(default_include_failed=True)[
             ["server", "client", "measurement", "value", "efficiency"]
         ]
 
@@ -1262,6 +1396,7 @@ class PlotStatsCli:
         first_row = [""]
         cols = {}
         perc_failed_row = ["failed"]
+
         for i, measurement in enumerate(self.measurements):
             multi_col_cfg = "c" if i == len(self.measurements) - 1 else "c|"
             columns_cfg.extend(
@@ -1285,6 +1420,7 @@ class PlotStatsCli:
             )
 
         rows = []
+
         for label, key in (
             ("mean", "avg"),
             ("median", "med"),
@@ -1292,6 +1428,7 @@ class PlotStatsCli:
             ("maximum", "max"),
         ):
             row = [label]
+
             for measurement in self.measurements:
                 val_stat = getattr(cols[measurement.abbr]["val_stats"], key)
                 eff_stat = getattr(cols[measurement.abbr]["eff_stats"], key)
@@ -1361,6 +1498,8 @@ class PlotStatsCli:
             elif self.plot_type == PlotType.VIOLINS:
                 for meas_abbr in self.meas_abbrs:
                     self.plot_violins(meas_abbr)
+            elif self.plot_type == PlotType.CDF:
+                self.plot_cdf()
             else:
                 assert False, f"Invalid plot type {self.plot_type}"
 
@@ -1380,8 +1519,10 @@ class PlotStatsCli:
         kwargs: dict[str, Any] = {
             "dpi": 300,
         }
+
         if tight:
             kwargs["bbox_inches"] = "tight"
+
         if transparent:
             kwargs["transparent"] = True
         figure.savefig(
@@ -1390,6 +1531,7 @@ class PlotStatsCli:
         )
         text = colored(f"{output_file} written.", color="green")
         self._spinner.write(f"✔ {text}")
+
         if not self.no_interactive:
             if self.tex_mode:
                 self._spinner.fail(
@@ -1413,6 +1555,7 @@ def main():
         img_path=args.img_path,
         img_format=args.img_format,
         no_interactive=args.no_interactive,
+        include_failed=args.include_failed,
     )
     cli.run()
 

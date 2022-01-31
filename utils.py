@@ -438,6 +438,31 @@ def time_range(value: str) -> tuple[time, time]:
     return start, end
 
 
+ARGPARSE_BOOLEAN_CHOICES = {
+    "y": True,
+    "yes": True,
+    "t": True,
+    "true": True,
+    "1": True,
+    "n": False,
+    "no": False,
+    "f": False,
+    "false": False,
+    "0": False,
+}
+
+
+def argparse_boolean_type(value: str):
+    value = value.lower()
+    if value not in ARGPARSE_BOOLEAN_CHOICES.keys():
+        valid_values_str = ", ".join(sorted(ARGPARSE_BOOLEAN_CHOICES.keys()))
+        raise argparse.ArgumentTypeError(
+            f"Invalid value {value}. Valid boolean values are {valid_values_str}"
+        )
+
+    return ARGPARSE_BOOLEAN_CHOICES[value]
+
+
 def time_total_seconds(value: time) -> int:
     """Return the total number of seconds in a time object."""
 
