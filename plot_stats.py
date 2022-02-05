@@ -477,12 +477,14 @@ class PlotStatsCli:
                 x="measurement",
                 y="value",
                 data=df[["measurement", "value"]],
+                order=DEFAULT_MEAS_ORDER,
             )
             sns.boxplot(
                 ax=ax2,
                 x="measurement",
                 y="efficiency",
                 data=df[["measurement", "efficiency"]],
+                order=DEFAULT_MEAS_ORDER,
             )
             # ax.set_title(f"{self.meas_prop_name.title()} by Measurement")
             ax1.yaxis.set_major_formatter(self.format_data_rate)
