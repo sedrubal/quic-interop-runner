@@ -35,7 +35,7 @@ from utils import (
     natural_data_rate,
 )
 
-DEFAULT_MEAS_ORDER = ["G", "SAT", "SATL", "AST", "EUT"]
+DEFAULT_MEAS_ORDER = ["G", "T", "SAT", "SATL", "AST", "EUT"]
 
 IMPL_CCAS = {
     "aioquic": {
@@ -142,6 +142,7 @@ PGF_PREAMBLE = r"""
 
 \def\lr/{\mbox{\textsc{LongRTT}}}
 \def\g/{\mbox{\textsc{Goodput}}}
+\def\terr/{\mbox{\textsc{Terrestrial}}}
 \def\sat/{\mbox{\textsc{Sat}}}
 \def\satl/{\mbox{\textsc{SatLoss}}}
 \def\eut/{\mbox{\textsc{Eutelsat}}}
@@ -635,7 +636,7 @@ class PlotStatsCli:
 
             ax.text(
                 0.5,
-                0.25 if meas_abbr == "G" else 0.75,
+                0.25 if meas_abbr in ("G", "T") else 0.75,
                 meas_abbr.upper(),
                 transform=ax.transAxes,
                 fontsize=50,
@@ -1160,10 +1161,12 @@ class PlotStatsCli:
 
         for ax, impl_name in zip(g.axes.flat, df[dimension].unique()):
             ax.text(
-                0.01 if measurement.abbr == "G" else 0.99,
+                0.01 if measurement.abbr in ("G", "T") else 0.99,
                 0.2,
                 impl_name,
-                horizontalalignment="left" if measurement.abbr == "G" else "right",
+                horizontalalignment="left"
+                if measurement.abbr in ("G", "T")
+                else "right",
                 verticalalignment="bottom",
                 color=ax.lines[-1].get_color(),
                 transform=ax.transAxes,
@@ -1345,7 +1348,7 @@ class PlotStatsCli:
                 x=self.meas_prop_name,
                 hue="Measurement",
                 #  stat="count",
-                hue_order=DEFAULT_MEAS_ORDER,
+                hue_order=[meas.abbr for meas in self.measurements],
             )
             # ax.set_title(f"{self.meas_prop_name.title()} by Measurement")
             ax.xaxis.set_major_formatter(self.format_value)
