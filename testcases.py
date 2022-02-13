@@ -1813,8 +1813,27 @@ class MeasurementCrossTraffic(MeasurementGoodput):
         return ["iperf_server", "iperf_client"]
 
 
-class MeasurementSatellite(MeasurementGoodput):
+class MeasurementTerrestrial(Measurement):
     FILESIZE = 10 * FileSize.MiB
+    data_rate = 20 * DataRate.MBPS
+
+    @classmethod
+    @property
+    def name(cls):
+        return "terrestrial"
+
+    @classmethod
+    @property
+    def abbreviation(cls):
+        return "T"
+
+    @classmethod
+    @property
+    def desc(cls):
+        return f"Measures connection goodput over a {{int(cls.data_rate // DataRate.MBPS)}} Mbps link."
+
+
+class MeasurementSatellite(MeasurementTerrestrial):
     rtt = 600 * Time.MS
     forward_data_rate = 20 * DataRate.MBPS
     return_data_rate = 2 * DataRate.MBPS
