@@ -1,5 +1,5 @@
-#!/usr/bin/env sh
-set -eu
+#!/usr/bin/env bash
+set -eEu
 
 #
 # Wrapper script to run scripts while telling systemd / linux through cgroups to controll memory and CPU usage.
