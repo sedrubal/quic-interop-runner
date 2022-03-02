@@ -53,7 +53,9 @@ def parse_args():
             "onlyTests",
             "onlyMeasurements",
             *(x.name for x in TESTCASES),
+            *(x.abbreviation.lower() for x in TESTCASES),
             *(x.name for x in MEASUREMENTS),
+            *(x.abbreviation.lower() for x in MEASUREMENTS),
         ],
         help="test cases.",
     )
@@ -143,11 +145,13 @@ def main():
 
         for test_case_name in arg:
             test_case_lookup = {tc.name: tc for tc in TESTCASES}
+            test_case_lookup.update({tc.abbreviation.lower(): tc for tc in TESTCASES})
             measurement_lookup = {m.name: m for m in MEASUREMENTS}
+            measurement_lookup.update({m.abbreviation.lower(): m for m in MEASUREMENTS})
 
-            if test_case_name in test_case_lookup.keys():
+            if test_case_name.lower() in test_case_lookup.keys():
                 tests.append(test_case_lookup[test_case_name])
-            elif test_case_name in measurement_lookup.keys():
+            elif test_case_name.lower() in measurement_lookup.keys():
                 measurements.append(measurement_lookup[test_case_name])
             else:
                 print(f"Test case {test_case_name} not found.", file=sys.stderr)
