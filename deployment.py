@@ -567,8 +567,8 @@ class Deployment:
         # check client
         containers = list[Container]()
 
-        image = implementation.image
-        assert image
+        image_id = implementation.image_id
+        assert image_id
 
         if role == Role.CLIENT:
             containers.append(
@@ -578,7 +578,7 @@ class Deployment:
             )
         containers.append(
             self._create_implementation_sim(
-                image=image,
+                image=image_id,
                 role=role,
                 local_certs_path=local_certs_path,
                 testcase=testcase_name,
@@ -617,9 +617,9 @@ class Deployment:
         client = IMPLEMENTATIONS[client_name]
         server = IMPLEMENTATIONS[server_name]
 
-        server_image = server.image
-        client_image = client.image
-        assert server_image and client_image
+        server_image_id = server.image_id
+        client_image_id = client.image_id
+        assert server_image_id and client_image_id
 
         timeout = 60 * 60 * 1  # 1h
         testcase_lookup: dict[str, Type[TestCase]] = {
@@ -635,7 +635,7 @@ class Deployment:
         )
         LOGGER.debug("Creating server container")
         server_container = self._create_implementation_sim(
-            image=server_image,
+            image=server_image_id,
             role=Role.SERVER,
             local_certs_path=local_certs_path,
             testcase=testcase.testname(Perspective.SERVER),
@@ -645,7 +645,7 @@ class Deployment:
         )
         LOGGER.debug("Creating client container")
         client_container = self._create_implementation_sim(
-            image=client_image,
+            image=client_image_id,
             role=Role.CLIENT,
             local_certs_path=local_certs_path,
             testcase=testcase.testname(Perspective.CLIENT),
@@ -731,9 +731,9 @@ class Deployment:
         request_urls: str,
         version: int,
     ) -> ExecResult:
-        server_image = server.image
-        client_image = client.image
-        assert server_image and client_image
+        server_image_id = server.image_id
+        client_image_id = client.image_id
+        assert server_image_id and client_image_id
         with concurrent.futures.ThreadPoolExecutor() as executor:
             create_sim_t = executor.submit(
                 lambda: self._create_sim(
@@ -743,7 +743,7 @@ class Deployment:
             )
             create_server_t = executor.submit(
                 lambda: self._create_implementation_sim(
-                    image=server_image,
+                    image=server_image_id,
                     role=Role.SERVER,
                     local_certs_path=local_certs_path,
                     testcase=testcase.testname(Perspective.SERVER),
@@ -754,7 +754,7 @@ class Deployment:
             )
             create_client_t = executor.submit(
                 lambda: self._create_implementation_sim(
-                    image=client_image,
+                    image=client_image_id,
                     role=Role.CLIENT,
                     local_certs_path=local_certs_path,
                     testcase=testcase.testname(Perspective.CLIENT),
@@ -889,7 +889,7 @@ class Deployment:
             create_server_t = executor.submit(
                 self._create_implementation_real,
                 cli=server_cli,
-                image=server.image,
+                image=server.image_id,
                 role=Role.SERVER,
                 server_port=server_port,
                 server_ip=server_ip,
@@ -902,7 +902,7 @@ class Deployment:
             create_client_t = executor.submit(
                 self._create_implementation_real,
                 cli=client_cli,
-                image=client.image,
+                image=client.image_id,
                 role=Role.CLIENT,
                 server_port=server_port,
                 server_ip=server_ip,

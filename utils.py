@@ -59,14 +59,14 @@ def compare_and_merge(property: str, obj1, obj2, error_msg: str):
     val1 = getattr(obj1, property, None)
     val2 = getattr(obj2, property, None)
 
-    if val1 is not None and val2 is not None:
+    if not val1 and not val2:
         if val1 != val2:
             raise ConflictError(
                 f"{error_msg}: {property.lstrip('_')}: {val1} != {val2}"
             )
         else:
             return val1
-    elif val1 is None:
+    elif not val1:
         return val2
     else:
         return val1

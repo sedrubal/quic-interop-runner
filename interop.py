@@ -92,10 +92,34 @@ class InteropRunner:
             start_time=start_time,
         )
 
+        for test in chain(self._tests, self._measurements):
+            self._result.add_test_description(test.to_desc())
+
+        if self._result.file_path and self._result.file_path.is_file():
+            LOGGER.warning(
+                "Output json file %s already exists. Trying to resume run...",
+                self._result.file_path,
+            )
+            orig_result = Result(self._result.file_path)
+            orig_result.load_from_json()
+            self._result.end_time = datetime.now()
+            try:
+                self._result = orig_result.merge(self._result)
+            except ConflictError as err:
+                # raise err
+                sys.exit(colored(str(err), color="red"))
+
+        elif self._result.log_dir.is_dir():
+            sys.exit(f"Log dir {self._result.log_dir} already exists.")
+
         with concurrent.futures.ThreadPoolExecutor() as executor:
 
             def add_impl(impl_name):
                 implementation = IMPLEMENTATIONS[impl_name]
+                if impl_name in self._result.implementations.keys():
+                    image_id = self._result.implementations[impl_name].image_id
+                    if image_id:
+                        implementation.image_id = image_id
                 implementation.gather_infos_from_docker(
                     self._deployment.get_docker_cli()
                 )
@@ -116,26 +140,6 @@ class InteropRunner:
                 add_impl, frozenset(self._servers) | frozenset(self._clients)
             )
             assert all(future_results)
-
-        for test in chain(self._tests, self._measurements):
-            self._result.add_test_description(test.to_desc())
-
-        if self._result.file_path and self._result.file_path.is_file():
-            LOGGER.warning(
-                "Output json file %s already exists. Trying to resume run...",
-                self._result.file_path,
-            )
-            orig_result = Result(self._result.file_path)
-            orig_result.load_from_json()
-            self._result.end_time = datetime.now()
-            try:
-                self._result = orig_result.merge(self._result)
-            except ConflictError as err:
-                # raise err
-                sys.exit(colored(str(err), color="red"))
-
-        elif self._result.log_dir.is_dir():
-            sys.exit(f"Log dir {self._result.log_dir} already exists.")
 
         self._scheduled_tests = list[ScheduledTest]()
 

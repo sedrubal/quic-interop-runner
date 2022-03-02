@@ -39,15 +39,25 @@ class Implementation:
 
     def gather_infos_from_docker(self, docker_cli: docker.DockerClient):
         assert self.image
-        try:
-            img = docker_cli.images.get(self.image)
-        except docker.errors.ImageNotFound:
-            LOGGER.info(
-                "Pulling image %s on %s host",
-                self.image,
-                ImplementationRole.CLIENT.value,
-            )
-            img = docker_cli.images.pull(self.image)
+
+        img = None
+
+        if self._image_id:
+            try:
+                img = docker_cli.images.get(self._image_id)
+            except docker.errors.ImageNotFound:
+                pass
+
+        if not img:
+            try:
+                img = docker_cli.images.get(self.image)
+            except docker.errors.ImageNotFound:
+                LOGGER.info(
+                    "Pulling image %s on %s host",
+                    self.image,
+                    ImplementationRole.CLIENT.value,
+                )
+                img = docker_cli.images.pull(self.image)
 
         image_base = self.image.split(":", 1)[0]
         self._image_id = img.id
@@ -75,6 +85,10 @@ class Implementation:
         assert self._image_id, f"Image ID of {self.name} not yet determined."
 
         return self._image_id
+
+    @image_id.setter
+    def image_id(self, value: str):
+        self._image_id = value
 
     @property
     def image_repo_digests(self) -> frozenset[str]:
