@@ -1816,7 +1816,7 @@ class MeasurementCrossTraffic(MeasurementGoodput):
         return ["iperf_server", "iperf_client"]
 
 
-class MeasurementTerrestrial(Measurement):
+class MeasurementTerrestrial(MeasurementGoodput):
     FILESIZE = 10 * FileSize.MiB
     data_rate = 20 * DataRate.MBPS
 
@@ -1833,7 +1833,7 @@ class MeasurementTerrestrial(Measurement):
     @classmethod
     @property
     def desc(cls):
-        return f"Measures connection goodput over a {{int(cls.data_rate // DataRate.MBPS)}} Mbps link."
+        return f"Measures connection goodput over a {int(cls.data_rate // DataRate.MBPS)} Mbps link."
 
 
 class MeasurementSatellite(MeasurementTerrestrial):
@@ -2107,6 +2107,7 @@ TESTCASES: list[Type[TestCase]] = [
 MEASUREMENTS: list[Type[Measurement]] = [
     MeasurementGoodput,
     MeasurementCrossTraffic,
+    MeasurementTerrestrial,
     MeasurementSatellite,
     MeasurementSatelliteLoss,
     MeasurementRealLink,
