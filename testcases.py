@@ -643,13 +643,16 @@ class TestCaseChaCha20(TestCase):
 
         ciphersuites = set()
 
-        for packet in self.client_trace.get_initial(Direction.FROM_CLIENT):
+        for packet in self._client_trace().get_initial(Direction.FROM_CLIENT):
             if hasattr(packet, "tls_handshake_ciphersuite"):
                 ciphersuites.add(packet.tls_handshake_ciphersuite)
 
-        if len(ciphersuites) != 1 or "4867" not in ciphersuites:
-            raise TestFailed(
-                f"Expected only ChaCha20 cipher suite to be offered. Got: {ciphersuites}"
+        if len(ciphersuites) != 1 or (
+            "4867" not in ciphersuites and "0x1303" not in ciphersuites
+        ):
+            logging.info(
+                "Expected only ChaCha20 cipher suite to be offered. Got: %s",
+                ciphersuites,
             )
 
         self._check_version_and_files()
