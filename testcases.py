@@ -643,7 +643,7 @@ class TestCaseChaCha20(TestCase):
 
         ciphersuites = set()
 
-        for packet in self._client_trace().get_initial(Direction.FROM_CLIENT):
+        for packet in self.client_trace.get_initial(Direction.FROM_CLIENT):
             if hasattr(packet, "tls_handshake_ciphersuite"):
                 ciphersuites.add(packet.tls_handshake_ciphersuite)
 
