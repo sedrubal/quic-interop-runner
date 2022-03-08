@@ -47,9 +47,9 @@ def parse_args():
         ),
     )
     parser.add_argument(
-        "--no-annotation",
+        "--annotate",
         action="store_true",
-        help="Hide TTFB, TTLB, ... markers.",
+        help="Show TTFB, TTLB, ... markers.",
     )
     parser.add_argument(
         "--format",
@@ -376,7 +376,7 @@ def main():
         result_files=args.results,
         only_sat=args.only_sat,
         title=args.title,
-        annotate=not args.no_annotation,
+        annotate=args.annotate,
         output_format=args.format,
         force=args.force,
         include_failed=args.include_failed,

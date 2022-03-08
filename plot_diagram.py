@@ -9,7 +9,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Sequence, Union
+from typing import Any, Optional, Sequence, Union
 
 import numpy as np
 import prettytable
@@ -27,7 +27,6 @@ from utils import (
     Statistics,
     Subplot,
     TraceTriple,
-    YaspinWrapper,
     create_relpath,
     natural_data_rate,
 )
@@ -72,9 +71,9 @@ def parse_args():
         help="The title for the diagram.",
     )
     parser.add_argument(
-        "--no-annotation",
+        "--annotate",
         action="store_true",
-        help="Hide TTFB, TTLB, ... markers.",
+        help="Show TTFB, TTLB, ... markers.",
     )
     parser.add_argument(
         "--mode",
@@ -1601,7 +1600,7 @@ def main():
         trace_triples=args.trace_triples,
         output_file=args.output_file,
         title=args.title,
-        annotate=not args.no_annotation,
+        annotate=args.annotate,
         mode=args.mode,
         cache=args.cache,
         debug=args.debug,
