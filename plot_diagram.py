@@ -319,8 +319,7 @@ class PlotCli:
             # LOGGER.debug("already analyzed")
             return
 
-        if not self.traces:
-            breakpoint()
+        assert self.traces, "No traces to analyze"
 
         last_error: Optional[ParsingError] = None
         while True:
@@ -1517,6 +1516,7 @@ class PlotCli:
             plt.show()
 
     def print_trace_table(self):
+        assert self.traces
         table = prettytable.PrettyTable()
         table.hrules = prettytable.FRAME
         table.vrules = prettytable.ALL
@@ -1543,7 +1543,9 @@ class PlotCli:
     def run(self):
         """Run command line interface."""
 
-        LOGGER.info("Plotting %d traces", len(self.traces))
+        LOGGER.info(
+            "Plotting %d traces", len(self.traces) or len(self._analyze_results)
+        )
 
         mapping = {
             PlotMode.OFFSET_NUMBER: {

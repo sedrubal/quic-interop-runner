@@ -167,6 +167,7 @@ def plot_in_meas_run_dir(
         ret[2].append("no trace files found")
         return ret
 
+    assert trace_triples
     cli = PlotCli(
         trace_triples=trace_triples,
         annotate=annotate,
