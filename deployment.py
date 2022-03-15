@@ -688,7 +688,7 @@ class Deployment:
         if isinstance(testcase, MeasurementRealLink):
             LOGGER.debug("Using a real link for this testcase.")
 
-            return self._run_testcase_with_remote_client(
+            result = self._run_testcase_with_remote_client(
                 log_path=log_path,
                 timeout=timeout,
                 testcase=testcase,
@@ -703,7 +703,7 @@ class Deployment:
         else:
             LOGGER.debug("Using an emulated link for this testcase.")
 
-            return self._run_testcase_with_sim(
+            result = self._run_testcase_with_sim(
                 log_path=log_path,
                 timeout=timeout,
                 testcase=testcase,
@@ -717,6 +717,7 @@ class Deployment:
             )
 
         self.cleanup()
+        return result
 
     def _run_testcase_with_sim(
         self,
