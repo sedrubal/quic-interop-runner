@@ -15,7 +15,7 @@ from Crypto.Cipher import AES  # type: ignore
 
 from custom_types import IPAddress
 from enums import ECN, Perspective
-from exceptions import TestFailed, TestUnsupported
+from exceptions import ErrorCode, TestFailed, TestUnsupported
 from result_parser import MeasurementDescription, TestDescription
 from trace_analyzer import Direction, PacketType, TraceAnalyzer, get_packet_type
 from units import DataRate, FileSize, Time
@@ -290,36 +290,49 @@ class TestCase(abc.ABC):
         versions = [hex(int(v, 0)) for v in self._get_versions()]
 
         if len(versions) != 1:
-            raise TestFailed(f"Expected exactly one version. Got {versions}")
+            raise TestFailed(
+                f"Expected exactly one version. Got {versions}",
+                ErrorCode.TOO_MANY_VERSIONS,
+            )
 
         if hex(QUIC_VERSION) not in versions:
             raise TestFailed(
-                f"Wrong version. Expected {hex(QUIC_VERSION)}, got {versions}"
+                f"Wrong version. Expected {hex(QUIC_VERSION)}, got {versions}",
+                ErrorCode.INVALID_VERSION,
             )
 
         if len(self._files) == 0:
             raise AssertionError("No test files generated.")
 
-        files = [
-            n.name
-            for n in self.download_dir.iterdir()
-            if (self.download_dir / n).is_file()
+        existing_files = [
+            file.name
+            for file in self.download_dir.iterdir()
+            if (self.download_dir / file).is_file()
         ]
-        too_many = [f for f in files if f not in self._files]
+        too_many = [file for file in existing_files if file not in self._files]
 
         if len(too_many) != 0:
-            raise TestFailed(f"Found unexpected downloaded files: {too_many}")
+            raise TestFailed(
+                f"Found unexpected downloaded files: {too_many}. Expected: {self._files}",
+                ErrorCode.EXTRA_DOWNLOADED_FILES,
+            )
 
-        too_few = [f for f in self._files if f not in files]
+        too_few = [file for file in self._files if file not in existing_files]
 
         if len(too_few) != 0:
-            raise TestFailed(f"Missing files: {too_few}")
+            raise TestFailed(
+                f"Missing files: {too_few}",
+                ErrorCode.MISSING_DOWNLOADED_FILES,
+            )
 
         for file_name in self._files:
             file_path = self.download_dir / file_name
 
             if not os.path.isfile(file_path):
-                raise TestFailed(f"File {file_path} does not exist.")
+                raise TestFailed(
+                    f"File {file_path} does not exist.",
+                    ErrorCode.MISSING_DOWNLOADED_FILES,
+                )
 
             try:
                 size = (self.www_dir / file_name).stat().st_size
@@ -329,14 +342,21 @@ class TestCase(abc.ABC):
                     raise TestFailed(
                         f"File size of {file_path} doesn't match. "
                         f"Original: {size} bytes, downloaded: {downloaded_size} bytes.",
+                        ErrorCode.DOWNLOADED_FILE_SIZE_MISSMATCH,
                     )
 
                 if not filecmp.cmp(self.www_dir / file_name, file_path, shallow=False):
-                    raise TestFailed(f"File contents of {file_path} do not match.")
+                    raise TestFailed(
+                        f"File contents of {file_path} do not match.",
+                        ErrorCode.DOWNLOADED_FILE_CONTENT_MISSMATCH,
+                    )
 
+            except TestFailed as err:
+                raise err
             except Exception as exception:
                 raise TestFailed(
                     f"Could not compare files {self.www_dir / file_name} and {file_path}: {exception}",
+                    ErrorCode.UNKNOWN_ERROR,
                 ) from exception
 
         LOGGER.debug("Check of downloaded files succeeded.")
@@ -356,7 +376,8 @@ class TestCase(abc.ABC):
         if num_handshakes != expected_num:
             raise TestFailed(
                 f"Expected exactly {expected_num} handshake{'' if expected_num == 1 else 's'}."
-                f" Got: {num_handshakes}"
+                f" Got: {num_handshakes}",
+                ErrorCode.HANDSHAKE_AMOUNT_MISSMATCH,
             )
 
     def _get_versions(self) -> set:
@@ -487,7 +508,10 @@ class TestCaseVersionNegotiation(TestCase):
             break
 
         if dcid == "":
-            raise TestFailed("Didn't find an Initial / a DCID.")
+            raise TestFailed(
+                "Didn't find an Initial / a DCID.",
+                ErrorCode.NO_DCID,
+            )
 
         vnps = self.client_trace.get_vnp()
 
@@ -495,7 +519,10 @@ class TestCaseVersionNegotiation(TestCase):
             if packet.scid == dcid:
                 return
 
-        raise TestFailed("Didn't find a Version Negotiation Packet with matching SCID.")
+        raise TestFailed(
+            "Didn't find a Version Negotiation Packet with matching SCID.",
+            ErrorCode.NO_MATCHING_SCID,
+        )
 
 
 class TestCaseHandshake(TestCase):
@@ -524,7 +551,10 @@ class TestCaseHandshake(TestCase):
         self._check_version_and_files()
 
         if self._retry_sent():
-            raise TestFailed("Didn't expect a Retry to be sent.")
+            raise TestFailed(
+                "Didn't expect a Retry to be sent.",
+                ErrorCode.UNEXPECTED_RETRY,
+            )
 
         self._check_handshakes(1)
 
@@ -578,7 +608,10 @@ class TestCaseLongRTT(TestCaseHandshake):
                     num_ch += 1
 
         if num_ch < 2:
-            raise TestFailed(f"Expected at least 2 ClientHellos. Got: {num_ch}")
+            raise TestFailed(
+                f"Expected at least 2 ClientHellos. Got: {num_ch}",
+                ErrorCode.TOO_LESS_CLIENT_HELLOS,
+            )
 
 
 class TestCaseTransfer(TestCase):
@@ -702,10 +735,16 @@ class TestCaseMultiplexing(TestCase):
                 LOGGER.debug("Server set bidirectional stream limit: %d", stream_limit)
 
                 if stream_limit > 1000:
-                    raise TestFailed("Server set a stream limit > 1000.")
+                    raise TestFailed(
+                        "Server set a stream limit > 1000.",
+                        ErrorCode.STREAM_LIMIT_TOO_HIGH,
+                    )
 
         if not checked_stream_limit:
-            raise TestFailed("Couldn't check stream limit.")
+            raise TestFailed(
+                "Couldn't check stream limit.",
+                ErrorCode.COULD_NOT_CHECK_STREAM_LIMIT,
+            )
 
 
 class TestCaseRetry(TestCase):
@@ -738,12 +777,18 @@ class TestCaseRetry(TestCase):
 
         for packet in retries:
             if not hasattr(packet, "retry_token"):
-                raise TestFailed(f"Retry packet doesn't have a retry_token: {packet}")
+                raise TestFailed(
+                    f"Retry packet doesn't have a retry_token: {packet}",
+                    ErrorCode.RETRY_PACKET_WITHOUT_RETRY_TOKEN,
+                )
 
             tokens += [packet.retry_token.replace(":", "")]
 
         if len(tokens) == 0:
-            raise TestFailed("Didn't find any Retry packets.")
+            raise TestFailed(
+                "Didn't find any Retry packets.",
+                ErrorCode.NO_RETRY_PACKET,
+            )
 
         # check that an Initial packet uses a token sent in the Retry packet(s)
         highest_pn_before_retry = -1
@@ -758,7 +803,8 @@ class TestCaseRetry(TestCase):
 
             if packet_number <= highest_pn_before_retry:
                 raise TestFailed(
-                    f"Client reset the packet number. Check failed for PN {packet_number}"
+                    f"Client reset the packet number. Check failed for PN {packet_number}",
+                    ErrorCode.PACKET_NUMBER_RESETTED,
                 )
 
             token = packet.token.replace(":", "")
@@ -768,7 +814,10 @@ class TestCaseRetry(TestCase):
 
                 return True
 
-        raise TestFailed("Didn't find any Initial packet using a Retry token.")
+        raise TestFailed(
+            "Didn't find any Initial packet using a Retry token.",
+            ErrorCode.NO_RETRY_PACKET_WITH_RETRY_TOKEN,
+        )
 
     def check(self):
         self._check_traces()
@@ -817,17 +866,20 @@ class TestCaseResumption(TestCase):
             elif packet.scid == cids[len(cids) - 1]:  # second handshake
                 if hasattr(packet, "tls_handshake_certificates_length"):
                     raise TestFailed(
-                        "Server sent a Certificate message in the second handshake."
+                        "Server sent a Certificate message in the second handshake.",
+                        ErrorCode.CERT_MESSAGE_IN_SECOND_HANDSHAKE,
                     )
 
             else:
                 raise TestFailed(
-                    "Found handshake packet that neither belongs to the first nor the second handshake."
+                    "Found handshake packet that neither belongs to the first nor the second handshake.",
+                    ErrorCode.DANGLING_HANDSHAKE_PACKET,
                 )
 
         if not first_handshake_has_cert:
             raise TestFailed(
-                "Didn't find a Certificate message in the first handshake. That's weird."
+                "Didn't find a Certificate message in the first handshake. That's weird.",
+                ErrorCode.NO_CERT_MESSAGE_IN_FIRST_HANDSHAKE,
             )
 
         self._check_version_and_files()
@@ -874,10 +926,16 @@ class TestCaseZeroRTT(TestCase):
         LOGGER.debug("1-RTT size: %d", one_rtt_size)
 
         if zero_rtt_size == 0:
-            raise TestFailed("Client didn't send any 0-RTT data.")
+            raise TestFailed(
+                "Client didn't send any 0-RTT data.",
+                ErrorCode.NO_0RTT_DATA,
+            )
 
         if one_rtt_size > 0.5 * self.FILENAMELEN * self.NUM_FILES:
-            raise TestFailed("Client sent too much data in 1-RTT packets.")
+            raise TestFailed(
+                "Client sent too much data in 1-RTT packets.",
+                ErrorCode.TOO_MUCH_1RTT_DATA,
+            )
 
 
 class TestCaseHTTP3(TestCase):
@@ -980,6 +1038,7 @@ class TestCaseAmplificationLimit(TestCase):
             raise TestFailed(
                 f"Server sent too little Handshake CRYPTO data ({max_handshake_offset} bytes)."
                 " Not using the provided cert chain?",
+                ErrorCode.TOO_LITTLE_HANDSHAKE_CRYPTO_DATA,
             )
 
         LOGGER.debug(
@@ -991,19 +1050,25 @@ class TestCaseAmplificationLimit(TestCase):
         allowed_with_tolerance = 0
         client_sent, server_sent = 0, 0  # only for debug messages
         failed = True
-        log_output = []
+        log_output = list[str]()
 
         for packet in self.server_trace.get_raw_packets():
             direction = self.server_trace.get_direction(packet)
             packet_type = get_packet_type(packet)
 
             if packet_type == PacketType.VERSIONNEGOTIATION:
-                raise TestFailed("Didn't expect a Version Negotiation packet.")
+                raise TestFailed(
+                    "Didn't expect a Version Negotiation packet.",
+                    ErrorCode.UNEXPECTED_VERSION_NEGOTIATION_PACKET,
+                )
 
             packet_size = int(packet.udp.length) - 8  # subtract the UDP header length
 
             if packet_type == PacketType.INVALID:
-                raise TestFailed("Couldn't determine packet type.")
+                raise TestFailed(
+                    "Couldn't determine packet type.",
+                    ErrorCode.INVALID_PACKET_TYPE,
+                )
 
             if direction == Direction.FROM_CLIENT:
                 if packet_type is PacketType.HANDSHAKE:
@@ -1036,10 +1101,13 @@ class TestCaseAmplificationLimit(TestCase):
                 allowed_with_tolerance -= packet_size
                 allowed -= packet_size
             else:
-                raise TestFailed("Couldn't determine sender of packet.")
+                raise TestFailed(
+                    "Couldn't determine sender of packet.",
+                    ErrorCode.UNKNOWN_SENDER,
+                )
 
         if failed:
-            raise TestFailed("\n".join(log_output))
+            raise TestFailed("\n".join(log_output), ErrorCode.AMPLIFICATION_ERROR)
         else:
             for msg in log_output:
                 LOGGER.debug(msg)
@@ -1134,7 +1202,8 @@ class TestCaseKeyUpdate(TestCaseHandshake):
                 server[int(packet.key_phase)] += 1
         except Exception as exc:
             raise TestFailed(
-                "Failed to read key phase bits. Potentially incorrect SSLKEYLOG?"
+                "Failed to read key phase bits. Potentially incorrect SSLKEYLOG?",
+                ErrorCode.CRYPTO_ERROR,
             ) from exc
 
         succeeded = client[1] * server[1] > 0
@@ -1159,7 +1228,8 @@ class TestCaseKeyUpdate(TestCaseHandshake):
 
         if not succeeded:
             raise TestFailed(
-                "Expected to see packets sent with key phase 1 from both client and server."
+                "Expected to see packets sent with key phase 1 from both client and server.",
+                ErrorCode.CRYPTO_ERROR,
             )
 
 
@@ -1418,7 +1488,7 @@ class TestCaseECN(TestCaseHandshake):
         ):
             return
 
-        raise TestFailed("\n".join(msgs))
+        raise TestFailed("\n".join(msgs), ErrorCode.ECN_ERROR)
 
 
 class TestCasePortRebinding(TestCaseTransfer):
@@ -1477,7 +1547,8 @@ class TestCasePortRebinding(TestCaseTransfer):
 
         if len(ports) <= 1:
             raise TestFailed(
-                "Server saw only a single client port in use; test broken?"
+                "Server saw only a single client port in use; test broken?",
+                ErrorCode.UNKNOWN_ERROR,
             )
 
         last = None
@@ -1506,6 +1577,7 @@ class TestCasePortRebinding(TestCaseTransfer):
                         f"First server packet to new client destination {cur} did not contain"
                         f" a PATH_CHALLENGE frame.\n"
                         f"{p['quic']}",
+                        ErrorCode.MISSING_PATH_CHALLENGE_FRAME,
                     )
 
         tr_client = self.client_trace._get_packets(
@@ -1524,6 +1596,7 @@ class TestCasePortRebinding(TestCaseTransfer):
             raise TestFailed(
                 f"Saw {len(challenges)} migrations, "
                 f"but only {num_migrations} unique PATH_CHALLENGE frames",
+                ErrorCode.TOO_FEW_PATH_CHALLENGE_FRAMES,
             )
 
         responses = list(
@@ -1537,7 +1610,10 @@ class TestCasePortRebinding(TestCaseTransfer):
         unresponded = [c for c in challenges if c not in responses]
 
         if unresponded:
-            raise TestFailed(f"PATH_CHALLENGE without a PATH_RESPONSE: {unresponded}")
+            raise TestFailed(
+                f"PATH_CHALLENGE without a PATH_RESPONSE: {unresponded}",
+                ErrorCode.MISSING_PATH_RESPONSE,
+            )
 
 
 class TestCaseAddressRebinding(TestCasePortRebinding):
@@ -1587,7 +1663,8 @@ class TestCaseAddressRebinding(TestCasePortRebinding):
 
         if len(ips) <= 1:
             raise TestFailed(
-                "Server saw only a single client IP address in use; test broken?"
+                "Server saw only a single client IP address in use; test broken?",
+                ErrorCode.UNKNOWN_ERROR,
             )
 
         super(TestCaseAddressRebinding, self).check()
@@ -1634,7 +1711,10 @@ class TestCaseIPv6(TestCaseTransfer):
         )
 
         if tr_server:
-            raise TestFailed(f"Packet trace contains {len(tr_server)} IPv4 packets.")
+            raise TestFailed(
+                f"Packet trace contains {len(tr_server)} IPv4 packets.",
+                ErrorCode.IPV4_PACKETS_IN_TRACE,
+            )
 
 
 class TestCaseConnectionMigration(TestCaseAddressRebinding):
@@ -1706,7 +1786,8 @@ class TestCaseConnectionMigration(TestCaseAddressRebinding):
                     raise TestFailed(
                         f"First client packet during active migration to {cur}"
                         f" used previous DCID {dcid}.\n"
-                        f"{p['quic']}"
+                        f"{p['quic']}",
+                        ErrorCode.REUSING_OLD_DCID,
                     )
 
                 dcid = getattr(p["quic"], "dcid")
@@ -1770,7 +1851,10 @@ class MeasurementGoodput(Measurement):
         time: timedelta = last - first
 
         if not time:
-            raise TestFailed("No time difference between first an last packet.")
+            raise TestFailed(
+                "No time difference between first an last packet.",
+                ErrorCode.NO_TIME_DIFFERENCE,
+            )
 
         time_ms = time.total_seconds() * 1000
         goodput_kbps = (8 * self.FILESIZE) / time_ms

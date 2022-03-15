@@ -10,20 +10,18 @@ from dataclasses import dataclass
 from datetime import datetime, time
 from itertools import chain
 from pathlib import Path
-from typing import Iterable, Optional, Type, Union
+from typing import Optional, Type, Union
 
-import prettytable  # type: ignore
 from termcolor import colored
 
 import testcases
 from deployment import Deployment
 from enums import ImplementationRole, TestResult
-from exceptions import ConflictError, TestFailed, TestUnsupported
+from exceptions import ConflictError, ErrorCode, TestFailed, TestUnsupported
 from implementations import IMPLEMENTATIONS, Implementation
-from result_parser import Result, TestResultInfo
+from result_parser import Result
 from testcases import Measurement, TestCase
 from utils import CONSOLE_LOG_HANDLER, LOGGER, LogFileFormatter, sleep_between
-
 
 UNSUPPORTED_EXIT_CODE = 127
 
@@ -230,7 +228,7 @@ class InteropRunner:
         client: str,
         log_dir_prefix: Optional[str],
         test: Type[testcases.TestCase],
-    ) -> tuple[TestResult, Optional[float]]:
+    ) -> tuple[TestResult, Optional[float], Optional[ErrorCode]]:
         """Run a test case or a single measurement iteration."""
         start_time = datetime.now()
         log_dir: Path = self._result.log_dir.path / f"{server}_{client}" / test.name
@@ -296,6 +294,7 @@ class InteropRunner:
         LOGGER.debug("Requests: %s", reqs)
 
         status = TestResult.FAILED
+        error_code = ErrorCode.UNKNOWN_ERROR
 
         exec_result = self._deployment.run_testcase(
             log_path=log_dir,
@@ -312,25 +311,31 @@ class InteropRunner:
 
         if exec_result.timed_out:
             LOGGER.debug("Test failed: took longer than %ds.", testcase.timeout)
+            error_code = ErrorCode.TIMEOUT
         else:
             if any(
                 exit_code == UNSUPPORTED_EXIT_CODE
                 for exit_code in exec_result.exit_codes.values()
             ):
                 status = TestResult.UNSUPPORTED
+                error_code = ErrorCode.UNSUPPORTED_TEST_CASE
             elif exec_result.exit_codes["client"] == 0:
                 try:
                     testcase.check()
                     status = TestResult.SUCCEEDED
+                    error_code = None
                 except TestUnsupported as exc:
                     LOGGER.warning(exc)
                     status = TestResult.UNSUPPORTED
+                    error_code = ErrorCode.UNSUPPORTED_TEST_CASE
                 except TestFailed as exc:
                     LOGGER.warning(exc)
                     status = TestResult.FAILED
+                    error_code = exc.error_code
                 except FileNotFoundError as err:
                     LOGGER.error("testcase.check() threw FileNotFoundError: %s", err)
                     status = TestResult.FAILED
+                    error_code = ErrorCode.UNKNOWN_ERROR
 
         # save logs
         LOGGER.removeHandler(log_handler)
@@ -369,7 +374,7 @@ class InteropRunner:
             f" ({value})" if value else "",
         )
 
-        return status, value
+        return status, value, error_code
 
     @property
     def progress(self) -> int:
@@ -577,7 +582,7 @@ class InteropRunner:
                 log_dir_prefix = None
 
             # run test
-            result, value = self._run_test(
+            result, value, error_code = self._run_test(
                 server=scheduled_test.server_name,
                 client=scheduled_test.client_name,
                 log_dir_prefix=log_dir_prefix,
@@ -626,6 +631,7 @@ class InteropRunner:
                     test_abbr=scheduled_test.test.abbreviation,
                     test_result=result,
                     update_failed=self._retry_failed,
+                    error_code=error_code,
                 )
 
             # save results after each run

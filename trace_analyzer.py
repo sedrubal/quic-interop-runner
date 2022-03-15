@@ -7,7 +7,7 @@ from typing import List, Optional
 import pyshark
 
 from conf import CONFIG
-from exceptions import TestFailed
+from exceptions import ErrorCode, TestFailed
 from utils import LOGGER
 
 #  IP4_CLIENT = "193.167.0.100"
@@ -98,7 +98,7 @@ class TraceAnalyzer:
             subprocess.check_output(cmd, text=True, stderr=subprocess.PIPE)
         except subprocess.CalledProcessError as err:
             msg = err.stderr.split(":", 1)[1].strip()
-            raise TestFailed(msg) from err
+            raise TestFailed(msg, ErrorCode.BROKEN_PCAP) from err
 
     def get_direction(self, packet) -> Direction:
         """Return the direction of a packet."""

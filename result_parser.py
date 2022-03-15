@@ -20,7 +20,7 @@ from dateutil.parser import parse as parse_date
 from termcolor import colored
 
 from enums import ImplementationRole, TestResult
-from exceptions import ConflictError
+from exceptions import ConflictError, ErrorCode
 from implementations import IMPLEMENTATIONS, Implementation
 from result_json_types import (
     JSONMeasurementDescr,
@@ -90,6 +90,7 @@ class _ResultInfoMixin(ABC):
     server: Implementation
     client: Implementation
     test: Union[TestDescription, MeasurementDescription]
+    error_code: Optional[ErrorCode]
     _base_log_dir: UrlOrPath
 
     @property
@@ -127,6 +128,7 @@ class TestResultInfo(_ResultInfoMixin):
         return JSONTestResult(
             abbr=self.test.abbr,
             result=self.result.value if self.result else None,
+            error_code=self.error_code.value if self.error_code else None,
         )
 
 
@@ -208,6 +210,7 @@ class MeasurementResultInfo(_ResultInfoMixin):
             result=self.result.value if self.result else None,
             details=self.details,
             values=self.values,
+            error_code=self.error_code.value if self.error_code else None,
         )
 
     @property
@@ -387,11 +390,14 @@ class Result:
                         if not test["result"]:
                             continue
 
+                        error_code = test.get("error_code")
+
                         self.add_test_result(
                             server=server_name,
                             client=client_name,
                             test_abbr=test["abbr"],
                             test_result=TestResult(test["result"]),
+                            error_code=ErrorCode(error_code) if error_code else None,
                         )
                 else:
                     LOGGER.warning(
@@ -407,6 +413,7 @@ class Result:
                 if index < len(raw_data["measurements"]):
                     for measurement in raw_data["measurements"][index]:
                         result = measurement["result"]
+                        error_code = measurement.get("error_code")
 
                         self.add_measurement_result(
                             server=server_name,
@@ -415,6 +422,7 @@ class Result:
                             meas_result=TestResult(result) if result else None,
                             details=measurement["details"],
                             values=measurement.get("values") or list[float](),
+                            error_code=ErrorCode(error_code) if error_code else None,
                         )
                 else:
                     LOGGER.warning(
@@ -790,6 +798,7 @@ class Result:
         client: Union[str, Implementation],
         test_abbr: str,
         test_result: Optional[TestResult],
+        error_code: Optional[ErrorCode],
         update_failed=False,
     ):
         server_impl = (
@@ -815,6 +824,7 @@ class Result:
             client=client_impl,
             test=self.test_descriptions[test_abbr],
             _base_log_dir=self.log_dir,
+            error_code=error_code,
         )
 
         if test_abbr in self.test_results[server_impl.name][client_impl.name].keys():
@@ -964,6 +974,7 @@ class Result:
         meas_result: Optional[TestResult],
         details: str,
         values: list[float],
+        error_code: Optional[ErrorCode],
         update_failed=False,
     ):
         server_impl = (
@@ -993,6 +1004,7 @@ class Result:
             _base_log_dir=self.log_dir,
             details=details,
             values=values,
+            error_code=error_code,
         )
 
         if meas_abbr in self._meas_results[server_impl.name][client_impl.name].keys():
@@ -1038,6 +1050,7 @@ class Result:
         num_repetitions: int,
         values_unit: str,
         update_failed=False,
+        error_code: Optional[ErrorCode] = None,
     ):
         server_impl = (
             server if isinstance(server, Implementation) else self.servers[server]
@@ -1108,6 +1121,7 @@ class Result:
                 _base_log_dir=self.log_dir,
                 details=details,
                 values=values,
+                error_code=error_code,
             )
         else:
             meas_result_info = MeasurementResultInfo(
@@ -1118,6 +1132,7 @@ class Result:
                 _base_log_dir=self.log_dir,
                 details="",
                 values=values,
+                error_code=error_code,
             )
 
         self._meas_results[server_impl.name][client_impl.name][
@@ -1552,11 +1567,12 @@ class Result:
                     tests_for_combi2.items(),
                 ):
                     ret.add_test_result(
-                        server_name,
-                        client_name,
-                        test_abbr,
-                        test.result,
-                        update_failed,
+                        server=server_name,
+                        client=client_name,
+                        test_abbr=test_abbr,
+                        test_result=test.result,
+                        error_code=test.error_code,
+                        update_failed=update_failed,
                     )
 
                 # merge measurements
@@ -1585,6 +1601,7 @@ class Result:
                         meas_result=meas.result,
                         details=meas.details,
                         values=meas.values,
+                        error_code=meas.error_code,
                         update_failed=update_failed,
                     )
 

@@ -29,6 +29,7 @@ class JSONTestResult(TypedDict):
 
     abbr: str
     result: RawTestResultResult
+    error_code: Optional[str]
 
 
 class JSONMeasurementResult(TypedDict):
@@ -38,6 +39,7 @@ class JSONMeasurementResult(TypedDict):
     result: RawTestResultResult
     details: str
     values: Optional[list[float]]
+    error_code: Optional[str]
 
 
 class JSONImageMetadata(TypedDict):
