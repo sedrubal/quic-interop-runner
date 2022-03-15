@@ -1060,7 +1060,7 @@ class PlotCli:
             left=min(0, *(r.min_timestamp for r in self._analyze_results)),
             right=max(r.max_timestamp for r in self._analyze_results),
         )
-        ax.set_ylim(bottom=min(0, min_packet_number), top=max_packet_number)
+        ax.set_ylim(bottom=min_packet_number, top=max_packet_number)
 
         # plot shadow traces (request and response separated)
 
