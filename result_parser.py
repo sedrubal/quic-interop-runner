@@ -138,7 +138,7 @@ class MeasurementResultInfo(_ResultInfoMixin):
 
     test: MeasurementDescription
     details: str
-    values: list[float]
+    values: list[Optional[float]]
 
     @cached_property
     def repetition_log_dirs(self) -> list[Path]:
@@ -379,6 +379,8 @@ class Result:
         self._test_descriptions = test_descriptions
 
         # load test and measurement results
+        self._test_results = TestResults()
+        self._meas_results = MeasurementResults()
 
         for server_index, server_name in enumerate(raw_data["servers"]):
             for client_index, client_name in enumerate(raw_data["clients"]):
@@ -421,7 +423,7 @@ class Result:
                             meas_abbr=measurement["abbr"],
                             meas_result=TestResult(result) if result else None,
                             details=measurement["details"],
-                            values=measurement.get("values") or list[float](),
+                            values=measurement.get("values") or list[Optional[float]](),
                             error_code=ErrorCode(error_code) if error_code else None,
                         )
                 else:
@@ -973,7 +975,7 @@ class Result:
         meas_abbr: str,
         meas_result: Optional[TestResult],
         details: str,
-        values: list[float],
+        values: list[Optional[float]],
         error_code: Optional[ErrorCode],
         update_failed=False,
     ):
@@ -1049,8 +1051,8 @@ class Result:
         value: Optional[float],
         num_repetitions: int,
         values_unit: str,
-        update_failed=False,
         error_code: Optional[ErrorCode] = None,
+        update_failed=False,
     ):
         server_impl = (
             server if isinstance(server, Implementation) else self.servers[server]
@@ -1075,7 +1077,7 @@ class Result:
             meas_abbr
             not in self._meas_results[server_impl.name][client_impl.name].keys()
         ):
-            values = []
+            values = list[Optional[float]]()
         else:
             existing_meas_result_info = self._meas_results[server_impl.name][
                 client_impl.name
@@ -1095,20 +1097,28 @@ class Result:
                     )
 
             if len(values) >= num_repetitions:
-                raise ConflictError(
-                    f"Too many values for measurement {meas_abbr} after adding the new one: "
-                    ", ".join(map(str, values))
-                )
+                if (
+                    update_failed
+                    and existing_meas_result_info.result == TestResult.FAILED
+                    and None in values
+                ):
+                    # overwrite failed measurements:
+                    values = list[Optional[float]]()
+                else:
+                    raise ConflictError(
+                        f"Too many values for measurement {meas_abbr} after adding the new one: "
+                        ", ".join(map(str, values))
+                    )
 
-        if value is not None:
-            values.append(value)
+        values.append(value)
 
         if len(values) == num_repetitions or meas_result != TestResult.SUCCEEDED:
             # measurement is completed
 
             if meas_result == TestResult.SUCCEEDED:
-                mean = statistics.mean(values)
-                stdev = statistics.stdev(values)
+                assert all(isinstance(val, float) for val in values)
+                mean = statistics.mean(cast(list[float], values))
+                stdev = statistics.stdev(cast(list[float], values))
                 details = f"{mean:.0f} (± {stdev:.0f}) {values_unit}"
             else:
                 details = ""
@@ -1201,7 +1211,9 @@ class Result:
         """Return the measurement results as data frame."""
         meas_descs = sorted(self.measurement_descriptions.values())
 
-        data = list[tuple[str, str, str, int, Union[int, float], float]]()
+        data = list[
+            tuple[str, str, str, int, Union[int, float, None], Optional[float]]
+        ]()
         assert all(meas_desc.theoretical_max_value for meas_desc in meas_descs)
         for meas_desc in meas_descs:
             # assert that the result.json file format is new enough to contain theoretical_max_value, repetitions and values
@@ -1222,16 +1234,18 @@ class Result:
                             meas.client.name,
                             meas_desc.name,
                             iteration,
-                            value * unit,
-                            value / meas_desc.theoretical_max_value,
+                            value * unit if value else 0.0,
+                            value / meas_desc.theoretical_max_value if value else 0.0,
                         )
                     )
 
-                if not meas.succeeded and include_failed:
-                    # append goodput=0 & efficiency=0 for failed run
-                    # (which is the last iteration and there is not value recorded)
+                if (
+                    not meas.succeeded
+                    and include_failed
+                    and len(meas.values) < meas_desc.repetitions
+                ):
+                    # add 0 (for the failed experiment), if measurement failed and failures are not counted in values
                     failed_iteration = len(meas.values)
-                    assert failed_iteration < meas_desc.repetitions
                     data.append(
                         (
                             meas.server.name,

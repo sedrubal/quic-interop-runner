@@ -53,6 +53,7 @@ class InteropRunner:
         retry_failed: bool = False,
         shuffle: bool = False,
         pause_between: Optional[tuple[time, time]] = None,
+        skip_on_failure: bool = False,
     ):
         if not debug:
             CONSOLE_LOG_HANDLER.setLevel(logging.INFO)
@@ -72,6 +73,7 @@ class InteropRunner:
         self._retry_failed = retry_failed
         self._shuffle = shuffle
         self._pause_between = pause_between
+        self._skip_on_failure = skip_on_failure
 
         self._deployment = Deployment()
 
@@ -354,12 +356,14 @@ class InteropRunner:
                     breakpoint()
 
         testcase.cleanup()
-        LOGGER.debug("Test took %ss", (datetime.now() - start_time).total_seconds())
+        LOGGER.debug("Test took %s s", (datetime.now() - start_time).total_seconds())
 
         # measurements also have a value
 
         if isinstance(testcase, Measurement):
             value: Optional[float] = testcase.result
+            if status == TestResult.SUCCEEDED:
+                assert value
         else:
             value = None
 
@@ -606,9 +610,10 @@ class InteropRunner:
                     num_repetitions=scheduled_test.test.repetitions,
                     values_unit=scheduled_test.test.unit,
                     update_failed=self._retry_failed,
+                    error_code=error_code,
                 )
 
-                if result != TestResult.SUCCEEDED:
+                if self._skip_on_failure and result != TestResult.SUCCEEDED:
                     # TODO should we really unschedule the measurements?
                     # what if a timeout happens only once?
                     # unschedule all further measurements of same type with same implementations

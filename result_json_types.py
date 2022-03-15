@@ -38,7 +38,7 @@ class JSONMeasurementResult(TypedDict):
     abbr: str
     result: RawTestResultResult
     details: str
-    values: Optional[list[float]]
+    values: Optional[list[Optional[float]]]
     error_code: Optional[str]
 
 

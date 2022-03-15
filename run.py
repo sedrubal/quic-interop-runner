@@ -106,6 +106,11 @@ def parse_args():
         type=time_range,
         help="Pause between a specific time of the day (for real links). Format: HH:MM-HH:MM.",
     )
+    parser.add_argument(
+        "--skip-on-failure",
+        action="store_true",
+        help="Skip further measurements of a implementation tuple if one experiment in the measurement series failed.",
+    )
 
     return parser.parse_args()
 
@@ -182,6 +187,7 @@ def main():
         retry_failed=args.retry_failed,
         shuffle=args.shuffle,
         pause_between=args.pause_between,
+        skip_on_failure=args.skip_on_failure,
     ).run()
 
 
