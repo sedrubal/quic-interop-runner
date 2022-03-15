@@ -9,8 +9,8 @@ import pickle
 import subprocess
 import sys
 import typing
-from functools import cached_property
 from collections import defaultdict
+from functools import cached_property
 from pathlib import Path
 from typing import Any, Iterator, Optional, TypedDict
 
@@ -136,7 +136,7 @@ class Trace:
             override_prefs=override_prefs,
             # see https://github.com/marten-seemann/quic-interop-runner/pull/179/
             disable_protocol="http3",
-            decode_as={f"udp.port=={port}": "quic"},
+            # decode_as={f"udp.port=={port}": "quic"},
             tshark_path=CONFIG.tshark_bin,
         )
 
@@ -361,10 +361,10 @@ class Trace:
             if self._facts:
                 self._set_packet_direction(
                     packet,
-                    client_ip=self._facts["client_ip"],
-                    client_port=self._facts["client_port"],
-                    server_ip=self._facts["server_ip"],
-                    server_port=self._facts["server_port"],
+                    client_ip=str(self._facts["client_ip"]),
+                    client_port=int(self._facts["client_port"]),
+                    server_ip=str(self._facts["server_ip"]),
+                    server_port=int(self._facts["server_port"]),
                 )
 
             yield packet
@@ -518,15 +518,20 @@ class Trace:
         return self._response_stream_packets_retrans
 
     def _set_packet_direction(
-        self, packet: "Packet", client_ip, client_port, server_ip, server_port
+        self,
+        packet: "Packet",
+        client_ip: str,
+        client_port: int,
+        server_ip: str,
+        server_port: int,
     ):
         client_tuple = (client_ip, client_port)
         server_tuple = (server_ip, server_port)
 
-        src_port = packet.udp.srcport
-        dst_port = packet.udp.dstport
-        src_ip = packet.ip.src
-        dst_ip = packet.ip.dst
+        src_port = int(packet.udp.srcport)
+        dst_port = int(packet.udp.dstport)
+        src_ip = str(packet.ip.src)
+        dst_ip = str(packet.ip.dst)
 
         src_tuple = (src_ip, src_port)
         dst_tuple = (dst_ip, dst_port)
@@ -578,12 +583,12 @@ class Trace:
         first_packet = self.packets[0]
 
         # get client and server IP addresses and UDP ports
-        server_ip = first_packet.ip.dst
-        client_ip = first_packet.ip.src
+        server_ip = str(first_packet.ip.dst)
+        client_ip = str(first_packet.ip.src)
         self._facts["client_ip"] = client_ip
         self._facts["server_ip"] = server_ip
-        server_port = first_packet.udp.dstport
-        client_port = first_packet.udp.srcport
+        server_port = int(first_packet.udp.dstport)
+        client_port = int(first_packet.udp.srcport)
         self._facts["client_port"] = client_port
         self._facts["server_port"] = server_port
 
@@ -631,6 +636,13 @@ class Trace:
 
         if packets_with_wrong_direction:
             LOGGER.error("Ignoring packets with wrong direction:")
+            LOGGER.error(
+                "(client=%s:%d server=%s:%d)",
+                client_ip,
+                client_port,
+                server_ip,
+                server_port,
+            )
             num_wrong = 0
             for (src, dst), num in packets_with_wrong_direction.items():
                 LOGGER.error("src=%s dst=%s: %d", src, dst, num)

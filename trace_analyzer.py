@@ -79,8 +79,8 @@ class TraceAnalyzer:
             "-n",
             "-Y",
             "!quic && quic",
-            "-d",
-            "udp.port==443,quic",
+            # "-d",
+            # "udp.port==443,quic",
             "--disable-protocol",
             "http3",
             "-r",
@@ -163,7 +163,7 @@ class TraceAnalyzer:
             display_filter=display_filter,
             override_prefs=override_prefs,
             disable_protocol="http3",  # see https://github.com/marten-seemann/quic-interop-runner/pull/179/
-            decode_as={"udp.port==443": "quic"},
+            # decode_as={"udp.port==443": "quic"},
             tshark_path=CONFIG.tshark_bin,
         )
 
