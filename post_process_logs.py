@@ -287,6 +287,8 @@ class PostProcessor:
             uid = os.getuid()
             gid = os.getgid()
 
+            pathes = tuple(path for path in pathes if path.exists())
+
             def check_owner(path: Path):
                 owner = path.owner()
                 struct = pwd.getpwnam(owner)
