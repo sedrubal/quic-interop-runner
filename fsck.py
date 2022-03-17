@@ -152,9 +152,8 @@ class Fsck:
                             goodputs[0] in (None, "failed"),
                             f"In unsupported test cases, the first experiment must fail: {goodputs}",
                         )
-                        self._assert_eq(
-                            len(meas.values),
-                            0,
+                        self._assert(
+                            len(meas.values) == 0 or meas.values == [None],
                             f"Goodputs are available in result.json for unsupported tests: {meas.values}",
                         )
                     elif meas.result == TestResult.FAILED:
@@ -175,7 +174,7 @@ class Fsck:
                             # none is not in list -> last experiment failed?
                             pass
                         self._assert(
-                            goodputs[-1] == "failed",
+                            any(gp == "failed" for gp in goodputs),
                             "Last log did not say failed but testcase is failed",
                         )
                     else:
