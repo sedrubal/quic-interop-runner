@@ -309,13 +309,15 @@ class PlotCli:
         self.print_trace_table()
 
         self._analyze_results = list[TraceAnalyzeResult]()
+        self._analyzed = False
+        self._analyze_error: Optional[ParsingError] = None
         self._median_duration_index: int = 0
         self._add_ideal = add_ideal
         self._no_shadow = no_shadow
 
     def analyze_traces(self):
         """Analyze the traces."""
-        if self._analyze_results:
+        if self._analyzed:
             # LOGGER.debug("already analyzed")
             return
 
@@ -344,7 +346,10 @@ class PlotCli:
             # free memory
             del trace
 
+        self._analyzed = True
+
         if not self._analyze_results and last_error:
+            self._analyze_error = last_error
             LOGGER.error("Every trace contains errors. We can't plot anything.")
             raise last_error
 
@@ -1583,6 +1588,10 @@ class PlotCli:
         # num_traces = 1 if single else len(self.traces)
 
         self.analyze_traces()
+        assert self._analyzed
+        if not self._analyze_results:
+            assert self._analyze_error
+            raise self._analyze_error
 
         LOGGER.info("⚒ Plotting into a %s plot...", desc)
 
