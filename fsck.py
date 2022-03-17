@@ -56,7 +56,7 @@ class Fsck:
                 LOGGER.error(message)
                 raise AssertionError(message)
             elif not mute:
-                LOGGER.warn(message)
+                LOGGER.warning(message)
 
         return condition
 
