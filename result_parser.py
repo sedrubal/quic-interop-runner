@@ -1077,13 +1077,18 @@ class Result:
             not in self._meas_results[server_impl.name][client_impl.name].keys()
         ):
             values = list[Optional[float]]()
+            overall_result: Optional[TestResult] = None
         else:
             existing_meas_result_info = self._meas_results[server_impl.name][
                 client_impl.name
             ][meas_abbr]
             values = existing_meas_result_info.values
 
-            if existing_meas_result_info.result:
+            # continue, even if measurement is failed (one experiment has failed -> overall result is failed)
+            if (
+                existing_meas_result_info.result
+                and existing_meas_result_info.result != TestResult.FAILED
+            ):
                 if update_failed:
                     if existing_meas_result_info.result == TestResult.SUCCEEDED:
                         raise ConflictError(
@@ -1109,40 +1114,38 @@ class Result:
                         ", ".join(map(str, values))
                     )
 
+            overall_result = existing_meas_result_info.result
+
         values.append(value)
 
-        if len(values) == num_repetitions or meas_result != TestResult.SUCCEEDED:
-            # measurement is completed
+        for result in (TestResult.UNSUPPORTED, TestResult.FAILED, TestResult.SUCCEEDED):
+            if result in (overall_result, meas_result):
+                overall_result = result
+                break
 
-            if meas_result == TestResult.SUCCEEDED:
-                assert all(isinstance(val, float) for val in values)
-                mean = statistics.mean(cast(list[float], values))
-                stdev = statistics.stdev(cast(list[float], values))
-                details = f"{mean:.0f} (± {stdev:.0f}) {values_unit}"
-            else:
-                details = ""
+        add_result = (
+            len(values) == num_repetitions or overall_result != TestResult.SUCCEEDED
+        )
+        result_to_add = None if not add_result else overall_result
 
-            meas_result_info = MeasurementResultInfo(
-                result=meas_result,
-                server=server_impl,
-                client=client_impl,
-                test=meas_desc,
-                _base_log_dir=self.log_dir,
-                details=details,
-                values=values,
-                error_code=error_code,
-            )
+        if overall_result == TestResult.SUCCEEDED and add_result:
+            assert all(isinstance(val, float) for val in values)
+            mean = statistics.mean(cast(list[float], values))
+            stdev = statistics.stdev(cast(list[float], values))
+            details = f"{mean:.0f} (± {stdev:.0f}) {values_unit}"
         else:
-            meas_result_info = MeasurementResultInfo(
-                result=None,
-                server=server_impl,
-                client=client_impl,
-                test=meas_desc,
-                _base_log_dir=self.log_dir,
-                details="",
-                values=values,
-                error_code=error_code,
-            )
+            details = ""
+
+        meas_result_info = MeasurementResultInfo(
+            result=result_to_add,
+            server=server_impl,
+            client=client_impl,
+            test=meas_desc,
+            _base_log_dir=self.log_dir,
+            details=details,
+            values=values,
+            error_code=error_code,
+        )
 
         self._meas_results[server_impl.name][client_impl.name][
             meas_abbr
