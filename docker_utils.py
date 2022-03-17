@@ -242,6 +242,8 @@ def get_default_ips() -> dict[int, str]:
         if not addr_sets:
             continue
         client_addr = addr_sets.pop()["addr"]
+        # remove %<interface> from IPv6 Addresses:
+        client_addr = client_addr.split("%", 1)[0]
         found[family] = client_addr
 
     return found
