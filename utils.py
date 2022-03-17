@@ -531,7 +531,7 @@ class UrlOrPath:
             with self.path.open("r") as file:
                 yield from file.readlines()
         else:
-            breakpoint()
+            # breakpoint()
             response = requests.get(self.src, stream=True)
             response.raise_for_status()
             buf = ""

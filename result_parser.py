@@ -152,7 +152,6 @@ class MeasurementResultInfo(_ResultInfoMixin):
             )
         except FileNotFoundError as err:
             if self.result == TestResult.SUCCEEDED:
-                breakpoint()
                 raise err
             else:
                 return []
@@ -845,13 +844,13 @@ class Result:
 
                     return
                 else:
-                    breakpoint()
+                    # breakpoint()
                     raise ValueError(
                         f"Both results have a result for the test {test_abbr} "
                         f"for {server_impl.name}_{client_impl.name} and both succeeded."
                     )
             else:
-                breakpoint()
+                # breakpoint()
                 raise ValueError(
                     f"Both results have a result for the test {test_abbr}."
                     f"for {server_impl.name}_{client_impl.name}."
@@ -1022,17 +1021,17 @@ class Result:
                     ] = meas_result_info
                 elif meas_result != TestResult.SUCCEEDED:
                     # do not overwrite with a failed measurement:
-                    breakpoint()
+                    # breakpoint()
 
                     return
                 else:
-                    breakpoint()
+                    # breakpoint()
                     raise ValueError(
                         f"Both results have a result for the measurement {meas_abbr} "
                         f"for {server}_{client} and both succeeded."
                     )
             else:
-                breakpoint()
+                # breakpoint()
                 raise ValueError(
                     f"Both results have a result for the measurement {meas_abbr} "
                     f"for {server}_{client}."
