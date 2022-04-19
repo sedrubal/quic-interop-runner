@@ -37,6 +37,8 @@ from utils import (
 
 DEFAULT_MEAS_ORDER = ["G", "T", "SAT", "SATL", "AST", "EUT"]
 
+TIMEOUTS_CSV = Path("timeouts-paper-2022-03-15.csv")
+
 IMPL_CCAS = {
     "aioquic": {
         "cca": "NewReno",
@@ -62,7 +64,7 @@ IMPL_CCAS = {
             "(Copa2)",
             "(CCP)",
         ],
-        "cca": "CUBIC",
+        "cca": "BBR",
     },
     "neqo": {
         "supported ccas": ["CUBIC", "NewReno"],
@@ -106,14 +108,14 @@ CCA_PALETTE = {
 }
 
 
-HEATMAP_OMIT_SERVER_IMPLS = {"quicly"}
-HEATMAP_OMIT_CLIENT_IMPLS = {"chrome", "quicly"}
+OMIT_SERVER_IMPLS = {"haproxy", "quicly", "s2n-quic", "quinn"}
+OMIT_CLIENT_IMPLS = {"chrome", "quicly", "s2n-quic", "quinn"}
 
 
 def meas_tex_format(measurement: MeasurementDescription) -> str:
     keyword = measurement.abbr.lower()
 
-    return fr"\textsc{{\{keyword}/}}"
+    return rf"\textsc{{\{keyword}/}}"
 
 
 PGF_PREAMBLE = r"""
@@ -386,7 +388,7 @@ class PlotStatsCli:
 
     def format_percentage(self, value: Union[float, int], _pos=None) -> str:
         if self.tex_mode:
-            return fr"\SI{{{value * 100:.0f}}}{{\percent}}"
+            return rf"\SI{{{value * 100:.0f}}}{{\percent}}"
         else:
             return f"{value * 100:.0f} %"
 
@@ -404,7 +406,7 @@ class PlotStatsCli:
                 "Tbit/s": r"\terra\bit\per\second",
             }[unit]
 
-            return fr"\SI{{{value}}}{{{unit}}}"
+            return rf"\SI{{{value}}}{{{unit}}}"
         else:
             return formatted
 
@@ -449,6 +451,11 @@ class PlotStatsCli:
             for result in self.results
         ]
         df = pd.concat(dfs)
+
+        # remove ignored impls
+        df = df[~df.server.isin(OMIT_SERVER_IMPLS)]
+        df = df[~df.client.isin(OMIT_CLIENT_IMPLS)]
+
         df.reset_index(inplace=True, drop=True)
 
         return df
@@ -478,14 +485,14 @@ class PlotStatsCli:
                 x="measurement",
                 y="value",
                 data=df[["measurement", "value"]],
-                order=DEFAULT_MEAS_ORDER,
+                order=[meas.abbr for meas in self.measurements],
             )
             sns.boxplot(
                 ax=ax2,
                 x="measurement",
                 y="efficiency",
                 data=df[["measurement", "efficiency"]],
-                order=DEFAULT_MEAS_ORDER,
+                order=[meas.abbr for meas in self.measurements],
             )
             # ax.set_title(f"{self.meas_prop_name.title()} by Measurement")
             ax1.yaxis.set_major_formatter(self.format_data_rate)
@@ -876,7 +883,7 @@ class PlotStatsCli:
     def plot_heatmap(self, meas_abbr: str):
         measurement = [meas for meas in self.measurements if meas.abbr == meas_abbr][0]
         df = self.get_dataframe(default_include_failed=False)
-        df_timeouts = pd.read_csv("timeouts.csv")
+        df_timeouts = pd.read_csv(TIMEOUTS_CSV)
         self.set_theme()
 
         # use the min/max for all measurements as reference
@@ -897,12 +904,12 @@ class PlotStatsCli:
         x_labels = [
             impl
             for impl in sorted(self.results[-1].servers.keys())
-            if impl not in HEATMAP_OMIT_SERVER_IMPLS
+            if impl not in OMIT_SERVER_IMPLS
         ]
         y_labels = [
             impl
             for impl in reversed(sorted(self.results[-1].clients.keys()))
-            if impl not in HEATMAP_OMIT_CLIENT_IMPLS
+            if impl not in OMIT_CLIENT_IMPLS
         ]
         x_to_num = {name: i for i, name in enumerate(x_labels)}
         y_to_num = {name: i for i, name in enumerate(y_labels)}
@@ -1411,7 +1418,7 @@ class PlotStatsCli:
                 )
             )
             first_row.append(
-                fr"\multicolumn{{2}}{{{multi_col_cfg}}}{{\{measurement.abbr.lower()}/}}"
+                rf"\multicolumn{{2}}{{{multi_col_cfg}}}{{\{measurement.abbr.lower()}/}}"
             )
             df_for_meas = df[df.measurement == measurement.name]
             cols[measurement.abbr] = {
@@ -1421,7 +1428,7 @@ class PlotStatsCli:
             mins = df_for_meas.groupby(["server", "client"]).min().reset_index()
             perc_failed = (mins.value == 0).sum() * 100 / len(mins)
             perc_failed_row.append(
-                fr"\multicolumn{{2}}{{{multi_col_cfg}}}{{{perc_failed:.1f}\,\%}}"
+                rf"\multicolumn{{2}}{{{multi_col_cfg}}}{{{perc_failed:.1f}\,\%}}"
             )
 
         rows = []
@@ -1441,7 +1448,7 @@ class PlotStatsCli:
                 row.extend(
                     (
                         f"{val_stat / DataRate.MBPS:.3g}",
-                        fr"{eff_stat * 100:.1f}\,\%",
+                        rf"{eff_stat * 100:.1f}\,\%",
                     )
                 )
             rows.append(row)
@@ -1451,7 +1458,7 @@ class PlotStatsCli:
         max_last_row = max(map(len, perc_failed_row))
         max_col_len = max(max(map(len, row)) for row in rows)
         first_row_str = " & ".join(col.ljust(max_first_row) for col in first_row)
-        latex_table = fr"""
+        latex_table = rf"""
 \begin{{tabular}}{{%
             {columns_cfg_str}
         }}
@@ -1461,7 +1468,7 @@ class PlotStatsCli:
 """
         for row in rows:
             row_str = " & ".join(col.ljust(max_col_len) for col in row)
-            latex_table += fr"        {row_str} \\" + "\n"
+            latex_table += rf"        {row_str} \\" + "\n"
 
         perc_failed_str = " & ".join(col.ljust(max_last_row) for col in perc_failed_row)
         latex_table += rf"""

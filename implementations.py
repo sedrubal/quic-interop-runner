@@ -131,8 +131,15 @@ class Implementation:
     def unique_marker(self) -> str:
         """Return a unique, well distinguishable matplotlib marker."""
 
-        markers = sns._core.unique_markers(len(IMPLEMENTATIONS))
-        index = sorted(IMPLEMENTATIONS.keys()).index(self.name)
+        known_impls = sorted(IMPLEMENTATIONS.keys())
+        if self.name not in known_impls:
+            LOGGER.warning(
+                "Implementation %s not in inventory. Marker might not be unique.",
+                self.name,
+            )
+            known_impls.append(self.name)
+        index = known_impls.index(self.name)
+        markers = sns._core.unique_markers(len(known_impls))
         return markers[index]
 
     def __str__(self):

@@ -13,34 +13,34 @@ function run {
     poetry run "$@"
 }
 
+FORMAT="pgf"
+
 run ./plot_pairplot.py \
     --no-interactive \
     "--img-path=${IMG_PATH}" \
     "--img-format=${FORMAT}" \
-    "${RESULT_SIM}" \
-    "${RESULT_REAL}"
+    "${RESULT}"
 
-run_muted ./long_term_evaluation.py \
-    --testcase=G \
-    "--output=${IMG_PATH}/long_term_evaluation_G.${FORMAT}" \
-    "${QIR_RESULTS}/logs"
+# run_muted ./long_term_evaluation.py \
+#     --testcase=G \
+#     "--output=${IMG_PATH}/long_term_evaluation_G.${FORMAT}" \
+#     "${QIR_RESULTS}/logs"
 
-run_muted ./compare_results.py \
-    --plot \
-    "--output=${IMG_PATH}/compare_G_orig_own.${FORMAT}" \
-    "--label1=Marten Seemann" \
-    "--label2=Local" \
-    "${RESULT_ORIG}" \
-    "${RESULT_SIM}" \
-    G
+# run_muted ./compare_results.py \
+#     --plot \
+#     "--output=${IMG_PATH}/compare_G_orig_own.${FORMAT}" \
+#     "--label1=Marten Seemann" \
+#     "--label2=Local" \
+#     "${RESULT}" \
+#     "${RESULT_ORIG}" \
+#     G
 
 run ./plot_stats.py \
     --no-interactive \
     "--img-path=${IMG_PATH}" \
     "--img-format=${FORMAT}" \
     --plot-type=boxplot \
-    "${RESULT_SIM}" \
-    "${RESULT_REAL}"
+    "${RESULT}"
 
 run ./plot_stats.py \
     --no-interactive \
@@ -49,16 +49,15 @@ run ./plot_stats.py \
     --plot-type ccas \
     --measurement SAT SATL \
     -- \
-    "${RESULT_SIM}"
+    "${RESULT}"
 run ./plot_stats.py \
     --no-interactive \
     "--img-path=${IMG_PATH}" \
     "--img-format=${FORMAT}" \
     --plot-type ccas \
-    --measurement G SAT \
+    --measurement T SAT \
     -- \
-    "${RESULT_SIM}"
-# "${RESULT_REAL}"
+    "${RESULT}"
 
 run ./plot_stats.py \
     --no-interactive \
@@ -67,8 +66,7 @@ run ./plot_stats.py \
     --plot-type violins \
     --measurement "${MEASUREMENTS[@]}" \
     -- \
-    "${RESULT_SIM}" \
-    "${RESULT_REAL}"
+    "${RESULT}"
 
 for prop in "goodput" "efficiency"; do
 
@@ -80,8 +78,7 @@ for prop in "goodput" "efficiency"; do
         "--prop=${prop}" \
         --measurement "${MEASUREMENTS[@]}" \
         -- \
-        "${RESULT_SIM}" \
-        "${RESULT_REAL}"
+        "${RESULT}"
 
     run ./plot_stats.py \
         --no-interactive \
@@ -89,8 +86,7 @@ for prop in "goodput" "efficiency"; do
         "--img-path=${IMG_PATH}" \
         "--img-format=${FORMAT}" \
         --plot-type=kdes \
-        "${RESULT_SIM}" \
-        "${RESULT_REAL}"
+        "${RESULT}"
 
     for include_failed in "true" "false"; do
         run ./plot_stats.py \
@@ -100,8 +96,7 @@ for prop in "goodput" "efficiency"; do
             "--img-format=${FORMAT}" \
             "--include-failed=${include_failed}" \
             --plot-type=cdf \
-            "${RESULT_SIM}" \
-            "${RESULT_REAL}"
+            "${RESULT}"
     done
 
     for measurement in "${MEASUREMENTS[@]}"; do
@@ -112,17 +107,15 @@ for prop in "goodput" "efficiency"; do
             "--img-path=${IMG_PATH}" \
             "--img-format=${FORMAT}" \
             --plot-type=heatmap \
-            "${RESULT_SIM}" \
-            "${RESULT_REAL}"
-        run ./plot_stats.py \
-            --no-interactive \
-            "--prop=${prop}" \
-            "--measurement=${measurement}" \
-            "--img-path=${IMG_PATH}" \
-            "--img-format=${FORMAT}" \
-            --plot-type=ridgeline \
-            "${RESULT_SIM}" \
-            "${RESULT_REAL}"
+            "${RESULT}"
+        # run ./plot_stats.py \
+        #     --no-interactive \
+        #     "--prop=${prop}" \
+        #     "--measurement=${measurement}" \
+        #     "--img-path=${IMG_PATH}" \
+        #     "--img-format=${FORMAT}" \
+        #     --plot-type=ridgeline \
+        #     "${RESULT}"
     done
 done
 
