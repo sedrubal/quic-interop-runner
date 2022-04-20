@@ -16,6 +16,9 @@ from utils import LOGGER
 #  IP6_SERVER = "fd00:cafe:cafe:100::100"
 
 
+QUIC_V2_DRAFT = hex(0x709A50C4)
+
+
 class Direction(Enum):
     ALL = 0
     FROM_CLIENT = 1
@@ -41,12 +44,26 @@ WIRESHARK_PACKET_TYPES = {
 }
 
 
+WIRESHARK_PACKET_TYPES_V2_DRAFT = {
+    PacketType.INITIAL: "1",
+    PacketType.ZERORTT: "2",
+    PacketType.HANDSHAKE: "3",
+    PacketType.RETRY: "0",
+}
+
+
 def get_packet_type(p) -> PacketType:
     if p.quic.header_form == "0":
         return PacketType.ONERTT
 
     if p.quic.version == "0x00000000":
         return PacketType.VERSIONNEGOTIATION
+
+    if p.quic.version == QUIC_V2_DRAFT:
+        for t, num in WIRESHARK_PACKET_TYPES_V2_DRAFT.items():
+            if p.quic.long_packet_type_v2 == num:
+                return t
+        return PacketType.INVALID
 
     for t, num in WIRESHARK_PACKET_TYPES.items():
         if p.quic.long_packet_type == num:
@@ -205,8 +222,10 @@ class TraceAnalyzer:
             self._get_direction_filter(direction) + "quic.header_form==0"
         ):
             for layer in packet.layers:
-                if layer.layer_name == "quic" and not hasattr(
-                    layer, "long_packet_type"
+                if (
+                    layer.layer_name == "quic"
+                    and not hasattr(layer, "long_packet_type")
+                    and not hasattr(layer, "long_packet_type_v2")
                 ):
                     layer.sniff_time = packet.sniff_time
                     packets.append(layer)
@@ -224,13 +243,21 @@ class TraceAnalyzer:
         packets = []
 
         for packet in self._get_packets(
-            self._get_direction_filter(direction) + "quic.long.packet_type"
+            self._get_direction_filter(direction)
+            + "(quic.long.packet_type || quic.long.packet_type_v2)"
         ):
             for layer in packet.layers:
-                if (
-                    layer.layer_name == "quic"
-                    and hasattr(layer, "long_packet_type")
-                    and layer.long_packet_type == WIRESHARK_PACKET_TYPES[packet_type]
+                if layer.layer_name == "quic" and (
+                    (
+                        hasattr(layer, "long_packet_type")
+                        and layer.long_packet_type
+                        == WIRESHARK_PACKET_TYPES[packet_type]
+                    )
+                    or (
+                        hasattr(layer, "long_packet_type_v2")
+                        and layer.long_packet_type_v2
+                        == WIRESHARK_PACKET_TYPES_V2_DRAFT[packet_type]
+                    )
                 ):
                     packets.append(layer)
 
