@@ -20,6 +20,18 @@ from result import TestResult
 KB = 1 << 10
 MB = 1 << 20
 
+
+class DataRate:
+    KBPS = 10 ** 3
+    MBPS = 10 ** 6
+    GBPS = 10 ** 9
+
+
+class Time:
+    S = 1
+    MS = 10 ** -3
+
+
 QUIC_DRAFT = 34  # draft-34
 QUIC_VERSION = hex(0x1)
 
@@ -1522,6 +1534,7 @@ class TestCaseV2(TestCase):
         """ Get a set of QUIC versions from packets. """
         return set([hex(int(p.version, 0)) for p in packets])
 
+
 class MeasurementGoodput(Measurement):
     FILESIZE = 10 * MB
     _result = 0.0
@@ -1609,6 +1622,101 @@ class MeasurementCrossTraffic(MeasurementGoodput):
         return ["iperf_server", "iperf_client"]
 
 
+class MeasurementTerrestrial(MeasurementGoodput):
+    FILESIZE = 10 * MB
+    data_rate = 20 * DataRate.MBPS
+
+    @staticmethod
+    def name():
+        return "terrestrial"
+
+    @staticmethod
+    def abbreviation():
+        return "T"
+
+    @classmethod
+    def desc(cls):
+        return f"Measures connection goodput over a {int(cls.data_rate // DataRate.MBPS)} Mbps link."
+
+
+class MeasurementSatellite(MeasurementTerrestrial):
+    rtt = 600 * Time.MS
+    forward_data_rate = 20 * DataRate.MBPS
+    return_data_rate = 2 * DataRate.MBPS
+    queue_size = 25
+
+    @staticmethod
+    def name():
+        return "sat"
+
+    @staticmethod
+    def abbreviation():
+        return "SAT"
+
+    @classmethod
+    def desc(cls):
+        return (
+            "Measures connection goodput over a satellite link. "
+            f"File: {int(cls.FILESIZE / MB)} MiB; "
+            f"RTT: {cls.rtt / Time.MS:.0f} ms; "
+            f"Data Rate: {cls.forward_data_rate // DataRate.MBPS}/{cls.return_data_rate // DataRate.MBPS} Mbps; "
+        )
+
+    @classmethod
+    def scenario(cls) -> str:
+        return (
+            "asymmetric-p2p "
+            f"--delay={cls.rtt / Time.MS // 2}ms "
+            f"--forward-data-rate={cls.forward_data_rate // DataRate.MBPS}Mbps "
+            f"--return-data-rate={cls.return_data_rate // DataRate.MBPS}Mbps "
+            f"--forward-queue={cls.queue_size} "
+            f"--return-queue={cls.queue_size}"
+        )
+
+    @classmethod
+    def timeout(cls) -> int:
+        """timeout in s"""
+
+        return 120
+
+
+class MeasurementSatelliteLoss(MeasurementSatellite):
+
+    drop_rate_percent: int = 1
+
+    @staticmethod
+    def name():
+        return "satloss"
+
+    @staticmethod
+    def abbreviation():
+        return "SATL"
+
+    @classmethod
+    def desc(cls):
+        return (
+            "Measures connection goodput over a lossy satellite link. "
+            f"File: {int(cls.FILESIZE / MB)} MiB; "
+            f"RTT: {cls.rtt / Time.MS:.0f} ms; "
+            f"Data Rate: {cls.forward_data_rate // DataRate.MBPS}/{cls.return_data_rate // DataRate.MBPS} Mbps; "
+            f"Loss Rate: {cls.drop_rate_percent} %"
+        )
+
+    @classmethod
+    def scenario(cls) -> str:
+        return (
+            f"{super().scenario()} "
+            f"--drop-rate-to-server={cls.drop_rate_percent} "
+            f"--drop-rate-to-client={cls.drop_rate_percent} "
+        )
+
+    @classmethod
+    def timeout(cls) -> int:
+        """timeout in s"""
+
+        return super().timeout() * 3
+
+
 TESTCASES = [
     TestCaseHandshake,
     TestCaseTransfer,
@@ -1639,4 +1747,7 @@ TESTCASES = [
 MEASUREMENTS = [
     MeasurementGoodput,
     MeasurementCrossTraffic,
+    MeasurementTerrestrial,
+    MeasurementSatellite,
+    MeasurementSatelliteLoss,
 ]

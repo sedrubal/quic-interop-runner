@@ -5,7 +5,7 @@ import sys
 from implementations import IMPLEMENTATIONS
 
 print("Pulling the simulator...")
-os.system("docker pull martenseemann/quic-network-simulator")
+os.system("docker pull therealsedrubal/quic-network-simulator")
 
 print("\nPulling the iperf endpoint...")
 os.system("docker pull martenseemann/quic-interop-iperf-endpoint")

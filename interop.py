@@ -130,6 +130,7 @@ class InteropRunner:
             "DOWNLOADS=" + downloads_dir.name + " "
             'SCENARIO="simple-p2p --delay=15ms --bandwidth=10Mbps --queue=25" '
             "CLIENT=" + self._implementations[name]["image"] + " "
+            "SERVER=" + self._implementations[name]["image"] + " "
             "docker-compose up --timeout 0 --abort-on-container-exit -V sim client"
         )
         output = subprocess.run(
@@ -152,6 +153,7 @@ class InteropRunner:
             "CLIENT_LOGS=/dev/null "
             "WWW=" + www_dir.name + " "
             "DOWNLOADS=" + downloads_dir.name + " "
+            "CLIENT=" + self._implementations[name]["image"] + " "
             "SERVER=" + self._implementations[name]["image"] + " "
             "docker-compose up -V server"
         )
