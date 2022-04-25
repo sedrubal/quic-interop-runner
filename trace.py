@@ -166,8 +166,8 @@ class TraceAnalyzer:
     ) -> List:
         packets = []
         for packet in self._get_packets(
-            self._get_direction_filter(direction) +
-                "(quic.long.packet_type || quic.long.packet_type_v2)"
+            self._get_direction_filter(direction) + "quic.long.packet_type"
+            # "(quic.long.packet_type || quic.long.packet_type_v2)"
         ):
             for layer in packet.layers:
                 if (
