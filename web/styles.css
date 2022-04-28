@@ -31,3 +31,25 @@ tr.hover-xy > th, th.hover-xy {
   background-color: #cfd9db;
   color: #e74c3c;
 }
+
+#about {
+  background-image: url("/satellite-gs.svg");
+  background-repeat: no-repeat;
+  background-position: bottom right;
+  background-size: 10rem;
+}
+
+/* Solidarity with Ukraine */
+.navbar-brand {
+  position: relative;
+}
+.navbar-brand::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 2.75rem;
+  background: linear-gradient(to bottom, #005bbb 50%, #ffd500 50%);
+  mix-blend-mode: lighten;
+}

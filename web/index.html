@@ -4,19 +4,33 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="X-UA-Compatible" content="ie=edge">
-  <title>QUIC Interop Runner</title>
+  <title>QUIC Interop Runner - Satellite Edition</title>
   <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootswatch/4.5.2/flatly/bootstrap.min.css" integrity="sha384-qF/QmIAj5ZaYFAeQcrQ6bfVMAh4zZlrGwTPY7T/M+iTTLJqJBJjwwnsE5Y0mV7QK" crossorigin="anonymous">
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-fork-ribbon-css/0.2.3/gh-fork-ribbon.min.css" integrity="sha512-TktJbycEG5Van9KvrSHFUcYOKBroD7QCYkEe73HAutODCw9QTFcvF6fuxioYM1h6THNudK1GjVidazj6EslK4A==" crossorigin="anonymous" />
   <link rel="stylesheet" href="styles.css">
+  <link rel="shortcut icon" type="image/svg+xml" href="satellite-gs.svg" />
 </head>
 <body>
-  <a class="github-fork-ribbon" href="https://github.com/marten-seemann/quic-interop-runner" data-ribbon="Fork me on GitHub" title="Fork me on GitHub">Fork me on GitHub</a>
+  <a
+    class="github-fork-ribbon"
+    href="https://github.com/sedrubal/quic-interop-runner/tree/sat-simple"
+    data-ribbon="Fork me on GitHub"
+    title="Fork me on GitHub"
+    >Fork me on GitHub</a
+  >
 
   <nav class="navbar navbar-expand-lg navbar-light bg-light">
-    <a href="https://github.com/marten-seemann/quic-interop-runner">
+    <a href="https://github.com/sedrubal/quic-interop-runner/tree/sat-simple">
       <span class="navbar-brand">
-        <img src="https://github.com/quicwg/wg-materials/raw/master/badge/transparent/QUIC-Badge-Dark-RGB-Horiz.svg" height="45" class="d-inline-block align-middle" alt="QUIC" loading="lazy">
-        Interop Runner
+        <img
+          src="satellite-gs.svg"
+          height="45"
+          class="d-inline-block align-middle"
+          alt="SAT"
+          loading="lazy"
+          style="filter: brightness(0); transform: scaleX(-1)"
+        />
+        QUIC Interop Runner - Satellite Edition
       </span>
     </a>
     <button class="navbar-toggler" type="button" data-toggle="collapse" data-target="#navbarNav" aria-controls="navbarNav" aria-expanded="false" aria-label="Toggle navigation">
@@ -45,19 +59,109 @@
   </nav>
 
   <div class="container-fluid">
+    <section id="about">
 
-    <h3 class="mt-5">About</h3>
-    <p>
-      This page documents the current interop status of various <a href="https://quicwg.org/">QUIC</a> client and server <a href="https://github.com/quicwg/base-drafts/wiki/Implementations">implementations</a> that have chosen to participate in this automated testing. It is updated several times per day; older results can be accessed via the "Run" selector in the title bar. 
-    </p>
+      <h3 class="mt-5">About</h3>
+      <p>
+        This is a specialized variant of the
+        <a href="https://interop.seemann.io/" target="_blank"
+          >QUIC Interop Runner</a
+        >. Usually it is used to test the interoperability of
+        <a href="https://quicwg.org/" target="_blank">QUIC</a>
+        implementations. Here we exploit the great work of
+        <a href="https://github.com/marten-seemann" target="_blank"
+          >Marten Seemann</a
+        >
+        to run satellite measurements on all of these client and server
+        <a
+          href="https://github.com/quicwg/base-drafts/wiki/Implementations"
+          target="_blank"
+          >implementations</a
+        >.
+      </p>
 
-    <p>
-      In the following tables, results for <strong>client implementations</strong> are shown <em>horizontally</em>, results for <strong>server implementations</strong> are shown <em>vertically</em>. The results were obtained with QUIC version <span id="quic-vers"></span>.
-    </p>
+      <p>
+        The satellite link emulation uses
+        <a
+          href="https://github.com/sedrubal/quic-network-simulator/tree/feature-asymmetric-p2p/sim/scenarios/asymmetric-p2p"
+          target="_blank"
+          >this</a
+        >
+        ns-3 scenario. Parameters are:
+      </p>
 
-    <p>
-      It is straightforward to add <strong>your implementation</strong> to this automated testing effort; please <a href="https://github.com/marten-seemann/quic-interop-runner/blob/master/README.md#building-a-quic-endpoint">see these simple instructions</a>.
-    </p>
+      <table class="table table-sm">
+        <thead>
+          <tr>
+            <td></td>
+            <th>T / terrestrial</th>
+            <th>SAT / sat</th>
+            <th>SATL / satloss</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th>File Size</th>
+            <td>10 MiB</td>
+            <td>10 MiB</td>
+            <td>10 MiB</td>
+          </tr>
+          <tr>
+            <th>RTT</th>
+            <td>20 Mbps (symmetric)</td>
+            <td>20 Mbps (forward link) / 2 Mbps (return link)</td>
+            <td>20 Mbps (forward link) / 2 Mbps (return link)</td>
+          </tr>
+          <tr>
+            <th>Loss Rate</th>
+            <td>0 %</td>
+            <td>0 %</td>
+            <td>1 % (uniform random)</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <p>
+        This are the results of our <strong>regular long-term measurements</strong>.
+        <a href="/paper/" class="btn btn-sm btn-secondary">Here</a> are the results as published in our paper.
+      </p>
+
+      <p>
+        In the following tables, results for <strong>client implementations</strong> are shown <em>horizontally</em>, results for <strong>server implementations</strong> are shown <em>vertically</em>. The results were obtained with QUIC version <span id="quic-vers"></span>.
+      </p>
+
+      <p>
+        It is straightforward to add <strong>your implementation</strong> to this automated testing effort; please <a href="https://github.com/marten-seemann/quic-interop-runner/blob/master/README.md#building-a-quic-endpoint">see these simple instructions</a>.
+      </p>
+    </section>
+
+    <hr />
+
+    <small class="text-muted">
+      <p>
+        This work has been supported by the
+        <a href="https://bmwi.de/" target="_blank" rel="nofollow noreferrer"
+          >BMWi</a
+        >
+        on the basis of a decision by the German Bundestag
+        It is part of the
+        <a
+          href="https://www.cs7.tf.fau.eu/2021/11/01/new-researchproject-quicsat/"
+          target="_blank"
+          >QUICSAT project</a
+        >. A pre-print paper is available on
+        <a
+          href="https://arxiv.org/abs/2202.08228"
+          target="_blank"
+          rel="nofollow noreferrer"
+          >arxiv.org</a
+        >
+        and a more verbose master's thesis is available
+        <a href="paper/thesis.pdf">here</a>.
+        Please cite the paper to reference this work.
+        <img src="./bmwk-logo.svg" alt="" style="height:4rem;" />
+      </p>
+    </small>
 
     <h3 class="mt-5">Results Filter</h3>
 
@@ -76,8 +180,8 @@
       <div id="test" class="col-10 col-sm-11 btn-group flex-wrap btn-group-sm" role="group" aria-label="Filter test cases"></div>
     </div>
 
-    <h3 class="mt-5">Interop Status</h3>
-    <table id="interop" class="result table text-center"></table>
+    <h3 class="mt-5" hidden>Interop Status</h3>
+    <table id="interop" class="result table text-center" hidden></table>
 
     <h3 class="mt-5">Measurement Results</h3>
     <table id="measurements" class="result table text-center"></table>
