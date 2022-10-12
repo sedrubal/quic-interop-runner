@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 
+"""Helper script to collect rendered plots inside a target directory."""
+
 import shutil
 import sys
 from argparse import ArgumentParser

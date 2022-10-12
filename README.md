@@ -84,3 +84,36 @@ Currently disabled due to #20.
 * **Handshake Loss** (`multiconnect`): Tests resilience of the handshake to high loss. The client is expected to establish multiple connections, sequential or in parallel, and use each connection to download a single file.
 
 * **V2** (`v2`): In this test, client starts connecting server in QUIC v1 with `version_information` transport parameter that includes QUIC v2 (`0x709a50c4`) in `other_versions` field.  Server should select QUIC v2 in compatible version negotiation.  Client is expected to download one small file in QUIC v2.
+
+## Measurements
+
+See descriptions in ./testcases.py.
+
+### Real Links
+
+For measurements with real links instead of ns-3 links between client and server, the client is
+deployed on a different machine as the server.
+The IP addresses are determined automatically (which is sometimes somewhat hacky and maybe broken).
+Ensure, that the default route of the client PC is configured to use the link that should be used
+for the measurement.
+For SL, AST, and EUT the SSH connection link can be configured in config.yml.
+
+# Plotting
+
+After running the measurements, use
+
+```bash
+./post_process_logs.py <path/to/result.json>
+```
+
+to prepare the logs.
+
+After that, use
+
+```bash
+./plot_all.py -j $(($(nproc) - 1)) --mode='offset-number' <path/to/result.json>
+```
+
+to plot the offset plots for all measurements.
+
+Interactive help and more description should be available for all scripts using the `--help` flag.
