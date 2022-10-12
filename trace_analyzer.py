@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
+import datetime
 import subprocess
 from enum import Enum
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import pyshark
 
@@ -63,6 +64,7 @@ def get_packet_type(p) -> PacketType:
         for t, num in WIRESHARK_PACKET_TYPES_V2_DRAFT.items():
             if p.quic.long_packet_type_v2 == num:
                 return t
+
         return PacketType.INVALID
 
     for t, num in WIRESHARK_PACKET_TYPES.items():
@@ -157,6 +159,7 @@ class TraceAnalyzer:
 
             if ip4_filter and ip6_filter:
                 # use "or" connection to connect both ip filters
+
                 return f"{display_filter} ({ip4_filter} || {ip6_filter}) && "
             else:
                 ip_filter = ip4_filter or ip6_filter
@@ -216,7 +219,16 @@ class TraceAnalyzer:
 
     def get_1rtt(self, direction: Direction = Direction.ALL) -> List:
         """Get all QUIC packets, one or both directions."""
+        packets, _, _ = self.get_1rtt_sniff_times(direction)
+
+        return packets
+
+    def get_1rtt_sniff_times(
+        self, direction: Direction = Direction.ALL
+    ) -> Tuple[List, datetime.datetime, datetime.datetime]:
+        """Get all QUIC packets, one or both directions, and first and last sniff times."""
         packets = []
+        first, last = 0, 0
 
         for packet in self._get_packets(
             self._get_direction_filter(direction) + "quic.header_form==0"
@@ -227,10 +239,12 @@ class TraceAnalyzer:
                     and not hasattr(layer, "long_packet_type")
                     and not hasattr(layer, "long_packet_type_v2")
                 ):
-                    layer.sniff_time = packet.sniff_time
+                    if first == 0:
+                        first = packet.sniff_time
+                    last = packet.sniff_time
                     packets.append(layer)
 
-        return packets
+        return packets, first, last
 
     def get_vnp(self, direction: Direction = Direction.ALL) -> List:
         return self._get_packets(

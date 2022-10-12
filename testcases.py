@@ -1937,11 +1937,8 @@ class MeasurementGoodput(Measurement):
         self._check_handshakes(1)
         self._check_version_and_files()
 
-        packets = self.client_trace.get_1rtt(Direction.FROM_SERVER)
-        packet_times: list[datetime] = [packet.sniff_time for packet in packets]
-        first = min(packet_times)
-        last = max(packet_times)
-        time: timedelta = last - first
+        _packets, first, last = self._client_trace().get_1rtt_sniff_times(Direction.FROM_SERVER)
+        time = (last - first)
 
         if not time:
             raise TestFailed(
