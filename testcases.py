@@ -23,7 +23,7 @@ from trace_analyzer import (
     PacketType,
     TraceAnalyzer,
     get_packet_type,
-    QUIC_V2_DRAFT,
+    QUIC_V1,
 )
 from units import DataRate, FileSize, Time
 from utils import LOGGER, random_string
@@ -1846,9 +1846,9 @@ class TestCaseV2(TestCase):
         versions = self._get_packet_versions(
             self.server_trace.get_initial(Direction.FROM_SERVER)
         )
-        if QUIC_V2_DRAFT not in versions:
+        if QUIC_V1 not in versions:
             raise TestFailed(
-                f"Wrong version in server Initial. Expected {hex(QUIC_V2_DRAFT)}, got {', '.join(hex(v) for v in versions)}",
+                f"Wrong version in server Initial. Expected {hex(QUIC_V1)}, got {', '.join(hex(v) for v in versions)}",
                 ErrorCode.WRONG_VERSION,
             )
 
@@ -1861,9 +1861,9 @@ class TestCaseV2(TestCase):
                 f"Expected exactly one version in client Handshake. Got {', '.join(hex(v) for v in versions)}",
                 ErrorCode.TOO_MANY_VERSIONS,
             )
-        if QUIC_V2_DRAFT not in versions:
+        if QUIC_V1 not in versions:
             raise TestFailed(
-                f"Wrong version in client Handshake. Expected {hex(QUIC_V2_DRAFT)}, got {', '.join(hex(v) for v in versions)}",
+                f"Wrong version in client Handshake. Expected {hex(QUIC_V1)}, got {', '.join(hex(v) for v in versions)}",
                 ErrorCode.TOO_MANY_VERSIONS,
             )
 
@@ -1876,9 +1876,9 @@ class TestCaseV2(TestCase):
                 f"Expected exactly one version in server Handshake. Got {versions}",
                 ErrorCode.TOO_MANY_VERSIONS,
             )
-        if QUIC_V2_DRAFT not in versions:
+        if QUIC_V1 not in versions:
             raise TestFailed(
-                f"Wrong version in server Handshake. Expected {QUIC_V2_DRAFT}, got {', '.join(hex(v) for v in versions)}",
+                f"Wrong version in server Handshake. Expected {QUIC_V1}, got {', '.join(hex(v) for v in versions)}",
                 ErrorCode.WRONG_VERSION,
             )
 

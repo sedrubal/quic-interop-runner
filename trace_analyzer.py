@@ -17,7 +17,7 @@ from utils import LOGGER
 #  IP6_SERVER = "fd00:cafe:cafe:100::100"
 
 
-QUIC_V2_DRAFT = hex(0x709A50C4)
+QUIC_V1 = hex(0x6b3343cf)
 
 
 class Direction(Enum):
@@ -45,7 +45,7 @@ WIRESHARK_PACKET_TYPES = {
 }
 
 
-WIRESHARK_PACKET_TYPES_V2_DRAFT = {
+WIRESHARK_PACKET_TYPES_V2 = {
     PacketType.INITIAL: "1",
     PacketType.ZERORTT: "2",
     PacketType.HANDSHAKE: "3",
@@ -60,8 +60,8 @@ def get_packet_type(p) -> PacketType:
     if p.quic.version == "0x00000000":
         return PacketType.VERSIONNEGOTIATION
 
-    if p.quic.version == QUIC_V2_DRAFT:
-        for t, num in WIRESHARK_PACKET_TYPES_V2_DRAFT.items():
+    if p.quic.version == QUIC_V1:
+        for t, num in WIRESHARK_PACKET_TYPES_V2.items():
             if p.quic.long_packet_type_v2 == num:
                 return t
 
@@ -270,7 +270,7 @@ class TraceAnalyzer:
                     or (
                         hasattr(layer, "long_packet_type_v2")
                         and layer.long_packet_type_v2
-                        == WIRESHARK_PACKET_TYPES_V2_DRAFT[packet_type]
+                        == WIRESHARK_PACKET_TYPES_V2[packet_type]
                     )
                 ):
                     packets.append(layer)
