@@ -2120,16 +2120,6 @@ class MeasurementRealLink(MeasurementGoodput):
 
     @classmethod
     @property
-    def name(cls):
-        return "realLink"
-
-    @classmethod
-    @property
-    def abbreviation(cls):
-        return "LNK"
-
-    @classmethod
-    @property
     def desc(cls):
         return (
             "Measures connection goodput over a real network link. "
@@ -2290,7 +2280,6 @@ MEASUREMENTS: list[Type[Measurement]] = [
     MeasurementTerrestrial,
     MeasurementSatellite,
     MeasurementSatelliteLoss,
-    MeasurementRealLink,
     MeasurementStarlink,
     MeasurementAstra,
     MeasurementEutelsat,
